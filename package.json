@@ -1,36 +1,47 @@
 {
   "name": "remotion",
   "version": "1.0.0",
-  "description": "A React Three Fiber Project",
+  "description": "AI Video Factory — 100% automated 'What If' Shorts generator",
   "repository": {},
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.80",
+    "@ai-sdk/google": "^4.0.96",
+    "@ai-sdk/openai": "^4.0.94",
     "@react-three/fiber": "9.2.0",
     "@remotion/cli": "4.0.535",
     "@remotion/media": "4.0.535",
     "@remotion/three": "4.0.535",
     "@remotion/zod-types": "4.0.535",
+    "ai": "^7.0.141",
+    "mediabunny": "1.61.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "remotion": "4.0.535",
     "three": "0.178.0",
-    "zod": "4.5.4",
-    "mediabunny": "1.61.3"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.535",
+    "@types/node": "^26.6.5",
     "@types/react": "19.2.7",
     "@types/three": "0.170.0",
     "@types/web": "0.0.166",
     "eslint": "9.39.5",
     "prettier": "3.8.1",
+    "tsx": "^4.23.15",
     "typescript": "5.9.3"
   },
   "scripts": {
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint src && tsc"
+    "lint": "eslint src && tsc",
+    "generate": "tsx src/generator/generate.ts",
+    "setup": "tsx scripts/setup-sfx.ts",
+    "models": "tsx scripts/models.ts",
+    "review": "tsx scripts/self-review.ts",
+    "audit": "tsx scripts/audio-audit.ts"
   }
 }

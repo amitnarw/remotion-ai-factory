@@ -1,0 +1,128 @@
+{
+  "id": "what-if-gravity-disappeared-for-just-5-seconds",
+  "title": "What if gravity disappeared for just 5 seconds?",
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "palette": "pastelDay",
+  "hook": {
+    "text": "What if gravity disappeared for just 5 seconds?",
+    "keywordHighlight": [
+      "gravity"
+    ],
+    "t": 0,
+    "duration": 2.5
+  },
+  "events": [
+    {
+      "t": 3.2,
+      "name": "gravity_off",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "whoosh_dissolve",
+          "at": 3.2
+        },
+        {
+          "tag": "rumble_deep",
+          "from": 3.2,
+          "to": 8.2,
+          "volume": "ramp-up"
+        }
+      ]
+    },
+    {
+      "t": 3.4,
+      "name": "float_state",
+      "targets": [
+        "people",
+        "birds",
+        "debris"
+      ],
+      "sfx": [
+        {
+          "tag": "clothing_flutter",
+          "at": 3.4
+        }
+      ]
+    },
+    {
+      "t": 8.2,
+      "name": "gravity_on",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "impact_soft_bodies",
+          "at": 8.2
+        },
+        {
+          "tag": "scream_distant",
+          "at": 8.4
+        }
+      ],
+      "impact": true
+    }
+  ],
+  "captions": [
+    {
+      "text": "EVERYTHING KEEPS FLOATING UP",
+      "sub": "PEOPLE, BIRDS, SAND, THE OCEAN",
+      "from": 4,
+      "to": 7.5,
+      "keyword": [
+        "FLOATING"
+      ]
+    }
+  ],
+  "timer": {
+    "label": "TIME WITHOUT GRAVITY",
+    "startT": 3.2,
+    "endT": 8.2,
+    "format": "m:ss.ccc",
+    "position": "top-left"
+  },
+  "scenes": [
+    {
+      "scene": "city",
+      "from": 0,
+      "to": 8.2,
+      "camera": [
+        {
+          "t": 0,
+          "pos": "street-low",
+          "move": "dolly-forward"
+        },
+        {
+          "t": 5,
+          "move": "crane-up"
+        }
+      ],
+      "physics": {
+        "gravity": [
+          0,
+          -9.81,
+          0
+        ],
+        "gravityOff": 3.2,
+        "gravityOn": 8.2
+      }
+    },
+    {
+      "scene": "first_person",
+      "from": 8.2,
+      "to": 13,
+      "camera": "falling-pov"
+    }
+  ],
+  "audio": {
+    "ambient": [
+      {
+        "tag": "wind_city",
+        "from": 0,
+        "to": null,
+        "vol": 0.25
+      }
+    ],
+    "music": null
+  }
+}

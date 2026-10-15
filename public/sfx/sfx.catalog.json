@@ -1,0 +1,85 @@
+{
+  "whoosh_dissolve": {
+    "file": "whoosh_dissolve.wav",
+    "dur": 2.2,
+    "tags": [
+      "dissolve",
+      "transition",
+      "whoosh"
+    ]
+  },
+  "rumble_deep": {
+    "file": "rumble_deep.wav",
+    "dur": 6,
+    "tags": [
+      "earthquake",
+      "gravity",
+      "tension",
+      "rumble"
+    ]
+  },
+  "clothing_flutter": {
+    "file": "clothing_flutter.wav",
+    "dur": 0.9,
+    "tags": [
+      "flutter",
+      "cloth",
+      "movement"
+    ]
+  },
+  "impact_soft_bodies": {
+    "file": "impact_soft_bodies.wav",
+    "dur": 1.2,
+    "tags": [
+      "impact",
+      "crash",
+      "landing"
+    ]
+  },
+  "scream_distant": {
+    "file": "scream_distant.wav",
+    "dur": 2,
+    "tags": [
+      "scream",
+      "distant",
+      "human"
+    ]
+  },
+  "wind_city": {
+    "file": "wind_city.wav",
+    "dur": 12,
+    "tags": [
+      "ambient",
+      "wind",
+      "city",
+      "bed"
+    ]
+  },
+  "ambient_tense": {
+    "file": "ambient_tense.wav",
+    "dur": 10,
+    "tags": [
+      "ambient",
+      "tense",
+      "bed"
+    ]
+  },
+  "pop_light": {
+    "file": "pop_light.wav",
+    "dur": 0.3,
+    "tags": [
+      "pop",
+      "ui",
+      "click"
+    ]
+  },
+  "rise_short": {
+    "file": "rise_short.wav",
+    "dur": 1.5,
+    "tags": [
+      "rise",
+      "buildup",
+      "tension"
+    ]
+  }
+}

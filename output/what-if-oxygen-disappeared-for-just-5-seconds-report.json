@@ -1,0 +1,19 @@
+{
+  "premise": "What if oxygen disappeared for just 5 seconds?",
+  "id": "what-if-oxygen-disappeared-for-just-5-seconds",
+  "output": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\whatif-what-if-oxygen-disappeared-for-just-5-seconds-2026-10-15-17-05.mp4",
+  "spec": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\what-if-oxygen-disappeared-for-just-5-seconds-spec.json",
+  "frames": 450,
+  "durationSec": "15.00",
+  "fps": 30,
+  "scenes": 2,
+  "events": 3,
+  "sounds": [
+    "whoosh_dissolve",
+    "rumble_deep",
+    "clothing_flutter",
+    "impact_soft_bodies",
+    "scream_distant",
+    "wind_city"
+  ]
+}

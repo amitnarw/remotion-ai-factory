@@ -1,0 +1,19 @@
+{
+  "premise": "What if time stopped for just 5 seconds?",
+  "id": "what-if-time-stopped-for-just-5-seconds",
+  "output": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\whatif-what-if-time-stopped-for-just-5-seconds-2026-10-15-16-48.mp4",
+  "spec": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\what-if-time-stopped-for-just-5-seconds-spec.json",
+  "frames": 450,
+  "durationSec": "15.00",
+  "fps": 30,
+  "scenes": 2,
+  "events": 3,
+  "sounds": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+  ]
+}

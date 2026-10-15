@@ -1,56 +1,54 @@
-import { Composition, staticFile } from "remotion";
-import { Scene, myCompSchema } from "./Scene";
-import { getMediaMetadata } from "./helpers/get-media-metadata";
+/**
+ * Root.tsx — Remotion root. Registers two compositions:
+ *   - WhatIfDemo : hardcoded gravity preview (no input props)
+ *   - WhatIfVideo: arbitrary spec, supplied via --props { "spec": {...} }
+ *                  on the render CLI; spec validated against ShotSpecSchema.
+ */
+import { Composition } from "remotion";
+import { z } from "zod";
+import { WhatIfDemo } from "./compositions/WhatIfVideo/demo";
+import { WhatIfVideo } from "./compositions/WhatIfVideo/index";
+import {
+  ShotSpecSchema,
+  validateSpec,
+} from "./generator/spec.schema";
+import gravitySpec from "./generator/spec.example.gravity.json";
 
-// Welcome to the Remotion Three Starter Kit!
-// Two compositions have been created, showing how to use
-// the `ThreeCanvas` component and the `useVideoTexture` hook.
+const FPS = 30;
+const WIDTH = 1080;
+const HEIGHT = 1920;
+const DEFAULT_DURATION_FRAMES = 450; // 15s @ 30fps
 
-// You can play around with the example or delete everything inside the canvas.
+const demoSpec = validateSpec(gravitySpec);
 
-// Remotion Docs:
-// https://remotion.dev/docs
-
-// @remotion/three Docs:
-// https://remotion.dev/docs/three
-
-// React Three Fiber Docs:
-// https://docs.pmnd.rs/react-three-fiber/getting-started/introduction
+/**
+ * Schema for the entire props object of WhatIfVideo: { spec: ShotSpec }.
+ */
+const WhatIfVideoPropsSchema = z.object({ spec: ShotSpecSchema });
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
       <Composition
-        id="Scene"
-        component={Scene}
-        fps={30}
-        durationInFrames={300}
-        width={1280}
-        height={720}
-        schema={myCompSchema}
-        defaultProps={{
-          deviceType: "phone",
-          phoneColor: "rgb(110, 152, 191)" as const,
-          baseScale: 1,
-          mediaMetadata: null,
-          videoSrc: null,
-        }}
-        calculateMetadata={async ({ props }) => {
-          const videoSrc =
-            props.deviceType === "phone"
-              ? staticFile("phone.mp4")
-              : staticFile("tablet.mp4");
-
-          const mediaMetadata = await getMediaMetadata(videoSrc);
-
-          return {
-            props: {
-              ...props,
-              mediaMetadata,
-              videoSrc,
-            },
-          };
-        }}
+        id="WhatIfDemo"
+        component={WhatIfDemo}
+        durationInFrames={DEFAULT_DURATION_FRAMES}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{}}
+      />
+      <Composition
+        id="WhatIfVideo"
+        component={
+          WhatIfVideo as unknown as React.ComponentType<Record<string, unknown>>
+        }
+        durationInFrames={DEFAULT_DURATION_FRAMES}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        schema={WhatIfVideoPropsSchema}
+        defaultProps={{ spec: demoSpec }}
       />
     </>
   );
