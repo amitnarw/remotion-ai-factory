@@ -14,7 +14,10 @@
     "@remotion/media": "4.0.535",
     "@remotion/three": "4.0.535",
     "@remotion/zod-types": "4.0.535",
+    "@types/express": "^5.0.6",
     "ai": "^7.0.141",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
     "mediabunny": "1.61.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -24,14 +27,18 @@
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.535",
+    "@types/cors": "^2.8.19",
     "@types/node": "^26.6.5",
     "@types/react": "19.2.7",
+    "@types/react-dom": "^19.3.0",
     "@types/three": "0.170.0",
     "@types/web": "0.0.166",
+    "@vitejs/plugin-react": "^6.1.2",
     "eslint": "9.39.5",
     "prettier": "3.8.1",
     "tsx": "^4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "^8.3.4"
   },
   "scripts": {
     "dev": "remotion studio",
@@ -42,6 +49,9 @@
     "setup": "tsx scripts/setup-sfx.ts",
     "models": "tsx scripts/models.ts",
     "review": "tsx scripts/self-review.ts",
-    "audit": "tsx scripts/audio-audit.ts"
+    "audit": "tsx scripts/audio-audit.ts",
+    "ui": "vite --config ui/vite.config.ts --root ui",
+    "server": "tsx server/index.ts",
+    "ui:build": "vite build --config ui/vite.config.ts --root ui"
   }
 }

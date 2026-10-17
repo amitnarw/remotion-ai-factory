@@ -106,14 +106,16 @@ export function resolveModel(
   // Determine the model id to use.
   const model = modelId ?? provCfg.models?.[0] ?? config.defaultModel ?? "";
 
-  // Build the AI SDK model reference.
+  // Build the AI SDK model reference — dispatch on `package` (not name), so
+  // "ollama" / "openrouter" / any custom OpenAI-compatible provider work.
   let reference: ModelReference | null = null;
+  const pkg = provCfg.package ?? name;
   try {
-    if (name === "gateway") {
+    if (name === "gateway" || pkg === "gateway") {
       reference = gateway(model);
-    } else if (name === "openai") {
+    } else if (pkg === "openai") {
       if (provCfg.baseUrl) {
-        // OpenAI-compatible endpoint (openrouter, ollama, LM Studio, ...)
+        // OpenAI-compatible endpoint (openrouter, ollama cloud/local, LM Studio, ...)
         const customOpenAI = createOpenAI({
           baseURL: provCfg.baseUrl,
           apiKey: apiKey ?? "",
@@ -122,9 +124,9 @@ export function resolveModel(
       } else {
         reference = openai(model);
       }
-    } else if (name === "anthropic") {
+    } else if (pkg === "anthropic") {
       reference = anthropic(model);
-    } else if (name === "google") {
+    } else if (pkg === "google") {
       reference = google(model);
     } else {
       return {
@@ -132,7 +134,7 @@ export function resolveModel(
         model,
         reference: null,
         hasKey,
-        error: `No AI SDK provider implementation for "${name}"`,
+        error: `No AI SDK provider implementation for package "${pkg}" (provider "${name}")`,
       };
     }
   } catch (e) {

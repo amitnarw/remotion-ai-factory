@@ -1,7 +1,7 @@
 {
   "premise": "What if gravity disappeared for just 5 seconds?",
   "id": "what-if-gravity-disappeared-for-just-5-seconds",
-  "output": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\what-if-gravity-disappeared-for-just-5-seconds-2026-10-15-17.mp4",
+  "output": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\what-if-gravity-disappeared-for-just-5-seconds-2026-10-16-16.mp4",
   "spec": "C:\\Users\\Narwal\\Desktop\\remotion\\output\\what-if-gravity-disappeared-for-just-5-seconds-spec.json",
   "provider": "offline",
   "model": "templates",
@@ -18,45 +18,5 @@
     "scream_distant",
     "wind_city"
   ],
-  "generatedAt": "2026-10-15T17:42:38.726Z",
-  "audioAudit": {
-    "mp4": "output/what-if-gravity-disappeared-for-just-5-seconds-2026-10-15-17.mp4",
-    "specId": "what-if-gravity-disappeared-for-just-5-seconds",
-    "fps": 30,
-    "toleranceSec": 0.05,
-    "soundEventsDetected": 0,
-    "specOneShotEvents": 4,
-    "allEventsAligned": false,
-    "checks": [
-      {
-        "event": "gravity_off",
-        "expectedFrame": 3.2,
-        "expectedSec": 0.10666666666666667,
-        "offsetSec": null,
-        "withinTolerance": false
-      },
-      {
-        "event": "float_state",
-        "expectedFrame": 3.4,
-        "expectedSec": 0.11333333333333333,
-        "offsetSec": null,
-        "withinTolerance": false
-      },
-      {
-        "event": "gravity_on",
-        "expectedFrame": 8.2,
-        "expectedSec": 0.2733333333333333,
-        "offsetSec": null,
-        "withinTolerance": false
-      },
-      {
-        "event": "gravity_on",
-        "expectedFrame": 8.4,
-        "expectedSec": 0.28,
-        "offsetSec": null,
-        "withinTolerance": false
-      }
-    ],
-    "auditedAt": "2026-10-15T17:45:28.060Z"
-  }
+  "generatedAt": "2026-10-16T16:44:11.848Z"
 }

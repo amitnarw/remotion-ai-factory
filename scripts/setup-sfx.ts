@@ -83,8 +83,8 @@ function noise(
   opts: { attack?: number; decay?: number; vol?: number } = {},
 ): Float32Array {
   const { attack = 0.02, decay = 0.1, vol = 0.35 } = opts;
-  return gen(durSec, (t, i) => {
-    const v = Math.random() * 2 - 1;
+  return gen(durSec, (t) => {
+    const v = rand() * 2 - 1;
     let env = Math.min(1, t / attack);
     env *= Math.max(0, 1 - (t - durSec) / decay);
     return v * env * vol;
@@ -109,21 +109,28 @@ function rumble(durSec: number, vol = 0.5): Float32Array {
 /** Whoosh: noise with a slow volume swell (rise then fall). */
 function whoosh(durSec: number, vol = 0.35): Float32Array {
   return gen(durSec, (t) => {
-    const v = Math.random() * 2 - 1;
+    const v = rand() * 2 - 1;
     const swell = Math.sin((t / durSec) * Math.PI); // 0 -> 1 -> 0
     return v * swell * vol;
   });
 }
 
+// Simple seeded PRNG for deterministic noise generation (setup-time only).
+let seed = 12345;
+function rand(): number {
+  seed = (seed * 1664525 + 1013904223) % 4294967296;
+  return seed / 4294967296;
+}
+
 function main() {
   mkdirSync(PUBLIC_SFX, { recursive: true });
 
-  const catalog: Record<string, any> = {};
+  const catalog: Record<string, { file: string; dur: number; [key: string]: unknown }> = {};
 
   const add = (
     tag: string,
     samples: Float32Array,
-    props: any = {},
+    props: { [key: string]: unknown },
   ): void => {
     const out = join(PUBLIC_SFX, `${tag}.wav`);
     writeWav(out, samples);
