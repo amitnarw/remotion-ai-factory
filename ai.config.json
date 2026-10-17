@@ -982,7 +982,7 @@
       ]
     },
     "ollama": {
-      "package": "openai",
+      "package": "ollama",
       "apiKeyEnv": "OLLAMA_API_KEY",
       "baseUrl": "https://ollama.com/v1",
       "models": [

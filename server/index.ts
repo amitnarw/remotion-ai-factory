@@ -2,9 +2,10 @@ import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import { join, basename } from "path";
 import fs from "fs";
-import { loadConfig, saveConfig, loadEnv, saveEnv } from "./providers";
+import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
+import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, getJob, runJob, subscribeSSE } from "./jobs";
+import { createJob, getJob, getAllJobs, premiseSlug, runJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 
@@ -31,11 +32,32 @@ app.get("/api/providers", (_req, res) => {
 app.post("/api/providers/:name/key", (req, res) => {
   const { name } = req.params;
   const { key } = req.body as { key?: string };
-  if (!name || !key) return res.status(400).json({ error: "bad request" });
+  if (!name) return res.status(400).json({ error: "bad request" });
   const cfg = loadConfig();
   const pc = cfg.providers[name];
-  if (!pc || !pc.apiKeyEnv) return res.status(400).json({ error: "no key env for provider" });
-  saveEnv({ [pc.apiKeyEnv]: key });
+  if (!pc || !pc.apiKeyEnv) {
+    return res.status(400).json({ error: "provider doesn't need an API key (local or keyless)" });
+  }
+  const k = (key ?? "").trim();
+  if (!k) {
+    return res.status(400).json({
+      error: "empty key",
+      fix: `paste your full API key — create one at ${keyUrlFor(name)}`,
+    });
+  }
+  if (/[\r\n"]/.test(k)) {
+    return res.status(400).json({
+      error: "key contains invalid characters (quotes or line breaks)",
+      fix: "paste the key exactly as copied — no surrounding quotes, single line",
+    });
+  }
+  if (k.length < 8) {
+    return res.status(400).json({
+      error: `key too short to be valid (${k.length} chars)`,
+      fix: `copy the FULL key from ${keyUrlFor(name)} — keys are much longer`,
+    });
+  }
+  saveEnv({ [pc.apiKeyEnv]: k });
   res.json({ ok: true });
 });
 
@@ -62,7 +84,7 @@ app.post("/api/providers", (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/providers/:name/test", (req, res) => {
+app.post("/api/providers/:name/test", async (req, res) => {
   const { name } = req.params;
   const { model } = req.body as { model?: string };
   const cfg = loadConfig();
@@ -70,15 +92,74 @@ app.post("/api/providers/:name/test", (req, res) => {
   if (!pc) return res.status(400).json({ error: "unknown provider" });
   const env = loadEnv();
   const chosenModel = model || pc.models?.[0] || "";
-  const keyConfigured = !pc.apiKeyEnv || !!env[pc.apiKeyEnv];
-  const modelKnown = !pc.models || pc.models.length === 0 || pc.models.includes(chosenModel);
-  if (!keyConfigured) {
-    return res.json({ ok: false, model: chosenModel, error: `API key env ${pc.apiKeyEnv} not set` });
+  const apiKey = pc.apiKeyEnv ? env[pc.apiKeyEnv] ?? "" : "";
+
+  // Keyed (non-gateway) providers can't work without a key — fail fast with a fix.
+  if (pc.apiKeyEnv && !apiKey && name !== "gateway") {
+    return res.json({
+      ok: false,
+      model: chosenModel,
+      error: `API key not set (${pc.apiKeyEnv})`,
+      fix: `Save your key in the Providers tab — create one at ${keyUrlFor(name)}`,
+    });
   }
-  if (!modelKnown) {
-    return res.json({ ok: false, model: chosenModel, error: "model not in provider list" });
+
+  // REAL connection test: live-call the provider's model-listing endpoint.
+  const t0 = Date.now();
+  try {
+    const result = await fetchProviderModels(name, pc, apiKey);
+    pc.models = result.models;
+    saveConfig(cfg);
+    const base = {
+      model: chosenModel,
+      latencyMs: Date.now() - t0,
+      modelsCount: result.models.length,
+    };
+
+    // For providers whose model catalog is PUBLIC (ollama, openrouter,
+    // gateway), the list proves nothing about the key — the key only matters
+    // for generation. Run a real 1-token generation as the credential check.
+    if (name === "ollama" || name === "openrouter" || name === "gateway") {
+      const cfg2 = loadAiConfig();
+      for (const [k, v] of Object.entries(loadEnv())) process.env[k] = v;
+      const resolution = resolveModel(cfg2, name, chosenModel);
+      if (!resolution.reference) {
+        return res.json({
+          ...base,
+          ok: false,
+          error: resolution.error ?? "could not resolve model reference",
+          fix: "Pick another model on the Generate tab, or check the provider's baseUrl/package in ai.config.json",
+        });
+      }
+      const { generateText } = await import("ai");
+      const gen = await generateText({
+        model: resolution.reference,
+        prompt: "Reply with the single word: OK",
+        maxOutputTokens: 10,
+      });
+      return res.json({
+        ...base,
+        ok: true,
+        note: `key verified by a real generation (${gen.usage?.totalTokens ?? 0} tokens in ${Date.now() - t0}ms)`,
+      });
+    }
+
+    return res.json({
+      ...base,
+      ok: true,
+      note: `${result.models.length} models verified live from ${result.source}`,
+    });
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    const { message, fix } = actionable(raw, name);
+    return res.json({
+      ok: false,
+      model: chosenModel,
+      error: message,
+      fix,
+      modelsCount: (pc.models ?? []).length,
+    });
   }
-  res.json({ ok: true, model: chosenModel, note: "config valid (no network call made)" });
 });
 
 // ---------- Live model listing (real API data per provider) ----------
@@ -97,22 +178,30 @@ app.get("/api/providers/:name/models", (req, res) => {
       res.json(result);
     })
     .catch((e) => {
+      const raw = e instanceof Error ? e.message : String(e);
+      const { message, fix } = actionable(raw, name);
       res.json({
         ok: false,
         models: pc.models ?? [],
-        source: "(previous static list)",
-        error: e instanceof Error ? e.message : String(e),
+        source: "(previous list)",
+        error: message,
+        fix,
       });
     });
 });
 
 // ---------- Jobs ----------
-app.post("/api/generate", (req, res) => {
+app.post("/api/generate", async (req, res) => {
   const { premise, provider, model } = req.body as { premise?: string; provider?: string; model?: string };
-  if (!premise) return res.status(400).json({ error: "premise required" });
+  if (!premise) {
+    return res.status(400).json({ error: "premise required", fix: 'type a "what if …" question, e.g. "What if gravity disappeared for just 5 seconds?"' });
+  }
   const trimmed = premise.trim();
   if (trimmed.length < 6) {
-    return res.status(400).json({ error: "premise too short — describe a full 'what if' scenario" });
+    return res.status(400).json({
+      error: "premise too short — describe a full 'what if' scenario",
+      fix: 'e.g. "What if gravity disappeared for just 5 seconds?"',
+    });
   }
 
   // Fail fast BEFORE spawning the CLI: validate provider + key + resolution.
@@ -136,14 +225,33 @@ app.post("/api/generate", (req, res) => {
     const provCfg = config.providers?.[provName];
     if (!provCfg) {
       const known = Object.keys(config.providers ?? {}).join(", ") || "(none)";
-      return res.status(400).json({ error: `Provider "${provName}" is not configured (known: ${known}, or pick "offline")` });
+      return res.status(400).json({
+        error: `Provider "${provName}" is not configured`,
+        fix: `Add it in the Providers tab, or pick one of: ${known}, or "offline"`,
+      });
+    }
+    // Local endpoints fail cryptically mid-render — ping them now, fix now.
+    const baseUrl = provCfg.baseUrl ?? "";
+    if (/^(http:\/\/)?(localhost|127\.0\.0\.1)/.test(baseUrl)) {
+      try {
+        await fetch(
+          baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "") + "/api/tags",
+          { signal: AbortSignal.timeout(2000) },
+        );
+      } catch {
+        return res.status(400).json({
+          error: `Local endpoint ${baseUrl} is not reachable`,
+          fix: "Start the local server (e.g. `ollama serve`) first — or switch the provider to its cloud URL in the Providers tab — don't render into a dead endpoint",
+        });
+      }
     }
     // Gateway has a free tier that works without a key — only enforce for others.
     if (provCfg.apiKeyEnv && provName !== "gateway") {
       const key = savedEnv[provCfg.apiKeyEnv];
       if (!key) {
         return res.status(400).json({
-          error: `API key not set for provider "${provName}" — save it in the Providers tab first`,
+          error: `API key not set for provider "${provName}" (${provCfg.apiKeyEnv})`,
+          fix: `Save your key in the Providers tab — create one at ${keyUrlFor(provName)}`,
         });
       }
     }
@@ -151,6 +259,29 @@ app.post("/api/generate", (req, res) => {
     if (!resolution.reference || resolution.error) {
       return res.status(400).json({
         error: resolution.error ?? `Could not resolve model "${model ?? "(default)"}" for provider "${provName}"`,
+        fix: `Check that provider "${provName}"'s baseUrl/package in ai.config.json are correct, or pick another provider`,
+      });
+    }
+    const chosenModelId = model ?? provCfg.models?.[0];
+    if (!chosenModelId) {
+      return res.status(400).json({
+        error: `Provider "${provName}" has no model available`,
+        fix: "Open the Providers tab and click 'Fetch models' to load the real model list, then pick one on the Generate tab",
+      });
+    }
+  }
+
+  // Never run two renders of the same premise at once — they share the same
+  // output filenames and would overwrite each other.
+  const newSlug = premiseSlug(trimmed);
+  for (const other of getAllJobs()) {
+    if (
+      (other.status === "running" || other.status === "queued") &&
+      premiseSlug(other.premise) === newSlug
+    ) {
+      return res.status(409).json({
+        error: `Already rendering this premise (job ${other.id}) — wait for it to finish or view it in the running panel`,
+        jobId: other.id,
       });
     }
   }
@@ -167,12 +298,17 @@ app.get("/api/jobs/:id", (req, res) => {
 });
 
 app.get("/api/jobs/:id/events", (req, res) => {
+  // Unknown ids (e.g. after a server restart) must 404 immediately —
+  // otherwise the browser's EventSource waits on a dead stream forever.
+  if (!getJob(req.params.id)) {
+    return res.status(404).json({ error: "unknown or expired job — the server may have restarted; start again" });
+  }
   subscribeSSE(req.params.id, res);
 });
 
 // ---------- Videos ----------
 app.get("/api/videos", (_req, res) => {
-  const dir = join(process.cwd(), "output");
+  const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return res.json([]);
   const files = fs.readdirSync(dir).filter((f) => f.endsWith("-report.json"));
   const videos = files.map((f) => {
@@ -192,8 +328,48 @@ app.get("/api/videos", (_req, res) => {
   res.json(videos);
 });
 
+// ---------- Delete a video (all artifacts for one premise id) ----------
+app.delete("/api/videos/:id", (req, res) => {
+  const { id } = req.params;
+  // Strict id format blocks path traversal (e.g. "..") before any fs call.
+  if (!/^[a-z0-9-]+$/.test(id)) {
+    return res.status(400).json({ error: "invalid video id" });
+  }
+  const dir = join(ROOT, "output");
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: "video not found" });
+  let deleted = 0;
+  const errors: string[] = [];
+  for (const f of fs.readdirSync(dir)) {
+    const isOurs =
+      (f.endsWith(".mp4") && f.startsWith(id + "-")) ||
+      f === `${id}-spec.json` ||
+      f === `${id}-report.json` ||
+      f === `FAILED-${id}.log`;
+    if (!isOurs) continue;
+    try {
+      fs.unlinkSync(join(dir, f));
+      deleted += 1;
+    } catch (e) {
+      errors.push(`${f}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const reviewDir = join(dir, `${id}-review`);
+  if (fs.existsSync(reviewDir)) {
+    try {
+      fs.rmSync(reviewDir, { recursive: true, force: true });
+      deleted += 1;
+    } catch (e) {
+      errors.push(`${id}-review: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (deleted === 0) {
+    return res.status(404).json({ error: `nothing found for "${id}"` });
+  }
+  res.json({ ok: true, deleted, errors: errors.length ? errors : undefined });
+});
+
 // ---------- Media ----------
-app.use("/media", express.static(join(process.cwd(), "output"), { index: false }));
+app.use("/media", express.static(join(ROOT, "output"), { index: false }));
 
 // ---------- JSON 404 for API/media (never return HTML) ----------
 app.use("/api", (_req, res) => {
@@ -212,7 +388,7 @@ app.use(errorHandler);
 
 // ---------- Built UI fallback ----------
 // Express 5 route patterns don't accept bare "*", so use plain middleware.
-const UI_DIST = join(process.cwd(), "ui", "dist");
+const UI_DIST = join(ROOT, "ui", "dist");
 if (fs.existsSync(join(UI_DIST, "index.html"))) {
   app.use(express.static(UI_DIST, { index: false }));
   app.use((_req, res, next) => {

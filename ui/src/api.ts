@@ -21,10 +21,19 @@ export interface JobOutput {
   report: string;
 }
 
+export interface StageSpan {
+  stage: string;
+  startedAt: number;
+  endedAt?: number;
+}
+
 export interface Job {
   id: string;
   status: "queued" | "running" | "done" | "failed";
   progress: number;
+  stage?: string;
+  etaSec?: number | null;
+  timeline?: StageSpan[];
   logs: string[];
   premise: string;
   provider?: string;
@@ -51,8 +60,9 @@ export interface Video {
 async function errorText(r: Response): Promise<string> {
   let text = `HTTP ${r.status}`;
   try {
-    const body = (await r.json()) as { error?: string };
+    const body = (await r.json()) as { error?: string; fix?: string };
     if (body.error) text = body.error;
+    if (body.fix) text += `\n→ Fix: ${body.fix}`;
   } catch {
     /* non-JSON error body — keep generic */
   }
@@ -107,11 +117,14 @@ export async function addProvider(body: {
 }
 
 export interface TestResult {
-  name: string;
+  name?: string;
   ok: boolean;
   model?: string;
   error?: string;
   note?: string;
+  fix?: string;
+  latencyMs?: number;
+  modelsCount?: number;
 }
 
 export interface FetchModelsResult {
@@ -119,6 +132,7 @@ export interface FetchModelsResult {
   models: string[];
   source: string;
   error?: string;
+  fix?: string;
 }
 
 export async function fetchProviderModels(name: string): Promise<FetchModelsResult> {
@@ -156,4 +170,10 @@ export async function getJob(id: string): Promise<Job> {
 
 export async function listVideos(): Promise<Video[]> {
   return json(await fetch(`${BASE}/videos`));
+}
+
+export async function deleteVideo(id: string): Promise<{ ok: boolean; deleted: number }> {
+  const r = await fetch(`${BASE}/videos/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await errorText(r));
+  return (await r.json()) as { ok: boolean; deleted: number };
 }

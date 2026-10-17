@@ -25,6 +25,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
+import { createOllama } from "ai-sdk-ollama";
 
 const CONFIG_PATH = join(process.cwd(), "ai.config.json");
 
@@ -33,7 +34,8 @@ export type ModelReference =
   | ReturnType<typeof openai>
   | ReturnType<typeof anthropic>
   | ReturnType<typeof google>
-  | ReturnType<typeof gateway>;
+  | ReturnType<typeof gateway>
+  | ReturnType<ReturnType<typeof createOllama>>;
 
 const ProviderConfigSchema = z.object({
   package: z.string().optional(),
@@ -113,6 +115,18 @@ export function resolveModel(
   try {
     if (name === "gateway" || pkg === "gateway") {
       reference = gateway(model);
+    } else if (name === "ollama" || pkg === "ollama") {
+      // Native Ollama provider (ai-sdk-ollama) — uses Ollama's native /api/chat
+      // with server-side enforced structured output (format: JSON schema),
+      // unlike the OpenAI-compat path where the schema is only a suggestion.
+      // ai.config baseUrl can be the /v1 OpenAI-compat URL — strip it to the
+      // Ollama root (the native client appends /api/* routes itself).
+      const nativeBase = (provCfg.baseUrl ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, "");
+      const ollamaProvider = createOllama({
+        baseURL: nativeBase,
+        apiKey: apiKey ?? "",
+      });
+      reference = ollamaProvider(model);
     } else if (pkg === "openai") {
       if (provCfg.baseUrl) {
         // OpenAI-compatible endpoint (openrouter, ollama cloud/local, LM Studio, ...)

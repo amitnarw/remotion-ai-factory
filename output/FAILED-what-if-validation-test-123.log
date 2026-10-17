@@ -1,9 +1,0 @@
-AI Video Factory — FAILED
-Premise: what if validation test 123?
-Id: what-if-validation-test-123
-Time: 2026-10-16T17:16:44.874Z
-
-Error:
-Error: Provider "offline" not found in ai.config.json
-    at generateSpec (C:\Users\Narwal\Desktop\remotion\src\generator\ai\generate-spec.ts:129:11)
-    at async <anonymous> (C:\Users\Narwal\Desktop\remotion\src\generator\generate.ts:115:22)

@@ -18,6 +18,7 @@ import { Captions } from "../hud/Captions";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
+import { AssetStage } from "../AssetStage";
 import { ThreeCanvas } from "@remotion/three";
 import { CityScene } from "../scenes/CityScene";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
@@ -65,8 +66,8 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
 
   // --- resolve active scene ---------------------------------------------
   const { scene, gravityOff, gravityOn } = resolvePhysicsAt(spec, timeSec);
-
   const SceneComp = sceneComponents[scene.scene as SceneKey];
+  const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
 
   return (
     <div
@@ -85,7 +86,10 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         height={height}
         style={{ width, height }}
       >
-        {SceneComp ? (
+        {activeScene.kit ? (
+          // Asset-driven stage (game-engine style: GLB assets from the catalog)
+          <AssetStage scenes={[activeScene]} spec={spec} />
+        ) : SceneComp ? (
           <SceneComp gravityOff={gravityOff} gravityOn={gravityOn} />
         ) : (
           // Fallback: empty pastel scene if builder missing

@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
-const ROOT = process.cwd();
+// Project root derived from THIS file (server must never depend on CWD —
+// starting the process from server/ or elsewhere must not break paths).
+const ROOT = join(__dirname, "..");
 const CONFIG_PATH = join(ROOT, "ai.config.json");
 const ENV_PATH = join(ROOT, ".env");
 
@@ -48,3 +50,5 @@ export function saveEnv(updates: Record<string, string>) {
   const lines = Object.entries(env).map(([k, v]) => `${k}="${v}"`);
   writeFileSync(ENV_PATH, lines.join("\n") + "\n");
 }
+
+export { ROOT };

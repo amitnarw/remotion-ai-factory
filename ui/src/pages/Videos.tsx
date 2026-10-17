@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listVideos, Video } from "../api";
+import { listVideos, deleteVideo, Video } from "../api";
 
 // This dashboard is a React web app (not a Remotion composition), so native
 // media elements are correct here.
@@ -8,10 +8,24 @@ import { listVideos, Video } from "../api";
 export default function Videos() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [openReview, setOpenReview] = useState<{ id: string; reviewFolder?: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     listVideos().then((d) => setVideos(d || []));
   }, []);
+
+  const handleDelete = async (v: Video) => {
+    if (!window.confirm(`Delete "${v.premise}" and ALL of its rendered versions + review stills?\nThis cannot be undone.`)) {
+      return;
+    }
+    setDeleteError(null);
+    try {
+      await deleteVideo(v.id);
+      listVideos().then((d) => setVideos(d || []));
+    } catch (e) {
+      setDeleteError(String(e));
+    }
+  };
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -25,7 +39,6 @@ export default function Videos() {
               <div style={{ aspectRatio: "9/16", background: "#000", position: "relative" }}>
                 <video
                   autoPlay
-                  muted
                   loop
                   playsInline
                   controls
@@ -54,10 +67,30 @@ export default function Videos() {
                   >
                     Review frames
                   </button>
+                  <button
+                    onClick={() => handleDelete(v)}
+                    style={{ padding: "8px 12px", background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {deleteError && (
+        <div
+          style={{
+            background: "#fef2f2",
+            color: "#991b1b",
+            border: "1px solid #fecaca",
+            padding: 12,
+            borderRadius: 8,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          Delete failed: {deleteError}
         </div>
       )}
       {openReview && (

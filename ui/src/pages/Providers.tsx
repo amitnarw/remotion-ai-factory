@@ -57,7 +57,7 @@ export default function Providers() {
     setTestResult(null);
     try {
       const r = await testProvider(p.name);
-      const result: TestResult = { name: p.name, ok: true, model: r.model };
+      const result: TestResult = { ...r, name: p.name };
       setTestResult(result);
     } catch (e) {
       const result: TestResult = { name: p.name, ok: false, error: String(e) };
@@ -186,12 +186,13 @@ export default function Providers() {
             borderRadius: 8,
             background: testResult.ok ? "#f0fdf4" : "#fef2f2",
             color: testResult.ok ? "#166534" : "#991b1b",
-            marginBottom: 16,
+            marginBottom: 8,
+            whiteSpace: "pre-wrap",
           }}
         >
           {testResult.ok
-            ? `Test passed for ${testResult.name} (model: ${testResult.model})${testResult.note ? " — " + testResult.note : ""}`
-            : `Test failed for ${testResult.name}: ${testResult.error}`}
+            ? `Test passed for ${testResult.name} — ${testResult.note ?? "configured"}${testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ""}`
+            : `Test failed: ${testResult.error ?? "unknown error"}${testResult.fix ? `\n→ Fix: ${testResult.fix}` : ""}`}
         </div>
       )}
       {saveResult && (
@@ -202,11 +203,12 @@ export default function Providers() {
             background: saveResult.ok ? "#f0fdf4" : "#fef2f2",
             color: saveResult.ok ? "#166534" : "#991b1b",
             marginBottom: 8,
+            whiteSpace: "pre-wrap",
           }}
         >
           {saveResult.ok
             ? `API key saved for ${saveResult.name} — written to .env (never sent to the browser)`
-            : `Saving key for ${saveResult.name} failed: ${saveResult.message}`}
+            : `Saving key for ${saveResult.name} failed: ${saveResult.message || "unknown error"}`}
         </div>
       )}
       {fetchResult && (
@@ -217,11 +219,12 @@ export default function Providers() {
             background: fetchResult.ok ? "#f0fdf4" : "#fef2f2",
             color: fetchResult.ok ? "#166534" : "#991b1b",
             marginBottom: 16,
+            whiteSpace: "pre-wrap",
           }}
         >
           {fetchResult.ok
             ? `Fetched ${fetchResult.models.length} models for ${fetchResult.name} from ${fetchResult.source} — saved to ai.config.json`
-            : `Could not fetch models for ${fetchResult.name}: ${fetchResult.error}`}
+            : `Could not fetch models for ${fetchResult.name}: ${fetchResult.error ?? "unknown error"}${fetchResult.fix ? `\n→ Fix: ${fetchResult.fix}` : ""}`}
         </div>
       )}
     </div>

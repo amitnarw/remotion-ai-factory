@@ -1,9 +1,0 @@
-AI Video Factory — FAILED
-Premise: what if sun disappears for 5 sec?
-Id: what-if-sun-disappears-for-5-sec
-Time: 2026-10-16T17:11:55.261Z
-
-Error:
-Error: No AI SDK provider implementation for "ollama"
-    at generateSpec (C:\Users\Narwal\Desktop\remotion\src\generator\ai\generate-spec.ts:129:11)
-    at async <anonymous> (C:\Users\Narwal\Desktop\remotion\src\generator\generate.ts:115:22)

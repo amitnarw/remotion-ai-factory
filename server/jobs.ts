@@ -2,12 +2,22 @@ import { spawn } from "child_process";
 import fs from "fs";
 import { type ServerResponse } from "http";
 import { join, basename, isAbsolute } from "path";
-import { loadEnv } from "./providers";
+import { loadEnv, ROOT } from "./providers";
+import { actionable } from "./error-hints";
+
+export interface StageSpan {
+  stage: string;
+  startedAt: number;
+  endedAt?: number;
+}
 
 export interface Job {
   id: string;
   status: "queued" | "running" | "done" | "failed";
   progress: number;
+  stage: string;
+  etaSec: number | null;
+  timeline: StageSpan[];
   logs: string[];
   premise: string;
   provider?: string;
@@ -21,6 +31,14 @@ const jobs = new Map<string, Job>();
 const sseClients = new Map<string, Set<ServerResponse>>();
 let jobIdCounter = 0;
 
+function setStage(job: Job, stage: string) {
+  if (job.stage === stage) return;
+  const cur = job.timeline[job.timeline.length - 1];
+  if (cur && cur.endedAt == null) cur.endedAt = Date.now();
+  job.stage = stage;
+  job.timeline.push({ stage, startedAt: Date.now() });
+}
+
 function broadcast(jobId: string, data: unknown) {
   const clients = sseClients.get(jobId);
   if (!clients) return;
@@ -33,17 +51,52 @@ function broadcast(jobId: string, data: unknown) {
 export function createJob(premise: string, provider?: string, model?: string): Job {
   jobIdCounter += 1;
   const id = `${Date.now()}-${jobIdCounter}`;
-  const job: Job = { id, status: "queued", progress: 0, logs: [], premise, provider, model, createdAt: Date.now() };
+  const job: Job = {
+    id,
+    status: "queued",
+    progress: 0,
+    stage: "script",
+    etaSec: null,
+    timeline: [{ stage: "script", startedAt: Date.now() }],
+    logs: [],
+    premise,
+    provider,
+    model,
+    createdAt: Date.now(),
+  };
   jobs.set(id, job);
   sseClients.set(id, new Set());
+  evictOldJobs();
   return job;
 }
 
 export function getJob(id: string): Job | undefined { return jobs.get(id); }
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
 
+/** Shared premise slug — must match the CLI's slug in generate.ts. */
+export function premiseSlug(premise: string): string {
+  return (
+    premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96) ||
+    `premise-${Date.now()}`
+  );
+}
+
+/** Keep the jobs map bounded — evict oldest finished jobs beyond 50. */
+function evictOldJobs() {
+  if (jobs.size <= 50) return;
+  const finished = getAllJobs().filter((j) => j.status === "done" || j.status === "failed");
+  for (let i = finished.length - 1; i >= 0 && jobs.size > 50; i--) {
+    const victim = finished[i];
+    for (const c of sseClients.get(victim.id) ?? []) {
+      try { c.end(); } catch { /* ignore */ }
+    }
+    sseClients.delete(victim.id);
+    jobs.delete(victim.id);
+  }
+}
+
 function latestReportFor(premise: string): { mp4: string; spec: unknown; report: string } | undefined {
-  const dir = join(process.cwd(), "output");
+  const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return undefined;
   const matches: Array<{ report: unknown; file: string }> = [];
   for (const f of fs.readdirSync(dir)) {
@@ -72,23 +125,17 @@ function latestReportFor(premise: string): { mp4: string; spec: unknown; report:
 }
 
 // The CLI's FAILED log policy writes output/FAILED-<slug>.log on failure.
-// Extract the human-readable reason (the "Error:" line and context after it).
+// Extract the human-readable reason — but ONLY from a log written for THIS
+// premise (slug match). Never attribute another premise's stale error here.
 function failedLogError(premise: string): string | undefined {
-  const dir = join(process.cwd(), "output");
+  const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return undefined;
-  const candidates = fs
+  const slug = premiseSlug(premise);
+  const match = fs
     .readdirSync(dir)
-    .filter((f) => f.startsWith("FAILED-") && f.endsWith(".log"))
-    .map((f) => {
-      const st = fs.statSync(join(dir, f));
-      const slug = premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
-      // prefer logs whose filename matches this premise's slug, then newest
-      const slugMatch = f.toLowerCase().includes(slug) ? 1 : 0;
-      return { f, mtime: st.mtimeMs, slugMatch };
-    })
-    .sort((a, b) => b.slugMatch - a.slugMatch || b.mtime - a.mtime);
-  if (candidates.length === 0) return undefined;
-  const text = fs.readFileSync(join(dir, candidates[0].f), "utf8");
+    .find((f) => f.startsWith("FAILED-") && f.endsWith(".log") && f.toLowerCase().includes(slug));
+  if (!match) return undefined;
+  const text = fs.readFileSync(join(dir, match), "utf8");
   const lines = text.split(/\r?\n/);
   const idx = lines.findIndex((l) => l.startsWith("Error:"));
   if (idx >= 0) {
@@ -105,19 +152,78 @@ export function runJob(job: Job) {
   if (job.provider) args.push("--provider", job.provider);
   if (job.model) args.push("--model", job.model);
   const child = spawn("npx", ["--no-install", "tsx", ...args], {
-    cwd: process.cwd(),
+    cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
     // Inject keys saved to .env via the dashboard — the CLI has no dotenv
     // loader and reads process.env directly.
     env: { ...process.env, ...loadEnv() },
   });
   const handleOutput = (text: string) => {
-    job.logs.push(text);
-    broadcast(job.id, { type: "log", text });
-    const m = text.match(/Rendered\s+(\d+)\/(\d+)/);
-    if (m) {
-      const p = Math.round((parseInt(m[1], 10) / parseInt(m[2], 10)) * 100);
-      if (p !== job.progress) { job.progress = p; broadcast(job.id, { type: "progress", progress: p }); }
+    // Strip ANSI color escapes (Remotion prints colored output) so the
+    // dashboard log console doesn't show raw escape garbage.
+    // eslint-disable-next-line no-control-regex
+    const clean = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+    job.logs.push(clean);
+    broadcast(job.id, { type: "log", text: clean });
+    let pct: number | undefined;
+    let newStage: string | undefined;
+    let eta: number | undefined;
+
+    const rend = text.match(/Rendered\s+(\d+)\/(\d+)/);
+    if (rend) {
+      newStage = "render";
+      pct = 25 + (parseInt(rend[1], 10) / parseInt(rend[2], 10)) * 67;
+      const em = text.match(/time remaining:\s*(?:(\d+)m\s*([\d.]+)s|([\d.]+)s)/);
+      if (em) {
+        eta = em[1] ? parseInt(em[1], 10) * 60 + parseFloat(em[2]) : parseFloat(em[3]);
+      }
+    } else if (text.includes("[1/5]")) {
+      newStage = "script";
+    } else if (text.includes("[3/5]")) {
+      // The CLI's own trace line marks the true bundle start — Remotion's
+      // "Bundling N%" lines only appear after esbuild's silent work.
+      newStage = "bundle";
+    } else if (text.includes("Getting composition")) {
+      newStage = "render";
+    } else if (text.includes("[5/5]")) {
+      newStage = "encode";
+    } else {
+      const bund = text.match(/Bundling\s+(\d+)%/);
+      if (bund) {
+        newStage = "bundle";
+        pct = 15 + parseInt(bund[1], 10) * 0.1;
+      } else {
+        const enc = text.match(/Encoded\s+(\d+)\/(\d+)/);
+        if (enc) {
+          newStage = "encode";
+          pct = 92 + (parseInt(enc[1], 10) / parseInt(enc[2], 10)) * 7;
+        }
+      }
+    }
+
+    let dirty = false;
+    if (newStage) {
+      setStage(job, newStage);
+      dirty = true;
+    }
+    if (eta !== undefined) {
+      job.etaSec = eta;
+      dirty = true;
+    }
+    if (pct !== undefined) {
+      const p = Math.min(99, Math.round(pct));
+      if (p !== job.progress) {
+        job.progress = p;
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      broadcast(job.id, {
+        type: "progress",
+        progress: job.progress,
+        stage: job.stage,
+        etaSec: job.etaSec,
+      });
     }
   };
   child.stdout.on("data", (buf) => handleOutput(buf.toString()));
@@ -126,11 +232,14 @@ export function runJob(job: Job) {
     if (code === 0) {
       job.status = "done";
       job.progress = 100;
+      job.etaSec = 0;
+      setStage(job, "done");
       const out = latestReportFor(job.premise);
       if (out) job.output = out;
-      broadcast(job.id, { type: "done" });
+      broadcast(job.id, { type: "done", timeline: job.timeline });
     } else {
       job.status = "failed";
+      setStage(job, "failed");
       const logError = failedLogError(job.premise);
       const logTail = job.logs
         .join("")
@@ -139,8 +248,16 @@ export function runJob(job: Job) {
         .slice(-4)
         .join("\n");
       job.error = logError ?? (logTail || `exit code ${code}`);
-      broadcast(job.id, { type: "failed", error: job.error });
+      // Attach the actionable fix for known failure classes.
+      const hint = actionable(job.error, job.provider);
+      if (hint.fix) job.error += `\n→ Fix: ${hint.fix}`;
+      broadcast(job.id, { type: "failed", error: job.error, timeline: job.timeline });
     }
+    // Terminal state reached — release SSE sockets for this job.
+    for (const c of sseClients.get(job.id) ?? []) {
+      try { c.end(); } catch { /* ignore */ }
+    }
+    sseClients.delete(job.id);
   });
 }
 

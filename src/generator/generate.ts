@@ -18,12 +18,13 @@
  * For arbitrary premises, configure a provider in ai.config.json + .env and
  * pass --provider/--model (OpenCode-style provider switching).
  */
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { validateSpec, type ShotSpec } from "./spec.schema";
 import { secToFrame } from "./timing";
 import { generateSpec } from "./ai/generate-spec";
+import { validateAssets } from "./asset-catalog";
 
 const FFMPEG = join(
   process.cwd(),
@@ -39,13 +40,12 @@ const FPS = 30;
 const WIDTH = 1080;
 const HEIGHT = 1920;
 
-/** Slug a premise into a safe file id. */
+/** Slug a premise into a safe file id (shared logic with server/jobs.ts). */
 function slug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "video";
+  return (
+    text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96) ||
+    `premise-${Date.now()}`
+  );
 }
 
 /** Duration in frames from a spec (last scene end + 2s tail). */
@@ -111,7 +111,16 @@ function main() {
 
   // NOTE: generateSpec is async. We call it via the async wrapper below.
   (async () => {
+    const t0 = Date.now();
+    const el = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
     try {
+      console.log(
+        `[1/5] Writing script — ${
+          provider && provider !== "offline"
+            ? `${provider}/${model ?? "(provider default)"}`
+            : "offline template families"
+        }`,
+      );
       const result = await generateSpec(premise, provider, model);
       const spec = result.spec;
       const providerUsed = result.provider;
@@ -119,6 +128,10 @@ function main() {
 
       // Validate (redundant but defensive — generateSpec already validates)
       const valid = validateSpec(spec);
+      validateAssets(valid);
+      console.log(
+        `[2/5] Spec validated — PASS (${valid.scenes.length} scenes, ${(valid.events ?? []).length} events, ${valid.scenes.filter((s) => s.cast?.length).length} asset stages) at +${el()}`,
+      );
 
       // Write spec for reference + debugging
       mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -137,7 +150,11 @@ function main() {
       const out = join(OUTPUT_DIR, `${id}-${stamp}.mp4`);
 
       // Build input props: { spec: {...} }
+      // Write to a FILE — asset-driven specs exceed the Windows ~32KB
+      // command-line limit when passed inline via --props.
       const inputProps = JSON.stringify({ spec: valid });
+      const propsPath = join(OUTPUT_DIR, `${id}-props.json`);
+      writeFileSync(propsPath, inputProps);
 
       console.log(`Generating: "${premise}"`);
       console.log(`Provider: ${providerUsed} / ${modelUsed}`);
@@ -145,12 +162,16 @@ function main() {
       console.log(`Duration: ${durFrames} frames (${(durFrames / FPS).toFixed(1)}s)`);
       console.log("");
 
+      console.log(
+        `[3/5] Bundling + launching render — ${durFrames} frames @${valid.fps ?? FPS}fps (1080×1920) at +${el()}`,
+      );
+
       const cmdArgs = [
         "render",
         ENTRY,
         COMP_ID,
         "--props",
-        inputProps,
+        propsPath,
         "--duration",
         String(durFrames),
         "--framerate",
@@ -179,6 +200,7 @@ function main() {
           FFMPEG_PATH: FFMPEG,
         },
       });
+      console.log(`[5/5] Encode + mux finished at +${el()}`);
 
       const reportPath = join(OUTPUT_DIR, `${id}-report.json`);
       writeFileSync(
@@ -215,6 +237,13 @@ function main() {
       console.log("═══ DONE ═══");
       console.log(`Video:  ${out}`);
       console.log(`Report: ${reportPath}`);
+      try {
+        const mb = statSync(out).size / (1024 * 1024);
+        console.log(`Size:   ${mb.toFixed(1)} MB`);
+      } catch {
+        /* size unavailable */
+      }
+      console.log(`✓ Done in ${el()} total`);
       console.log(`Upload the MP4 directly to YouTube Shorts.`);
     } catch (error) {
       const logPath = writeFailedLog(id, premise, error);
