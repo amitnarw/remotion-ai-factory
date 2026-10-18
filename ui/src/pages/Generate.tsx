@@ -38,10 +38,13 @@ import {
   getStory,
   approveStory,
   setStoryVoiceMode,
+  getVoices,
+  requestVoiceSample,
   Job,
   SoundDesignResponse,
   StoryInfo,
   StoryDraft,
+  type VoiceInfo,
 } from "../api";
 import type { Storyboard } from "../../../src/whatif/storyboard/schema";
 import { Button } from "../components/ui/button";
@@ -736,6 +739,31 @@ function StoryReview({
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
+  const [voices, setVoices] = useState<VoiceInfo[]>([]);
+
+  /* Voice catalog + lazy sample warming. */
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      getVoices()
+        .then((d) => alive && setVoices(d.voices))
+        .catch(() => {});
+    load();
+    // While samples are still being recorded in the background, refresh.
+    const iv = window.setInterval(() => {
+      getVoices()
+        .then((d) => {
+          if (!alive) return;
+          if (d.voices.every((v) => v.sample)) window.clearInterval(iv);
+          else setVoices(d.voices);
+        })
+        .catch(() => {});
+    }, 20000);
+    return () => {
+      alive = false;
+      window.clearInterval(iv);
+    };
+  }, []);
 
   /* Job just finished (fresh plan) → adopt its storyboard. */
   useEffect(() => {
@@ -809,15 +837,24 @@ function StoryReview({
     }
   };
 
-  const flipVoice = async (mode: string) => {
+  const flipVoice = async (patch: { mode?: string; narratorVoice?: string; characterVoice?: string }) => {
     if (!slug || !sb) return;
     try {
-      await setStoryVoiceMode(slug, mode);
-      setSb({ ...sb, voice: { ...sb.voice, mode: mode as Storyboard["voice"]["mode"] } });
-      toast.success(`Voice changed: ${mode}`, { duration: 1500 });
+      await setStoryVoiceMode(slug, patch);
+      setSb({ ...sb, voice: { ...sb.voice, ...patch } as Storyboard["voice"] });
+      if (patch.mode) toast.success(`Voice changed: ${patch.mode}`, { duration: 1500 });
+      if (patch.narratorVoice) toast.success(`Narrator: ${patch.narratorVoice}`, { duration: 1500 });
+      if (patch.characterVoice) toast.success(`The blob now speaks as ${patch.characterVoice}`, { duration: 1500 });
     } catch (e) {
       toast.error("Could not change the voice", { description: String(e) });
     }
+  };
+
+  const audition = (v: VoiceInfo) => {
+    if (v.sample) return; // SoundPlayer handles cached samples
+    void requestVoiceSample(v.id).then((r) =>
+      toast.info(r.url ? `${v.id} is ready — press ▶ again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
+    );
   };
 
   const stillWriting = !sb || (planJobId != null && status !== "done");
@@ -926,16 +963,16 @@ function StoryReview({
         </Card>
       ))}
 
-      {/* Voice choice */}
+      {/* Voice choice — mode + casting */}
       <Card className="p-5">
         <p className="mb-3 flex items-center gap-2 text-sm font-extrabold">
           <Megaphone className="h-4 w-4 text-primary" /> Who tells the story?
         </p>
-        <div className="flex flex-wrap gap-2.5">
+        <div className="mb-4 flex flex-wrap gap-2.5">
           {VOICE_MODES_UI.map((m) => (
             <button
               key={m.key}
-              onClick={() => flipVoice(m.key)}
+              onClick={() => flipVoice({ mode: m.key })}
               className={cn(
                 "h-11 rounded-2xl px-4 text-sm font-extrabold transition-all active:scale-95",
                 (sb.voice?.mode ?? "narrator") === m.key
@@ -947,6 +984,28 @@ function StoryReview({
             </button>
           ))}
         </div>
+        {(sb.voice?.mode ?? "narrator") !== "silent" && voices.length > 0 ? (
+          <div className="space-y-4">
+            {(sb.voice?.mode ?? "narrator") !== "character" ? (
+              <VoiceCastRow
+                title="🎙 The narrator's voice"
+                current={sb.voice?.narratorVoice ?? "Bruno"}
+                voices={voices}
+                onPick={(id) => flipVoice({ narratorVoice: id })}
+                onAudition={audition}
+              />
+            ) : null}
+            {(sb.voice?.mode ?? "narrator") !== "narrator" ? (
+              <VoiceCastRow
+                title="😄 The blob's voice"
+                current={sb.voice?.characterVoice ?? "Rosie"}
+                voices={voices}
+                onPick={(id) => flipVoice({ characterVoice: id })}
+                onAudition={audition}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </Card>
 
       {approveError ? (
@@ -990,6 +1049,73 @@ function StoryReview({
       <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>
         ◀ Start a new story
       </Button>
+    </div>
+  );
+}
+
+/* ==================================================================== */
+/*  Voice casting row — audition + pick per role                        */
+/* ==================================================================== */
+const PACE_LABEL: Record<VoiceInfo["pace"], string> = {
+  fast: "fast talker",
+  steady: "steady",
+  slow: "slow & deep",
+};
+
+function VoiceCastRow({
+  title,
+  current,
+  voices,
+  onPick,
+  onAudition,
+}: {
+  title: string;
+  current: string;
+  voices: VoiceInfo[];
+  onPick: (id: string) => void;
+  onAudition: (v: VoiceInfo) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-xs font-extrabold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <div className="flex flex-wrap gap-2.5">
+        {voices.map((v) => (
+          <div
+            key={v.id}
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest("button")) return;
+              onPick(v.id);
+            }}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-2xl px-3 py-2 transition-all",
+              current === v.id
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
+                : "bg-input hover:brightness-125",
+            )}
+          >
+            {v.sample ? (
+              <SoundPlayer url={v.sample} title={`Hear ${v.id}`} className="!h-7 !w-7" />
+            ) : (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAudition(v);
+                }}
+                title="Record a sample of this voice (takes ~30s once)"
+                className="grid h-7 w-7 place-items-center rounded-full bg-secondary text-xs font-bold"
+              >
+                ▶
+              </button>
+            )}
+            <span>
+              <span className="block text-sm font-extrabold leading-tight">{v.id}</span>
+              <span className={cn("block text-[10px] font-semibold", current === v.id ? "opacity-70" : "text-muted-foreground")}>
+                {PACE_LABEL[v.pace]}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

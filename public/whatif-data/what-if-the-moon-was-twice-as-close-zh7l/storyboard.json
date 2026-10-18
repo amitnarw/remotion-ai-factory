@@ -11,8 +11,8 @@
   "ambience": "wind_city",
   "voice": {
     "mode": "both",
-    "narratorVoice": "Bruno",
-    "characterVoice": "Rosie"
+    "narratorVoice": "Dante",
+    "characterVoice": "Luna"
   },
   "hook": {
     "words": "What if the moon sat twice as close?",

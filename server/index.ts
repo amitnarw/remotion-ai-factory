@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
+import { spawn } from "child_process";
 import { join, basename } from "path";
 import fs from "fs";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
@@ -7,6 +8,14 @@ import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
 import { createJob, createStoryJob, createPlanJob, createStoryboardJob, getJob, getAllJobs, premiseSlug, runJob, runStoryJob, runPlanJob, runStoryboardJob, subscribeSSE, type PlanJobRequest } from "./jobs";
 import { STORY_META } from "../src/whatif/videos/story-meta";
+import {
+  BANNED_VOICES,
+  DEFAULT_CHARACTER,
+  DEFAULT_NARRATOR,
+  KNOWN_VOICES,
+  pickVoice,
+  SAMPLE_TEXT,
+} from "../src/whatif/audio/voices";
 import {
   cleanSoundMap,
   loadCatalog,
@@ -19,6 +28,59 @@ import { buildFamilySpec } from "../src/generator/build-family-spec";
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/* ------------ Voice-sample backend (local KittenTTS) ---------------- */
+const PYTHON = join(
+  "C:",
+  "Users",
+  "Narwal",
+  "Desktop",
+  "kitten-tts-test",
+  ".venv",
+  "Scripts",
+  "python.exe",
+);
+const SAMPLES_DIR = join(ROOT, "public", "whatif-audio", "voice-samples");
+let voiceSampleJobRunning = false;
+
+function voiceSampleBackendAvailable(): boolean {
+  try {
+    fs.accessSync(PYTHON);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Fire a KittenTTS batch to record sample wavs (async, no waiting). */
+function spawnVoiceSamples(ids: string[], done?: () => void): void {
+  if (!voiceSampleBackendAvailable()) {
+    done?.();
+    return;
+  }
+  fs.mkdirSync(SAMPLES_DIR, { recursive: true });
+  const jobPath = join(ROOT, "output", `.voice-samples-${ids.length}.json`);
+  fs.writeFileSync(
+    jobPath,
+    JSON.stringify({
+      outDir: SAMPLES_DIR,
+      lines: ids.map((id) => ({ id, text: SAMPLE_TEXT, voice: id })),
+    }),
+  );
+  const child = spawn(
+    PYTHON,
+    [join(ROOT, "scripts", "story-tts.py"), jobPath],
+    {
+      cwd: ROOT,
+      stdio: ["ignore", "ignore", "ignore"],
+      env: { ...process.env, ...loadEnv(), PYTHONUTF8: "1", HF_HUB_OFFLINE: "1" },
+    },
+  );
+  child.on("close", () => {
+    try { fs.rmSync(jobPath, { force: true }); } catch { /* ignore */ }
+    done?.();
+  });
+}
 
 // ---------- Providers ----------
 app.get("/api/providers", (_req, res) => {
@@ -196,6 +258,44 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
     });
 });
 
+app.get("/api/voices", (_req, res) => {
+  const samplesDir = join(ROOT, "public", "whatif-audio", "voice-samples");
+  const voices = KNOWN_VOICES.map((v) => {
+    const sampleFile = join(samplesDir, `${v.id}.wav`);
+    return {
+      id: v.id,
+      pace: v.pace,
+      sample: fs.existsSync(sampleFile) ? `/whatif-audio/voice-samples/${v.id}.wav` : null,
+    };
+  });
+  // Warm the sample cache in the background on first inquiry (one batch).
+  const pending = voices.filter((v) => !v.sample);
+  if (pending.length > 0 && !voiceSampleJobRunning && voiceSampleBackendAvailable()) {
+    voiceSampleJobRunning = true;
+    spawnVoiceSamples(
+      pending.map((v) => v.id),
+      () => {
+        voiceSampleJobRunning = false;
+      },
+    );
+  }
+  // Surface the storyboard-saved cast (any approved/draft story can adopt it).
+  res.json({ voices, defaultNarrator: DEFAULT_NARRATOR, defaultCharacter: DEFAULT_CHARACTER });
+});
+
+app.post("/api/voices/sample", (req, res) => {
+  const { voice } = req.body as { voice?: string };
+  if (!voice || !pickVoice(voice, "") || BANNED_VOICES.has(voice)) {
+    return res.status(400).json({ error: "Unknown or unavailable voice", voice });
+  }
+  const sampleFile = join(ROOT, "public", "whatif-audio", "voice-samples", `${voice}.wav`);
+  if (fs.existsSync(sampleFile)) {
+    return res.json({ url: `/whatif-audio/voice-samples/${voice}.wav`, cached: true });
+  }
+  spawnVoiceSamples([voice]);
+  res.json({ url: null, note: `${voice} is being recorded — press play again in ~30s` });
+});
+
 // ---------- Story Studio (storyboard plan → review → approve → render) ----------
 app.post("/api/story/plan", (req, res) => {
   const body = req.body as Partial<PlanJobRequest>;
@@ -233,20 +333,39 @@ app.post("/api/story/plan", (req, res) => {
 });
 
 app.post("/api/story/voice", (req, res) => {
-  const { slug, mode } = req.body as { slug?: string; mode?: string };
+  const { slug, mode, narratorVoice, characterVoice } = req.body as {
+    slug?: string;
+    mode?: string;
+    narratorVoice?: string;
+    characterVoice?: string;
+  };
   if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
     return res.status(400).json({ error: "slug required" });
-  }
-  const modes = ["narrator", "character", "both", "silent"];
-  if (!mode || !modes.includes(mode)) {
-    return res.status(400).json({
-      error: `mode must be one of: ${modes.join(", ")}`,
-    });
   }
   const p = join(ROOT, "public", "whatif-data", slug, "storyboard.json");
   try {
     const sb = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
-    sb.voice = { ...((sb.voice as object) ?? {}), mode };
+    const voice = ((sb.voice as object) ?? {}) as { mode?: string; narratorVoice?: string; characterVoice?: string };
+    if (mode !== undefined) {
+      const modes = ["narrator", "character", "both", "silent"];
+      if (!modes.includes(mode)) {
+        return res.status(400).json({ error: `mode must be one of: ${modes.join(", ")}` });
+      }
+      voice.mode = mode;
+    }
+    if (narratorVoice !== undefined) {
+      if (BANNED_VOICES.has(narratorVoice) || !pickVoice(narratorVoice, "")) {
+        return res.status(400).json({ error: `"${narratorVoice}" is not an available narrator voice` });
+      }
+      voice.narratorVoice = narratorVoice;
+    }
+    if (characterVoice !== undefined) {
+      if (BANNED_VOICES.has(characterVoice) || !pickVoice(characterVoice, "")) {
+        return res.status(400).json({ error: `"${characterVoice}" is not an available blob voice` });
+      }
+      voice.characterVoice = characterVoice;
+    }
+    sb.voice = voice;
     fs.writeFileSync(p, JSON.stringify(sb, null, 2));
     res.json({ ok: true, voice: sb.voice });
   } catch {

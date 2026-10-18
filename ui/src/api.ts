@@ -108,13 +108,37 @@ export async function approveStory(slug: string): Promise<{ jobId: string }> {
   );
 }
 
-export async function setStoryVoiceMode(slug: string, mode: string): Promise<void> {
+export async function setStoryVoiceMode(
+  slug: string,
+  patch: { mode?: string; narratorVoice?: string; characterVoice?: string },
+): Promise<void> {
   const r = await fetch(`${BASE}/story/voice`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slug, mode }),
+    body: JSON.stringify({ slug, ...patch }),
   });
   if (!r.ok) throw new Error(await errorText(r));
+}
+
+/* Voice casting */
+export interface VoiceInfo {
+  id: string;
+  pace: "fast" | "steady" | "slow";
+  sample: string | null;
+}
+
+export async function getVoices(): Promise<{ voices: VoiceInfo[] }> {
+  return json(await fetch(`${BASE}/voices`));
+}
+
+export async function requestVoiceSample(voice: string): Promise<{ url: string | null; note?: string }> {
+  return json(
+    await fetch(`${BASE}/voices/sample`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voice }),
+    }),
+  );
 }
 
 export async function generateStory(
