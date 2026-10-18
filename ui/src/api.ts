@@ -38,9 +38,32 @@ export interface Job {
   premise: string;
   provider?: string;
   model?: string;
+  engine?: "template" | "story";
   output?: JobOutput;
   error?: string;
   createdAt: number;
+}
+
+export interface StoryInfo {
+  slug: string;
+  title: string;
+  durationSec: number;
+  fps: number;
+}
+
+export async function getStories(): Promise<StoryInfo[]> {
+  const r = await json<{ stories: StoryInfo[] }>(await fetch(`${BASE}/stories`));
+  return r.stories;
+}
+
+export async function generateStory(slug: string): Promise<{ jobId: string }> {
+  return json(
+    await fetch(`${BASE}/generate-story`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    }),
+  );
 }
 
 export interface Video {
@@ -48,6 +71,8 @@ export interface Video {
   premise: string;
   provider?: string;
   model?: string;
+  engine?: "template" | "story";
+  music?: { mood?: string; seed?: number };
   scenes?: number;
   events?: number;
   durationSec?: number | string;

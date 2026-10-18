@@ -22,6 +22,8 @@ export interface Job {
   premise: string;
   provider?: string;
   model?: string;
+  /** "template" = spec pipeline; "story" = agent-authored composition. */
+  engine?: "template" | "story";
   output?: { mp4: string; spec: unknown; report: string };
   error?: string;
   createdAt: number;
@@ -62,8 +64,31 @@ export function createJob(premise: string, provider?: string, model?: string): J
     premise,
     provider,
     model,
+    engine: "template",
     createdAt: Date.now(),
   };
+  jobs.set(id, job);
+  sseClients.set(id, new Set());
+  evictOldJobs();
+  return job;
+}
+
+export function createStoryJob(slug: string, title: string): Job {
+  jobIdCounter += 1;
+  const id = `${Date.now()}-s${jobIdCounter}`;
+  const job: Job = {
+    id,
+    status: "queued",
+    progress: 0,
+    stage: "music",
+    etaSec: null,
+    timeline: [{ stage: "music", startedAt: Date.now() }],
+    logs: [],
+    premise: title,
+    engine: "story",
+    createdAt: Date.now(),
+  };
+  void slug;
   jobs.set(id, job);
   sseClients.set(id, new Set());
   evictOldJobs();
@@ -268,4 +293,120 @@ export function subscribeSSE(jobId: string, res: ServerResponse) {
   clients.add(res);
   sseClients.set(jobId, clients);
   res.on("close", () => { clients.delete(res); });
+}
+
+/**
+ * Story-engine job: renders a registered agent-authored video
+ * (scripts/render-story.ts <slug>). Stages: music → bundle → render → encode.
+ */
+export function runStoryJob(job: Job, slug: string) {
+  job.status = "running";
+  broadcast(job.id, { type: "status", status: "running" });
+  const child = spawn(
+    "npx",
+    ["--no-install", "tsx", "scripts/render-story.ts", slug],
+    {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ... process.env, FFMPEG_PATH: join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe") },
+    },
+  );
+
+  const handleOutput = (text: string) => {
+    // eslint-disable-next-line no-control-regex
+    const clean = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+    job.logs.push(clean);
+    broadcast(job.id, { type: "log", text: clean });
+    let pct: number | undefined;
+    let newStage: string | undefined;
+    let eta: number | undefined;
+
+    const rend = text.match(/Rendered\s+(\d+)\/(\d+)/);
+    if (rend) {
+      newStage = "render";
+      pct = 30 + (parseInt(rend[1], 10) / parseInt(rend[2], 10)) * 62;
+      const em = text.match(/time remaining:\s*(?:(\d+)m\s*([\d.]+)s|([\d.]+)s)/);
+      if (em) {
+        eta = em[1] ? parseInt(em[1], 10) * 60 + parseFloat(em[2]) : parseFloat(em[3]);
+      }
+    } else if (text.includes("[render]")) {
+      newStage = "bundle";
+      pct = 12;
+    } else if (text.includes("[music]")) {
+      newStage = "music";
+      pct = 5;
+    } else {
+      const bund = text.match(/Bundling\s+(\d+)%/);
+      if (bund) {
+        newStage = "bundle";
+        pct = 15 + parseInt(bund[1], 10) * 0.1;
+      } else {
+        const enc = text.match(/Encoded\s+(\d+)\/(\d+)/);
+        if (enc) {
+          newStage = "encode";
+          pct = 92 + (parseInt(enc[1], 10) / parseInt(enc[2], 10)) * 7;
+        }
+      }
+    }
+
+    let dirty = false;
+    if (newStage) {
+      setStage(job, newStage);
+      dirty = true;
+    }
+    if (eta !== undefined) {
+      job.etaSec = eta;
+      dirty = true;
+    }
+    if (pct !== undefined) {
+      const p = Math.min(99, Math.round(pct));
+      if (p !== job.progress) {
+        job.progress = p;
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      broadcast(job.id, { type: "progress", progress: job.progress, stage: job.stage, etaSec: job.etaSec });
+    }
+  };
+  child.stdout.on("data", (buf) => handleOutput(buf.toString()));
+  child.stderr.on("data", (buf) => handleOutput(buf.toString()));
+  child.on("close", (code) => {
+    if (code === 0) {
+      job.status = "done";
+      job.progress = 100;
+      job.etaSec = 0;
+      setStage(job, "done");
+      const reportPath = join(ROOT, "output", `${slug}-report.json`);
+      try {
+        const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Record<string, unknown>;
+        const mp4 = report.output as string;
+        job.output = {
+          mp4: mp4.split(/[\\/]/).pop() ?? mp4,
+          spec: {},
+          report: `${slug}-report.json`,
+        };
+      } catch {
+        /* report missing — output stays unset */
+      }
+      broadcast(job.id, { type: "done", timeline: job.timeline });
+    } else {
+      job.status = "failed";
+      setStage(job, "failed");
+      const logTail = job.logs
+        .join("")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.includes("Rendered "))
+        .slice(-5)
+        .join("\n");
+      job.error = logTail || `exit code ${code}`;
+      const hint = actionable(job.error, job.provider);
+      if (hint.fix) job.error += `\n→ Fix: ${hint.fix}`;
+      broadcast(job.id, { type: "failed", error: job.error, timeline: job.timeline });
+    }
+    for (const c of sseClients.get(job.id) ?? []) {
+      try { c.end(); } catch { /* ignore */ }
+    }
+    sseClients.delete(job.id);
+  });
 }

@@ -1,9 +1,21 @@
 import { useState, useEffect, useRef } from "react";
-import { getProviders, generateVideo, getJob, Job, ProviderInfo } from "../api";
+import {
+  getProviders,
+  getStories,
+  generateVideo,
+  generateStory,
+  getJob,
+  Job,
+  ProviderInfo,
+  StoryInfo,
+} from "../api";
 import { PlayerPreview } from "../preview/PlayerPreview";
 
 export default function Generate() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [engine, setEngine] = useState<"story" | "template">("story");
+  const [stories, setStories] = useState<StoryInfo[]>([]);
+  const [selectedStory, setSelectedStory] = useState<string | undefined>(undefined);
   const [premise, setPremise] = useState("");
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   const [models, setModels] = useState<string[]>([]);
@@ -27,6 +39,15 @@ export default function Generate() {
 
   useEffect(() => {
     getProviders().then((d) => setProviders(d.providers || []));
+    getStories()
+      .then((d) => {
+        setStories(d);
+        if (d.length && !selectedStory) setSelectedStory(d[0].slug);
+      })
+      .catch(() => {
+        /* story registry unreachable — toggle hides the picker */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
   }, []);
 
   // Elapsed-time ticker while a job is running.
@@ -69,20 +90,39 @@ export default function Generate() {
     return () => window.clearInterval(iv);
   }, [pollJobId, status]);
 
+  const selectedStoryMeta = stories.find((s) => s.slug === selectedStory);
+
   const handleGenerate = async () => {
-    if (!premise.trim() || keyMissing || status === "running") return;
+    if (status === "running") return;
+    if (engine === "story" && !selectedStory) return;
+    if (engine === "template" && (!premise.trim() || keyMissing)) return;
     setLogs([]);
     setProgress(0);
     setGenError(null);
-    setStageState("script");
+    setStageState(engine === "story" ? "music" : "script");
     setEta(null);
     setStartAt(Date.now());
     setNow(Date.now());
     setPollJobId(null);
     setStatus("running");
+    const title =
+      engine === "story" ? selectedStoryMeta?.title ?? selectedStory : premise;
     try {
-      const r = await generateVideo(premise, selectedProvider, selectedModel);
-      setJob({ id: r.jobId, status: "queued", progress: 0, stage: "script", etaSec: null, logs: [] as string[], premise, createdAt: Date.now() } as Job);
+      const r =
+        engine === "story"
+          ? await generateStory(selectedStory!)
+          : await generateVideo(premise, selectedProvider, selectedModel);
+      setJob({
+        id: r.jobId,
+        status: "queued",
+        progress: 0,
+        stage: engine === "story" ? "music" : "script",
+        etaSec: null,
+        logs: [] as string[],
+        premise: title,
+        engine,
+        createdAt: Date.now(),
+      } as Job);
       openSSE(r.jobId);
     } catch (e) {
       setGenError(String(e));
@@ -155,13 +195,22 @@ export default function Generate() {
       });
   };
 
-  const STEPS: Array<{ key: string; label: string }> = [
-    { key: "script", label: "Script (AI)" },
-    { key: "bundle", label: "Bundle" },
-    { key: "render", label: "Render" },
-    { key: "encode", label: "Encode" },
-  ];
+  const isStory = engine === "story" || job?.engine === "story";
+  const STEPS: Array<{ key: string; label: string }> = isStory
+    ? [
+        { key: "music", label: "Music bed" },
+        { key: "bundle", label: "Bundle" },
+        { key: "render", label: "Render" },
+        { key: "encode", label: "Encode" },
+      ]
+    : [
+        { key: "script", label: "Script (AI)" },
+        { key: "bundle", label: "Bundle" },
+        { key: "render", label: "Render" },
+        { key: "encode", label: "Encode" },
+      ];
   const STAGE_LABELS: Record<string, string> = {
+    music: "Syncing synthesized music bed…",
     script: "Writing script with AI…",
     bundle: "Bundling composition…",
     render: "Rendering frames…",
@@ -191,12 +240,12 @@ export default function Generate() {
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
       <h2 style={{ fontSize: "20px", marginBottom: 16 }}>Generate a video</h2>
-      {premise.trim().length > 0 && premise.trim().length < 6 && (
+      {engine === "template" && premise.trim().length > 0 && premise.trim().length < 6 && (
         <div style={{ color: "#b45309", fontSize: 12, marginBottom: 8 }}>
           Too short — describe a full scenario, e.g. "What if gravity disappeared for just 5 seconds?"
         </div>
       )}
-      {keyMissing && (
+      {engine === "template" && keyMissing && (
         <div
           style={{
             background: "#fef2f2",
@@ -228,65 +277,124 @@ export default function Generate() {
           {genError}
         </div>
       )}
+      {/* Engine toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {(
+          [
+            { key: "story", label: "Story engine", hint: "Agent-authored bespoke compositions" },
+            { key: "template", label: "AI spec", hint: "Template / LLM spec pipeline" },
+          ] as const
+        ).map((e) => (
+          <button
+            key={e.key}
+            onClick={() => setEngine(e.key)}
+            disabled={status === "running"}
+            title={e.hint}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: engine === e.key ? 700 : 400,
+              border: "1px solid #d1d5db",
+              cursor: status === "running" ? "not-allowed" : "pointer",
+              background: engine === e.key ? "#111827" : "#f3f4f6",
+              color: engine === e.key ? "#fff" : "#374151",
+            }}
+          >
+            {e.label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ gap: 12, marginBottom: 16, display: "flex", flexWrap: "wrap" }}>
-        <input
-          placeholder="What if gravity disappeared for just 5 seconds?"
-          value={premise}
-          onChange={(e) => setPremise(e.target.value)}
-          style={{
-            flex: 1,
-            padding: "10px 14px",
-            border: "1px solid #d1d5db",
-            borderRadius: 8,
-            fontSize: 14,
-          }}
-        />
-        <select
-          value={selectedProvider || ""}
-          onChange={(e) => {
-            const val = e.target.value || undefined;
-            setSelectedProvider(val);
-            setSelectedModel(undefined);
-            if (val === "offline") {
-              setModels(["templates"]);
-            } else {
-              const p = providers.find((x) => x.name === val);
-              setModels((p?.models || []).slice());
-            }
-          }}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        >
-          <option value="">Provider</option>
-          <option value="offline">offline / templates (no key needed)</option>
-          {providers.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name} {p.keyConfigured ? "✓" : "○"}
-            </option>
-          ))}
-        </select>
-        <select
-          value={selectedModel || ""}
-          onChange={(e) => setSelectedModel(e.target.value || undefined)}
-          disabled={!models.length}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        >
-          <option value="">Model</option>
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+        {engine === "story" ? (
+          <select
+            value={selectedStory || ""}
+            onChange={(e) => setSelectedStory(e.target.value)}
+            disabled={status === "running"}
+            style={{
+              flex: 1,
+              minWidth: 280,
+              padding: "10px 14px",
+              border: "1px solid #d1d5db",
+              borderRadius: 8,
+              fontSize: 14,
+            }}
+          >
+            {stories.length === 0 && <option value="">No registered story videos yet</option>}
+            {stories.map((s) => (
+              <option key={s.slug} value={s.slug}>
+                {s.title} — {s.durationSec}s
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            placeholder="What if gravity disappeared for just 5 seconds?"
+            value={premise}
+            onChange={(e) => setPremise(e.target.value)}
+            style={{
+              flex: 1,
+              padding: "10px 14px",
+              border: "1px solid #d1d5db",
+              borderRadius: 8,
+              fontSize: 14,
+            }}
+          />
+        )}
+        {engine === "template" && (
+          <>
+            <select
+              value={selectedProvider || ""}
+              onChange={(e) => {
+                const val = e.target.value || undefined;
+                setSelectedProvider(val);
+                setSelectedModel(undefined);
+                if (val === "offline") {
+                  setModels(["templates"]);
+                } else {
+                  const p = providers.find((x) => x.name === val);
+                  setModels((p?.models || []).slice());
+                }
+              }}
+              style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
+            >
+              <option value="">Provider</option>
+              <option value="offline">offline / templates (no key needed)</option>
+              {providers.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name} {p.keyConfigured ? "✓" : "○"}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedModel || ""}
+              onChange={(e) => setSelectedModel(e.target.value || undefined)}
+              disabled={!models.length}
+              style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
+            >
+              <option value="">Model</option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <button
           onClick={handleGenerate}
-          disabled={status === "running" || keyMissing || !premise.trim()}
+          disabled={
+            status === "running" ||
+            (engine === "story" ? !selectedStory : !premise.trim() || keyMissing)
+          }
           style={{
             padding: "10px 20px",
-            background: status === "running" || keyMissing || !premise.trim() ? "#9ca3af" : "#111827",
+            background: status === "running" ? "#9ca3af" : "#111827",
             color: "#fff",
             border: "none",
             borderRadius: 8,
-            cursor: status === "running" || keyMissing || !premise.trim() ? "not-allowed" : "pointer",
+            cursor: status === "running" ? "not-allowed" : "pointer",
           }}
         >
           {status === "running" ? "Rendering…" : "Generate"}
@@ -324,6 +432,7 @@ export default function Generate() {
                 // eslint-disable-next-line @remotion/non-pure-animation -- dashboard CSS, not a Remotion composition
                 transition: "width 0.4s ease",
                 background:
+                  stage === "music" ? "#f59e0b" :
                   stage === "script" ? "#f59e0b" :
                   stage === "bundle" ? "#38bdf8" :
                   stage === "encode" ? "#a855f7" :
@@ -427,9 +536,13 @@ export default function Generate() {
               <span style={{ fontSize: 13, color: "#6b7280" }}>{job.output.mp4}</span>
             </div>
           ) : null}
-          <PlayerPreview spec={job.output?.spec || {}} />
+          {isStory ? null : <PlayerPreview spec={job.output?.spec || {}} />}
           <p style={{ marginTop: 10, fontSize: 13, color: "#6b7280" }}>
-            {job.output?.mp4 ? "In-browser preview of the real composition (audio included)." : "Rendering finished — result files were not found for this job."}
+            {isStory
+              ? "Bespoke agent-authored composition — every frame was rendered, extracted and visually verified. Use Download to watch with the full music + SFX mix."
+              : job.output?.mp4
+              ? "In-browser preview of the real composition (audio included)."
+              : "Rendering finished — result files were not found for this job."}
           </p>
         </div>
       )}

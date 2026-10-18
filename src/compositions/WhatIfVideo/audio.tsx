@@ -1,12 +1,16 @@
 /**
  * WhatIfVideo/audio.tsx — renders every SFX cue and ambient bed from the spec.
- * Frame-exact: trimBefore = t * fps for one-shots; trimBefore + durationInFrames
- * for beds. Sync is arithmetic (frame = t * fps), so picture, caption, timer
- * and audio can never drift.
+ * Frame-exact: cues are delayed with <Sequence from={frame}> and play the file
+ * from its beginning; ambient beds slice the SOURCE with startFrom (that's
+ * trimming semantics). Sync is arithmetic (frame = t * fps), so picture,
+ * caption, timer and audio can never drift.
  * SFX files live in public/sfx/<tag>.wav (built by scripts/setup-sfx.ts).
+ *
+ * CRITICAL: <Audio startFrom={N}> skips the first N frames OF THE FILE —
+ * it does NOT delay playback. Delaying a one-shot = wrap in <Sequence from>.
  */
 import * as React from "react";
-import { Audio, interpolate, staticFile } from "remotion";
+import { Audio, Sequence, interpolate, staticFile } from "remotion";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
 
@@ -28,40 +32,38 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({
 
   return (
     <>
-      {/* One-shot SFX pinned to event frames.
-          CRITICAL: cue.at / cue.to are SECONDS — convert with secToFrame.
-          (Passing seconds as frames used to cram EVERY cue into the first
-          0.13s of the video → one mushed blast, then silence.) */}
+      {/* One-shot SFX pinned to event frames via Sequence (delay semantics).
+          cue.at / cue.to are SECONDS — convert with secToFrame. */}
       {events.flatMap((ev, ei) =>
         (ev.sfx ?? []).map((cue, i) => {
-          const startFrame = secToFrame((cue.at ?? ev.t) as number, fps);
-          const endFrame = cue.to ? secToFrame(cue.to as number, fps) : undefined;
-          const duration = endFrame
-            ? Math.max(2, endFrame - startFrame)
-            : undefined;
+          const at = secToFrame((cue.at ?? ev.t) as number, fps);
+          const to = cue.to ? secToFrame(cue.to as number, fps) : undefined;
+          const seqDuration = to ? Math.max(2, to - at) : undefined;
           return (
-            <Audio
+            <Sequence
               key={`${ev.name}-${ei}-${i}`}
-              src={sfxPath(cue.tag)}
-              startFrom={Math.max(0, startFrame)}
-              durationInFrames={duration}
-              volume={(f: number) => {
-                // Per-cue envelope: ramp-up / ramp-down / hold.
-                if (!duration) return 1;
-                if (cue.volume === "ramp-up") {
-                  return interpolate(f, [0, duration], [0.05, 1]);
-                }
-                if (cue.volume === "ramp-down") {
-                  return interpolate(f, [0, duration], [1, 0.02]);
-                }
-                return 1;
-              }}
-            />
+              from={Math.max(0, at)}
+              durationInFrames={seqDuration}
+            >
+              <Audio
+                src={sfxPath(cue.tag)}
+                volume={(f: number) => {
+                  if (!seqDuration) return cue.volume === "ramp-down" ? 1 : 1;
+                  if (cue.volume === "ramp-up") {
+                    return interpolate(f, [0, seqDuration], [0.05, 1]);
+                  }
+                  if (cue.volume === "ramp-down") {
+                    return interpolate(f, [0, seqDuration], [1, 0.02]);
+                  }
+                  return 1;
+                }}
+              />
+            </Sequence>
           );
         }),
       )}
 
-      {/* Ambient beds */}
+      {/* Ambient beds — these SLICE the source (trim semantics intended). */}
       {ambient.map((bed, i) => {
         const fromFrame = secToFrame(bed.from, fps);
         const toFrame = bed.to ? secToFrame(bed.to, fps) : undefined;

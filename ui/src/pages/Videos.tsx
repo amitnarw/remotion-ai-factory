@@ -52,7 +52,15 @@ export default function Videos() {
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{v.premise}</div>
                 <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
-                  {v.provider} / {v.model} • {v.scenes} scenes • {v.events} events
+                  {v.engine === "story" ? (
+                    <>
+                      Story engine • bespoke composition • {v.music ? `music: ${(v.music as { mood?: string }).mood}` : "synthesized score"}
+                    </>
+                  ) : (
+                    <>
+                      {v.provider} / {v.model} • {v.scenes} scenes • {v.events} events
+                    </>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <button
@@ -63,7 +71,9 @@ export default function Videos() {
                   </button>
                   <button
                     onClick={() => setOpenReview({ id: v.id, reviewFolder: v.reviewFolder })}
-                    style={{ flex: 1, padding: "8px 12px", background: "#e5e7eb", color: "#111827", border: "none", borderRadius: 6, cursor: "pointer" }}
+                    disabled={!v.reviewFolder}
+                    style={{ flex: 1, padding: "8px 12px", background: v.reviewFolder ? "#e5e7eb" : "#f9fafb", color: v.reviewFolder ? "#111827" : "#c7cad1", border: "none", borderRadius: 6, cursor: v.reviewFolder ? "pointer" : "not-allowed" }}
+                    title={v.reviewFolder ? "Frame-by-frame review" : "No review folder (story engine renders are verified at build time)"}
                   >
                     Review frames
                   </button>

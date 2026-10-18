@@ -5,7 +5,8 @@ import fs from "fs";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, getJob, getAllJobs, premiseSlug, runJob, subscribeSSE } from "./jobs";
+import { createJob, createStoryJob, getJob, getAllJobs, premiseSlug, runJob, runStoryJob, subscribeSSE } from "./jobs";
+import { STORY_META } from "../src/whatif/videos/story-meta";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 
@@ -163,8 +164,7 @@ app.post("/api/providers/:name/test", async (req, res) => {
 });
 
 // ---------- Live model listing (real API data per provider) ----------
-app.get("/api/providers/:name/models", (req, res) => {
-  const { name } = req.params;
+app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.params;
   const cfg = loadConfig();
   const pc = cfg.providers[name];
   if (!pc) return res.status(404).json({ error: "unknown provider" });
@@ -188,6 +188,47 @@ app.get("/api/providers/:name/models", (req, res) => {
         fix,
       });
     });
+});
+
+// ---------- Story engine (agent-authored compositions) ----------
+app.get("/api/stories", (_req, res) => {
+  res.json({
+    stories: STORY_META.map((v) => ({
+      slug: v.slug,
+      title: v.title,
+      durationSec: v.durationInFrames / v.fps,
+      fps: v.fps,
+    })),
+  });
+});
+
+app.post("/api/generate-story", (req, res) => {
+  const { slug } = req.body as { slug?: string };
+  const meta = slug ? STORY_META.find((v) => v.slug === slug) : undefined;
+  if (!meta) {
+    return res.status(400).json({
+      error: slug
+        ? `No registered story video with slug "${slug}".`
+        : "slug required",
+      fix: "Pick a video from the list on the Generate tab — registered story videos live in src/whatif/videos/",
+    });
+  }
+  // Never render the same story twice concurrently (same output/report).
+  for (const other of getAllJobs()) {
+    if (
+      (other.status === "running" || other.status === "queued") &&
+      other.engine === "story" &&
+      other.logs.some((l) => l.includes(`[render] story-${slug}`))
+    ) {
+      return res.status(409).json({
+        error: `Already rendering "${meta.title}" (job ${other.id}) — wait for it to finish`,
+        jobId: other.id,
+      });
+    }
+  }
+  const job = createStoryJob(meta.slug, meta.title);
+  runStoryJob(job, meta.slug);
+  res.json({ jobId: job.id });
 });
 
 // ---------- Jobs ----------
