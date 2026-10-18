@@ -21,3 +21,6 @@ public/assets/
 
 # Generated asset catalog
 assets.catalog.json
+
+# TTS scratch jobs
+**/.tts-job.json

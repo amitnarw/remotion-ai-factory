@@ -1,0 +1,35 @@
+{
+  "outDir": "C:\\Users\\Narwal\\Desktop\\remotion\\public\\whatif-data\\what-if-the-moon-was-twice-as-close-h3ct\\voice",
+  "lines": [
+    {
+      "id": "beat-0-n",
+      "text": "Moon. Twice as close.",
+      "voice": "Bruno"
+    },
+    {
+      "id": "beat-1-c",
+      "text": "Ahh. Goodnight, tiny moon.",
+      "voice": "Rosie"
+    },
+    {
+      "id": "beat-2-n",
+      "text": "It doubles. Instantly.",
+      "voice": "Bruno"
+    },
+    {
+      "id": "beat-3-c",
+      "text": "WE TALKED, MOON!!",
+      "voice": "Rosie"
+    },
+    {
+      "id": "beat-4-c",
+      "text": "WORST. NIGHT. EVER!!",
+      "voice": "Rosie"
+    },
+    {
+      "id": "beat-5-c",
+      "text": "Home. Cocoa. Again.",
+      "voice": "Rosie"
+    }
+  ]
+}

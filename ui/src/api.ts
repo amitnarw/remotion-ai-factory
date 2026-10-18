@@ -38,8 +38,10 @@ export interface Job {
   premise: string;
   provider?: string;
   model?: string;
-  engine?: "template" | "story";
+  engine?: "template" | "story" | "plan" | "storyboard";
   output?: JobOutput;
+  slug?: string;
+  storyboard?: unknown;
   error?: string;
   createdAt: number;
 }
@@ -55,6 +57,64 @@ export interface StoryInfo {
 export async function getStories(): Promise<StoryInfo[]> {
   const r = await json<{ stories: StoryInfo[] }>(await fetch(`${BASE}/stories`));
   return r.stories;
+}
+
+/* Story Studio — plan → review → approve → render */
+export interface StoryDraft {
+  slug: string;
+  title: string;
+  seconds: number;
+  createdAt: number;
+  approved: boolean;
+}
+
+export async function getStoryDrafts(): Promise<StoryDraft[]> {
+  const r = await json<{ drafts: StoryDraft[] }>(await fetch(`${BASE}/story/drafts`));
+  return r.drafts;
+}
+
+export interface PlanStartResult {
+  jobId: string;
+}
+
+export async function planStory(body: {
+  mode: "topic" | "story";
+  input: string;
+  seconds: number;
+  feedback?: string;
+  slug?: string;
+  previous?: unknown;
+}): Promise<PlanStartResult> {
+  return json(
+    await fetch(`${BASE}/story/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function getStory(slug: string): Promise<{ slug: string; storyboard: unknown }> {
+  return json(await fetch(`${BASE}/story/${slug}`));
+}
+
+export async function approveStory(slug: string): Promise<{ jobId: string }> {
+  return json(
+    await fetch(`${BASE}/story/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    }),
+  );
+}
+
+export async function setStoryVoiceMode(slug: string, mode: string): Promise<void> {
+  const r = await fetch(`${BASE}/story/voice`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug, mode }),
+  });
+  if (!r.ok) throw new Error(await errorText(r));
 }
 
 export async function generateStory(

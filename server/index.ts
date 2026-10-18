@@ -5,7 +5,7 @@ import fs from "fs";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, createStoryJob, getJob, getAllJobs, premiseSlug, runJob, runStoryJob, subscribeSSE } from "./jobs";
+import { createJob, createStoryJob, createPlanJob, createStoryboardJob, getJob, getAllJobs, premiseSlug, runJob, runStoryJob, runPlanJob, runStoryboardJob, subscribeSSE, type PlanJobRequest } from "./jobs";
 import { STORY_META } from "../src/whatif/videos/story-meta";
 import {
   cleanSoundMap,
@@ -194,6 +194,129 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
         fix,
       });
     });
+});
+
+// ---------- Story Studio (storyboard plan → review → approve → render) ----------
+app.post("/api/story/plan", (req, res) => {
+  const body = req.body as Partial<PlanJobRequest>;
+  const mode = body.mode === "story" ? "story" : "topic";
+  const input = typeof body.input === "string" ? body.input.trim() : "";
+  if (input.length < 3) {
+    return res.status(400).json({
+      error: mode === "story" ? "The story text is missing or too short" : "The topic is missing or too short",
+      fix: mode === "story"
+        ? "Paste the whole story (a couple of sentences minimum)"
+        : 'Type a topic like "What if the moon was twice as close?"',
+    });
+  }
+  const seconds = Math.min(60, Math.max(10, Math.round(Number(body.seconds) || 20)));
+  const planReq: PlanJobRequest = {
+    mode,
+    input,
+    seconds,
+    feedback: typeof body.feedback === "string" ? body.feedback.slice(0, 1000) : undefined,
+    provider: typeof body.provider === "string" ? body.provider : undefined,
+    model: typeof body.model === "string" ? body.model : undefined,
+    slug: typeof body.slug === "string" && /^[a-z0-9-]+$/.test(body.slug) ? body.slug : undefined,
+  };
+  // One plan job at a time (the writer is the expensive step).
+  const busy = getAllJobs().find((j) => j.engine === "plan" && (j.status === "running" || j.status === "queued"));
+  if (busy) {
+    return res.status(409).json({
+      error: `A story is already being written (job ${busy.id}) — wait for it to finish`,
+      jobId: busy.id,
+    });
+  }
+  const job = createPlanJob(input, planReq.provider, planReq.model);
+  runPlanJob(job, planReq);
+  res.json({ jobId: job.id });
+});
+
+app.post("/api/story/voice", (req, res) => {
+  const { slug, mode } = req.body as { slug?: string; mode?: string };
+  if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+    return res.status(400).json({ error: "slug required" });
+  }
+  const modes = ["narrator", "character", "both", "silent"];
+  if (!mode || !modes.includes(mode)) {
+    return res.status(400).json({
+      error: `mode must be one of: ${modes.join(", ")}`,
+    });
+  }
+  const p = join(ROOT, "public", "whatif-data", slug, "storyboard.json");
+  try {
+    const sb = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
+    sb.voice = { ...((sb.voice as object) ?? {}), mode };
+    fs.writeFileSync(p, JSON.stringify(sb, null, 2));
+    res.json({ ok: true, voice: sb.voice });
+  } catch {
+    res.status(404).json({ error: `No storyboard for "${slug}"` });
+  }
+});
+
+app.get("/api/story/drafts", (_req, res) => {
+  const dir = join(ROOT, "public", "whatif-data");
+  const drafts: Array<{ slug: string; title: string; seconds: number; createdAt: number; approved: boolean }> = [];
+  try {
+    for (const slug of fs.readdirSync(dir)) {
+      try {
+        const sb = JSON.parse(fs.readFileSync(join(dir, slug, "storyboard.json"), "utf8")) as Record<string, unknown>;
+        drafts.push({
+          slug,
+          title: (sb.title as string) ?? slug,
+          seconds: Number(sb.targetSeconds ?? 0),
+          createdAt: Number(sb.createdAt ?? 0),
+          approved: fs.existsSync(join(dir, slug, "approved")),
+        });
+      } catch { /* skip broken drafts */ }
+    }
+  } catch { /* no drafts dir yet */ }
+  drafts.sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ drafts });
+});
+
+app.get("/api/story/:slug", (req, res) => {
+  const p = join(ROOT, "public", "whatif-data", req.params.slug, "storyboard.json");
+  try {
+    const sb = JSON.parse(fs.readFileSync(p, "utf8"));
+    res.json({ slug: req.params.slug, storyboard: sb });
+  } catch {
+    res.status(404).json({ error: `No storyboard for "${req.params.slug}"` });
+  }
+});
+
+app.post("/api/story/approve", (req, res) => {
+  const { slug } = req.body as { slug?: string };
+  if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+    return res.status(400).json({ error: "slug required", fix: "Approve from the story review screen" });
+  }
+  const sbPath = join(ROOT, "public", "whatif-data", slug, "storyboard.json");
+  let title = slug;
+  try {
+    const sb = JSON.parse(fs.readFileSync(sbPath, "utf8")) as { title?: string; targetSeconds?: number };
+    if (sb.title) title = sb.title;
+    fs.writeFileSync(join(ROOT, "public", "whatif-data", slug, "approved"), new Date().toISOString());
+  } catch {
+    return res.status(404).json({
+      error: `No storyboard found for "${slug}"`,
+      fix: "Write the story first (Generate → type a topic → Step 2)",
+    });
+  }
+  for (const other of getAllJobs()) {
+    if (
+      (other.status === "running" || other.status === "queued") &&
+      other.engine === "storyboard" &&
+      other.slug === slug
+    ) {
+      return res.status(409).json({
+        error: `"${title}" is already rendering (job ${other.id})`,
+        jobId: other.id,
+      });
+    }
+  }
+  const job = createStoryboardJob(title);
+  runStoryboardJob(job, slug);
+  res.json({ jobId: job.id });
 });
 
 // ---------- Story engine (agent-authored compositions) ----------

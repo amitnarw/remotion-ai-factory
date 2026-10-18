@@ -1,0 +1,267 @@
+{
+  "title": "What If the Moon Was Twice as Close?",
+  "topic": "What if the moon was twice as close?",
+  "sourceStory": "A late-night cocoa break turns cosmic. Hook: the moon rushes in and slams to fill the frame as the on-screen card asks 'WHAT IF / MOON TWICE / AS CLOSE?' and the narrator voices the question. Normal: the blob sips steaming cocoa from his planted mug on a neon street bench. Event: the moon doubles in size between the towers. Escalation: tidal force at eight times means a glowing tide floods the avenue (his mug bobbing past), then gravity itself gives up and he lifts off the street — mug floating up beside him — toward the swollen moon. Apex: crane-up at full intensity with the loudest swell of the film (riser + deep rumble) under his scream. Payoff: the moon backs off, he plops onto the bench and catches the mug (pop lands on the catch), calm again — a clean loop right before the hook replays.",
+  "targetSeconds": 15,
+  "fps": 30,
+  "music": {
+    "mood": "dark-tension",
+    "seed": 7788
+  },
+  "ambience": "wind_city",
+  "voice": {
+    "mode": "both",
+    "narratorVoice": "Bruno",
+    "characterVoice": "Rosie"
+  },
+  "hook": {
+    "words": "What if the moon sat twice as close?",
+    "highlight": "TWICE AS CLOSE"
+  },
+  "payoff": {
+    "words": "The moon backs off, calm returns, and the cocoa survives."
+  },
+  "loopable": true,
+  "beats": [
+    {
+      "seconds": 2.7,
+      "see": "Empty night sky. A vast cratered moon rushes in and slams to fill the frame.",
+      "scene": "sky",
+      "shot": {
+        "size": "establishing",
+        "angle": "low",
+        "move": "crash-zoom",
+        "intensity": 2
+      },
+      "character": null,
+      "text": {
+        "lines": [
+          "WHAT IF",
+          "MOON TWICE",
+          "AS CLOSE?"
+        ],
+        "highlight": "TWICE"
+      },
+      "narration": "What if... twice as close?",
+      "dialogue": null,
+      "props": [],
+      "sfx": [
+        {
+          "role": "rumble_deep",
+          "at": 0
+        },
+        {
+          "role": "whoosh_dissolve",
+          "at": 1
+        },
+        {
+          "role": "impact_soft_bodies",
+          "at": 2
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "see": "Neon street corner. Blob sits on a bench under a lamp, sipping steaming cocoa from his mug.",
+      "scene": "city-night",
+      "shot": {
+        "size": "wide",
+        "angle": "eye-level",
+        "move": "static",
+        "intensity": 0.5
+      },
+      "character": {
+        "pose": "idle",
+        "expression": "smile",
+        "action": "sips cocoa, steam curling"
+      },
+      "text": {
+        "lines": [
+          "CALM",
+          "NIGHT"
+        ],
+        "highlight": "CALM"
+      },
+      "narration": null,
+      "dialogue": "Best cocoa. Ever.",
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "pop_light",
+          "at": 0.4
+        }
+      ]
+    },
+    {
+      "seconds": 2.3,
+      "see": "Blob points up as the moon swells to double size between the neon towers.",
+      "scene": "city-night",
+      "shot": {
+        "size": "medium",
+        "angle": "low",
+        "move": "rack-focus",
+        "intensity": 1.3
+      },
+      "character": {
+        "pose": "point",
+        "expression": "wow",
+        "action": "points at the swelling moon"
+      },
+      "text": {
+        "lines": [
+          "2X",
+          "BIG"
+        ],
+        "highlight": "2X"
+      },
+      "narration": "It doubled in size.",
+      "dialogue": null,
+      "props": [],
+      "sfx": [
+        {
+          "role": "rumble_deep",
+          "at": 0.2
+        },
+        {
+          "role": "scream_distant",
+          "at": 1.3
+        }
+      ]
+    },
+    {
+      "seconds": 2.4,
+      "see": "A glowing tide surges down the avenue; blob wades knee-deep while his mug bobs past on the flood.",
+      "scene": "city-night",
+      "shot": {
+        "size": "wide",
+        "angle": "eye-level",
+        "move": "truck-right",
+        "intensity": 1.5
+      },
+      "character": {
+        "pose": "walk",
+        "expression": "worry",
+        "action": "wades through knee-deep flood water"
+      },
+      "text": {
+        "lines": [
+          "8X",
+          "TIDES"
+        ],
+        "highlight": "8X"
+      },
+      "narration": null,
+      "dialogue": "So much water!",
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "impact_soft_bodies",
+          "at": 0.2
+        },
+        {
+          "role": "clothing_flutter",
+          "at": 1.2
+        }
+      ]
+    },
+    {
+      "seconds": 2.2,
+      "see": "Blob lifts off the flooded street toward the giant moon, flailing, his mug floating up beside him.",
+      "scene": "city-night",
+      "shot": {
+        "size": "medium",
+        "angle": "low",
+        "move": "crane-up",
+        "intensity": 2
+      },
+      "character": {
+        "pose": "float",
+        "expression": "worry",
+        "action": "flails while drifting upward, legs kicking"
+      },
+      "text": {
+        "lines": [
+          "GRAVITY:",
+          "BYE"
+        ],
+        "highlight": "BYE"
+      },
+      "narration": null,
+      "dialogue": "Put me DOWN!",
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "rise_short",
+          "at": 0
+        },
+        {
+          "role": "rumble_deep",
+          "at": 0.3
+        },
+        {
+          "role": "clothing_flutter",
+          "at": 1.4
+        }
+      ]
+    },
+    {
+      "seconds": 2.9,
+      "see": "Blob plops back onto the bench, hugging the steaming mug, as the moon shrinks back to normal.",
+      "scene": "city-night",
+      "shot": {
+        "size": "cu",
+        "angle": "eye-level",
+        "move": "push-in",
+        "intensity": 1
+      },
+      "character": {
+        "pose": "idle",
+        "expression": "smile",
+        "action": "lands on the bench and hugs the mug"
+      },
+      "text": {
+        "lines": [
+          "CALM",
+          "AGAIN"
+        ],
+        "highlight": "CALM"
+      },
+      "narration": "Moon backs off. Cocoa intact.",
+      "dialogue": null,
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "impact_soft_bodies",
+          "at": 0
+        },
+        {
+          "role": "pop_light",
+          "at": 0.2
+        }
+      ]
+    }
+  ],
+  "slug": "what-if-the-moon-was-twice-as-close-zh7l",
+  "createdAt": 1792338364642,
+  "mode": "topic",
+  "writer": {
+    "provider": "ollama",
+    "model": "glm-5.3-flash",
+    "attempts": 3,
+    "doctorIssues": [
+      "\"beat 1: the moon 'slams' to fill frame but sfx are only rumble + whoosh — add an impact hit at the fill-frame moment (~2.0s) to sell the hook\",",
+      "\"beat 5: apex lift-off carries only a soft riser while the biggest impact hits sit on beats 4 and 6 — put the loudest swell/hit on the lift\",",
+      "\"beat 5: the mug vanishes after beat 2 — show it floating up beside him (or left on the bench) so the beat-6 catch pays off\",",
+      "\"beat 6: pop_light at 1.5s misses the mug catch — move it to ~0.2s to land on the catch action\",",
+      "\"hook: the declared hook line/highlight ('What if the moon sat twice as close?' / 'TWICE AS CLOSE') never appears on screen or in VO — voice it over beat 1 or align with the 'MOON 2X CLOSER' card\""
+    ]
+  }
+}
