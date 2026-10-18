@@ -7,6 +7,12 @@ import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
 import { createJob, createStoryJob, getJob, getAllJobs, premiseSlug, runJob, runStoryJob, subscribeSSE } from "./jobs";
 import { STORY_META } from "../src/whatif/videos/story-meta";
+import {
+  cleanSoundMap,
+  loadCatalog,
+  loadSoundDesign,
+  saveSoundDesign,
+} from "../src/whatif/audio/sfx-catalog";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 
@@ -198,12 +204,99 @@ app.get("/api/stories", (_req, res) => {
       title: v.title,
       durationSec: v.durationInFrames / v.fps,
       fps: v.fps,
+      sfxRoles: v.sfxRoles ?? [],
     })),
   });
 });
 
+// ---------- Sound design (per-video SFX variant chooser) ----------
+app.get("/api/sound-design/:slug", (req, res) => {
+  const slug = req.params.slug;
+  const meta = STORY_META.find((v) => v.slug === slug);
+  if (!meta) {
+    return res.status(404).json({
+      error: `No registered story video with slug "${slug}"`,
+      fix: "Pick a story on the Generate tab — registered videos live in src/whatif/videos/",
+    });
+  }
+  const catalog = loadCatalog();
+  if (!catalog) {
+    return res.json({
+      slug,
+      available: false,
+      roles: [],
+      selection: {},
+      fixHint: 'Run "npm run sfx" to build the sound library',
+    });
+  }
+  const design = loadSoundDesign(slug);
+  const roles = (meta.sfxRoles ?? []).map((role) => {
+    const def = catalog.roles[role];
+    return def
+      ? {
+          id: role,
+          label: def.label,
+          description: def.description,
+          family: def.family,
+          variants: def.variants.map((v) => ({
+            id: v.id,
+            file: v.file,
+            // Absolute-ish URL for <audio> auditioning.
+            url: `/${v.file}`,
+            dur: v.dur,
+            source: v.source,
+            pack: v.pack,
+            peakDb: v.peakDb,
+            rmsDb: v.rmsDb,
+            autoRank: v.autoRank,
+          })),
+        }
+      : { id: role, label: role, description: "", family: "event", variants: [] };
+  });
+  res.json({
+    slug,
+    available: true,
+    roles,
+    selection: design?.map ?? {},
+    catalogGeneratedAt: catalog.generatedAt,
+  });
+});
+
+app.post("/api/sound-design/:slug", (req, res) => {
+  const slug = req.params.slug;
+  const meta = STORY_META.find((v) => v.slug === slug);
+  if (!meta) {
+    return res.status(404).json({ error: `No registered story video with slug "${slug}"` });
+  }
+  const catalog = loadCatalog();
+  if (!catalog) {
+    return res.status(503).json({
+      error: "SFX catalog not built yet",
+      fix: 'Run "npm run sfx" (synth library) on the server; the sound-design panel unlocks after that',
+    });
+  }
+  const { map } = req.body as { map?: Record<string, unknown> };
+  if (map === undefined || map === null || typeof map !== "object") {
+    return res.status(400).json({ error: "body must be { map: { role: choice } }" });
+  }
+  let cleaned: Record<string, string>;
+  try {
+    cleaned = cleanSoundMap(catalog, map);
+  } catch (e) {
+    return res.status(400).json({
+      error: e instanceof Error ? e.message : "invalid sound design map",
+      fix: "Set each role to \"auto\" or one of its listed variants",
+    });
+  }
+  saveSoundDesign({ slug, map: cleaned, updatedAt: Date.now() });
+  res.json({ ok: true, slug, map: cleaned });
+});
+
 app.post("/api/generate-story", (req, res) => {
-  const { slug } = req.body as { slug?: string };
+  const { slug, soundDesign } = req.body as {
+    slug?: string;
+    soundDesign?: Record<string, unknown>;
+  };
   const meta = slug ? STORY_META.find((v) => v.slug === slug) : undefined;
   if (!meta) {
     return res.status(400).json({
@@ -212,6 +305,26 @@ app.post("/api/generate-story", (req, res) => {
         : "slug required",
       fix: "Pick a video from the list on the Generate tab — registered story videos live in src/whatif/videos/",
     });
+  }
+  // Optional per-render sound design — persisted for future renders too.
+  if (soundDesign && typeof soundDesign === "object") {
+    const catalog = loadCatalog();
+    if (!catalog) {
+      return res.status(503).json({
+        error: "SFX catalog not built yet",
+        fix: 'Run "npm run sfx" on the server, then retry',
+      });
+    }
+    let cleaned: Record<string, string>;
+    try {
+      cleaned = cleanSoundMap(catalog, soundDesign);
+    } catch (e) {
+      return res.status(400).json({
+        error: e instanceof Error ? e.message : "invalid sound design map",
+        fix: "Set each role to \"auto\" or one of its listed variants",
+      });
+    }
+    saveSoundDesign({ slug: meta.slug, map: cleaned, updatedAt: Date.now() });
   }
   // Never render the same story twice concurrently (same output/report).
   for (const other of getAllJobs()) {
@@ -411,6 +524,9 @@ app.delete("/api/videos/:id", (req, res) => {
 
 // ---------- Media ----------
 app.use("/media", express.static(join(ROOT, "output"), { index: false }));
+// SFX library for the sound-design audition players (public/sfx tree:
+// synth + cc0 wavs + sfx.catalog.json).
+app.use("/sfx", express.static(join(ROOT, "public", "sfx"), { index: false }));
 
 // ---------- JSON 404 for API/media (never return HTML) ----------
 app.use("/api", (_req, res) => {
@@ -418,6 +534,9 @@ app.use("/api", (_req, res) => {
 });
 app.use("/media", (_req, res) => {
   res.status(404).type("application/json").send(JSON.stringify({ error: "media file not found" }));
+});
+app.use("/sfx", (_req, res) => {
+  res.status(404).type("application/json").send(JSON.stringify({ error: "sfx file not found" }));
 });
 
 // ---------- Catch-all JSON error middleware ----------

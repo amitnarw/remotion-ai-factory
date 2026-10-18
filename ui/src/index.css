@@ -1,0 +1,84 @@
+/* Dark-first design tokens — violet primary, amber highlights. */
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root,
+.dark {
+  --background: oklch(0.145 0.022 277);
+  --foreground: oklch(0.985 0.006 280);
+  --card: oklch(0.178 0.024 277);
+  --card-foreground: oklch(0.985 0.006 280);
+  --popover: oklch(0.19 0.026 278);
+  --popover-foreground: oklch(0.985 0.006 280);
+  --primary: oklch(0.62 0.2 286);
+  --primary-foreground: oklch(0.985 0.006 280);
+  --secondary: oklch(0.25 0.028 278);
+  --secondary-foreground: oklch(0.93 0.01 280);
+  --muted: oklch(0.24 0.025 278);
+  --muted-foreground: oklch(0.705 0.02 281);
+  --accent: oklch(0.75 0.15 75);
+  --accent-foreground: oklch(0.2 0.04 75);
+  --destructive: oklch(0.6 0.2 24);
+  --destructive-foreground: oklch(0.985 0.006 280);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.62 0.2 286 / 55%);
+  --radius: 0.65rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(900px 500px at 85% -10%, oklch(0.35 0.14 290 / 0.25), transparent 60%),
+    radial-gradient(700px 400px at -10% 20%, oklch(0.4 0.1 70 / 0.10), transparent 55%),
+    var(--background);
+  color: var(--foreground);
+}
+
+/* Slim, dark scrollbars (dashboards scroll a lot). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.45 0.03 280 / 0.5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: oklch(0.45 0.03 280 / 0.5);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

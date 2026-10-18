@@ -1,0 +1,9 @@
+{
+  "slug": "gravity-5s",
+  "map": {
+    "wind_city": "auto",
+    "pop_light": "auto",
+    "whoosh_dissolve": "auto"
+  },
+  "updatedAt": 1792331729862
+}

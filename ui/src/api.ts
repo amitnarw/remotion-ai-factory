@@ -49,6 +49,7 @@ export interface StoryInfo {
   title: string;
   durationSec: number;
   fps: number;
+  sfxRoles?: string[];
 }
 
 export async function getStories(): Promise<StoryInfo[]> {
@@ -56,12 +57,62 @@ export async function getStories(): Promise<StoryInfo[]> {
   return r.stories;
 }
 
-export async function generateStory(slug: string): Promise<{ jobId: string }> {
+export async function generateStory(
+  slug: string,
+  soundDesign?: Record<string, string>,
+): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/generate-story`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug }),
+      body: JSON.stringify({ slug, soundDesign }),
+    }),
+  );
+}
+
+/* Sound design — per-role SFX variant chooser */
+export interface SfxVariantInfo {
+  id: string;
+  file: string;
+  url: string;
+  dur: number;
+  source: string;
+  pack?: string;
+  peakDb: number;
+  rmsDb: number;
+  autoRank: number;
+}
+
+export interface SoundRoleInfo {
+  id: string;
+  label: string;
+  description: string;
+  family: "ambient" | "event";
+  variants: SfxVariantInfo[];
+}
+
+export interface SoundDesignResponse {
+  slug: string;
+  available: boolean;
+  roles: SoundRoleInfo[];
+  selection: Record<string, string>;
+  catalogGeneratedAt?: number;
+  fixHint?: string;
+}
+
+export async function getSoundDesign(slug: string): Promise<SoundDesignResponse> {
+  return json(await fetch(`${BASE}/sound-design/${slug}`));
+}
+
+export async function saveSoundMap(
+  slug: string,
+  map: Record<string, string>,
+): Promise<{ ok: boolean; map: Record<string, string> }> {
+  return json(
+    await fetch(`${BASE}/sound-design/${slug}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ map }),
     }),
   );
 }

@@ -1,85 +1,357 @@
 {
-  "whoosh_dissolve": {
-    "file": "whoosh_dissolve.wav",
-    "dur": 2.2,
-    "tags": [
-      "dissolve",
-      "transition",
-      "whoosh"
-    ]
-  },
-  "rumble_deep": {
-    "file": "rumble_deep.wav",
-    "dur": 6,
-    "tags": [
-      "earthquake",
-      "gravity",
-      "tension",
-      "rumble"
-    ]
-  },
-  "clothing_flutter": {
-    "file": "clothing_flutter.wav",
-    "dur": 0.9,
-    "tags": [
-      "flutter",
-      "cloth",
-      "movement"
-    ]
-  },
-  "impact_soft_bodies": {
-    "file": "impact_soft_bodies.wav",
-    "dur": 1.2,
-    "tags": [
-      "impact",
-      "crash",
-      "landing"
-    ]
-  },
-  "scream_distant": {
-    "file": "scream_distant.wav",
-    "dur": 2,
-    "tags": [
-      "scream",
-      "distant",
-      "human"
-    ]
-  },
-  "wind_city": {
-    "file": "wind_city.wav",
-    "dur": 12,
-    "tags": [
-      "ambient",
-      "wind",
-      "city",
-      "bed"
-    ]
-  },
-  "ambient_tense": {
-    "file": "ambient_tense.wav",
-    "dur": 10,
-    "tags": [
-      "ambient",
-      "tense",
-      "bed"
-    ]
-  },
-  "pop_light": {
-    "file": "pop_light.wav",
-    "dur": 0.3,
-    "tags": [
-      "pop",
-      "ui",
-      "click"
-    ]
-  },
-  "rise_short": {
-    "file": "rise_short.wav",
-    "dur": 1.5,
-    "tags": [
-      "rise",
-      "buildup",
-      "tension"
-    ]
+  "version": 2,
+  "generatedAt": 1792331646589,
+  "roles": {
+    "wind_city": {
+      "label": "City ambience — gusts",
+      "description": "Slow gusty air with a low-mid body. Ambient bed; no white hiss.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "wind",
+        "city",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/wind_city.wav",
+          "dur": 12,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -6,
+          "rmsDb": -19.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "ambient_tense": {
+      "label": "Tension drone bed",
+      "description": "Detuned low drone with a soft sub pulse and creeping air.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "tense",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/ambient_tense.wav",
+          "dur": 10,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -8,
+          "rmsDb": -18.1,
+          "autoRank": 50
+        }
+      ]
+    },
+    "whoosh_dissolve": {
+      "label": "Dissolve whoosh",
+      "description": "Downward bandpass sweep, vibrating pitch-drop tail.",
+      "family": "event",
+      "tags": [
+        "dissolve",
+        "transition",
+        "whoosh"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/whoosh_dissolve.wav",
+          "dur": 2.2,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -3,
+          "rmsDb": -18,
+          "autoRank": 50
+        },
+        {
+          "id": "kenney:card-fan-1",
+          "file": "sfx/cc0/whoosh_dissolve__casino-audio--card-fan-1.wav",
+          "dur": 0.72,
+          "source": "CC0 recording — kenney.nl (casino-audio)",
+          "pack": "casino-audio",
+          "peakDb": -3,
+          "rmsDb": -23.5,
+          "autoRank": 45
+        },
+        {
+          "id": "kenney:card-fan-2",
+          "file": "sfx/cc0/whoosh_dissolve__casino-audio--card-fan-2.wav",
+          "dur": 1.31,
+          "source": "CC0 recording — kenney.nl (casino-audio)",
+          "pack": "casino-audio",
+          "peakDb": -3,
+          "rmsDb": -33.6,
+          "autoRank": 45
+        },
+        {
+          "id": "kenney:knifeslice",
+          "file": "sfx/cc0/whoosh_dissolve__rpg-audio--knifeslice.wav",
+          "dur": 0.6,
+          "source": "CC0 recording — kenney.nl (rpg-audio)",
+          "pack": "rpg-audio",
+          "peakDb": -3,
+          "rmsDb": -22.2,
+          "autoRank": 45
+        }
+      ]
+    },
+    "rumble_deep": {
+      "label": "Deep rumble",
+      "description": "Sub-bass cluster with gusty mass; the ground-disappears sound.",
+      "family": "event",
+      "tags": [
+        "earthquake",
+        "gravity",
+        "tension",
+        "rumble"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/rumble_deep.wav",
+          "dur": 6,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -4,
+          "rmsDb": -15.1,
+          "autoRank": 50
+        }
+      ]
+    },
+    "clothing_flutter": {
+      "label": "Clothing flutter",
+      "description": "Short bandpassed fabric flaps while mid-air.",
+      "family": "event",
+      "tags": [
+        "flutter",
+        "cloth",
+        "movement"
+      ],
+      "variants": [
+        {
+          "id": "kenney:cloth1",
+          "file": "sfx/cc0/clothing_flutter__rpg-audio--cloth1.wav",
+          "dur": 0.66,
+          "source": "CC0 recording — kenney.nl (rpg-audio)",
+          "pack": "rpg-audio",
+          "peakDb": -8,
+          "rmsDb": -30.6,
+          "autoRank": 80
+        },
+        {
+          "id": "kenney:cloth2",
+          "file": "sfx/cc0/clothing_flutter__rpg-audio--cloth2.wav",
+          "dur": 0.42,
+          "source": "CC0 recording — kenney.nl (rpg-audio)",
+          "pack": "rpg-audio",
+          "peakDb": -1.1,
+          "rmsDb": -35.6,
+          "autoRank": 72
+        },
+        {
+          "id": "kenney:cloth3",
+          "file": "sfx/cc0/clothing_flutter__rpg-audio--cloth3.wav",
+          "dur": 0.48,
+          "source": "CC0 recording — kenney.nl (rpg-audio)",
+          "pack": "rpg-audio",
+          "peakDb": -2.9,
+          "rmsDb": -35.3,
+          "autoRank": 64
+        },
+        {
+          "id": "synth",
+          "file": "sfx/clothing_flutter.wav",
+          "dur": 0.9,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -8,
+          "rmsDb": -30.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "impact_soft_bodies": {
+      "label": "Soft impact landing",
+      "description": "Thump with pitch drop, soft body and a squish sweep.",
+      "family": "event",
+      "tags": [
+        "impact",
+        "crash",
+        "landing"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/impact_soft_bodies.wav",
+          "dur": 1.2,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -2.5,
+          "rmsDb": -18.9,
+          "autoRank": 50
+        },
+        {
+          "id": "kenney:impactsoft-medium-000",
+          "file": "sfx/cc0/impact_soft_bodies__impact-sounds--impactsoft-medium-000.wav",
+          "dur": 0.12,
+          "source": "CC0 recording — kenney.nl (impact-sounds)",
+          "pack": "impact-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -15.8,
+          "autoRank": 45
+        },
+        {
+          "id": "kenney:impactsoft-medium-001",
+          "file": "sfx/cc0/impact_soft_bodies__impact-sounds--impactsoft-medium-001.wav",
+          "dur": 0.18,
+          "source": "CC0 recording — kenney.nl (impact-sounds)",
+          "pack": "impact-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -16.4,
+          "autoRank": 45
+        },
+        {
+          "id": "kenney:impactsoft-medium-002",
+          "file": "sfx/cc0/impact_soft_bodies__impact-sounds--impactsoft-medium-002.wav",
+          "dur": 0.13,
+          "source": "CC0 recording — kenney.nl (impact-sounds)",
+          "pack": "impact-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -15.6,
+          "autoRank": 45
+        }
+      ]
+    },
+    "scream_distant": {
+      "label": "Distant scream",
+      "description": "Formant-voiced wail, lowpassed with echoes — far away.",
+      "family": "event",
+      "tags": [
+        "scream",
+        "distant",
+        "human"
+      ],
+      "variants": [
+        {
+          "id": "kenney:war-fire-in-the-hole",
+          "file": "sfx/cc0/scream_distant__voiceover-pack--war-fire-in-the-hole.wav",
+          "dur": 1.38,
+          "source": "CC0 recording — kenney.nl (voiceover-pack)",
+          "pack": "voiceover-pack",
+          "peakDb": -6,
+          "rmsDb": -16.6,
+          "autoRank": 55
+        },
+        {
+          "id": "kenney:war-get-down",
+          "file": "sfx/cc0/scream_distant__voiceover-pack--war-get-down.wav",
+          "dur": 0.85,
+          "source": "CC0 recording — kenney.nl (voiceover-pack)",
+          "pack": "voiceover-pack",
+          "peakDb": -6,
+          "rmsDb": -20.2,
+          "autoRank": 55
+        },
+        {
+          "id": "synth",
+          "file": "sfx/scream_distant.wav",
+          "dur": 2,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -6,
+          "rmsDb": -19.8,
+          "autoRank": 50
+        }
+      ]
+    },
+    "pop_light": {
+      "label": "UI pop",
+      "description": "Bright click + tonal pop + low pock; UI ticks and reveal beats.",
+      "family": "event",
+      "tags": [
+        "pop",
+        "ui",
+        "click"
+      ],
+      "variants": [
+        {
+          "id": "kenney:click-001",
+          "file": "sfx/cc0/pop_light__interface-sounds--click-001.wav",
+          "dur": 0.1,
+          "source": "CC0 recording — kenney.nl (interface-sounds)",
+          "pack": "interface-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -27.5,
+          "autoRank": 80
+        },
+        {
+          "id": "kenney:click-002",
+          "file": "sfx/cc0/pop_light__interface-sounds--click-002.wav",
+          "dur": 0.01,
+          "source": "CC0 recording — kenney.nl (interface-sounds)",
+          "pack": "interface-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -18.4,
+          "autoRank": 72
+        },
+        {
+          "id": "kenney:click-003",
+          "file": "sfx/cc0/pop_light__interface-sounds--click-003.wav",
+          "dur": 0.01,
+          "source": "CC0 recording — kenney.nl (interface-sounds)",
+          "pack": "interface-sounds",
+          "peakDb": -2.5,
+          "rmsDb": -16.5,
+          "autoRank": 64
+        },
+        {
+          "id": "synth",
+          "file": "sfx/pop_light.wav",
+          "dur": 0.3,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -2.5,
+          "rmsDb": -19.2,
+          "autoRank": 50
+        }
+      ]
+    },
+    "rise_short": {
+      "label": "Short riser",
+      "description": "Rising bandpass + rising gliss with sub anchor; pre-event lift.",
+      "family": "event",
+      "tags": [
+        "rise",
+        "buildup",
+        "tension"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/rise_short.wav",
+          "dur": 1.5,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -3,
+          "rmsDb": -18.2,
+          "autoRank": 50
+        },
+        {
+          "id": "kenney:forcefield-000",
+          "file": "sfx/cc0/rise_short__sci-fi-sounds--forcefield-000.wav",
+          "dur": 0.95,
+          "source": "CC0 recording — kenney.nl (sci-fi-sounds)",
+          "pack": "sci-fi-sounds",
+          "peakDb": -3,
+          "rmsDb": -13.6,
+          "autoRank": 45
+        },
+        {
+          "id": "kenney:forcefield-001",
+          "file": "sfx/cc0/rise_short__sci-fi-sounds--forcefield-001.wav",
+          "dur": 0.95,
+          "source": "CC0 recording — kenney.nl (sci-fi-sounds)",
+          "pack": "sci-fi-sounds",
+          "peakDb": -3,
+          "rmsDb": -13.7,
+          "autoRank": 45
+        }
+      ]
+    }
   }
 }

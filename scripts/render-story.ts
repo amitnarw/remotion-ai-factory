@@ -13,6 +13,12 @@ import { mkdirSync, statSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { findStoryMeta, STORY_META } from "../src/whatif/videos/story-meta";
 import { synthMusic } from "../src/whatif/audio/music";
+import {
+  loadCatalog,
+  loadSoundDesign,
+  resolveSfxMap,
+  verifyResolvedFiles,
+} from "../src/whatif/audio/sfx-catalog";
 
 const FFMPEG = join(
   process.cwd(),
@@ -58,6 +64,47 @@ export async function runStoryRender(
   }
 
   const durFrames = video.durationInFrames;
+
+  // 2. Sound-design resolution: catalog + per-video design map → concrete
+  //    files, handed to the composition as inputProps { sfxFileMap }. Roles
+  //    without a resolvable file keep the component's synth default.
+  const catalog = loadCatalog();
+  const design =
+    loadSoundDesign(slug) ??
+    {
+      // No stored choices yet — everything defaults to "auto (best)", i.e. the
+      // sound designer's own judgment encoded by autoRank in the catalog.
+      slug,
+      map: Object.fromEntries((video.sfxRoles ?? []).map((r) => [r, "auto"])),
+      updatedAt: 0,
+    };
+  const resolved = resolveSfxMap(catalog, design);
+  const fileCheck = verifyResolvedFiles(resolved);
+  if (fileCheck.missing.length > 0) {
+    return {
+      ok: false,
+      error:
+        `Missing SFX files after resolving the sound-design map: ` +
+        `${fileCheck.missing.join(", ")}. ` +
+        `Fix: run "npm run sfx" to rebuild public/sfx/ (and "npm run sfx:cc0" for CC0 variants), ` +
+        `then re-render.`,
+    };
+  }
+  console.log(
+    `[sfx] resolved ${Object.keys(resolved).length} roles from sound design ` +
+      `(choices: ${JSON.stringify(design?.map ?? {})})`,
+  );
+  const propsPath = join(
+    process.cwd(),
+    "output",
+    `.props-${slug}.json`,
+  );
+  mkdirSync(join(process.cwd(), "output"), { recursive: true });
+  writeFileSync(
+    propsPath,
+    JSON.stringify({ sfxFileMap: resolved, sfxDesign: design?.map ?? {} }, null, 2),
+  );
+
   const stamp = new Date()
     .toISOString()
     .replace(/[:.]/g, "-")
@@ -85,6 +132,7 @@ export async function runStoryRender(
     "--overwrite",
     "--codec",
     "h264",
+    `--props=${propsPath}`,
   ];
 
   console.log(`[render] story-${slug} → ${out} (${durFrames} frames @${video.fps})`);
@@ -115,6 +163,8 @@ export async function runStoryRender(
         frames: durFrames,
         durationSec: (durFrames / video.fps).toFixed(2),
         music: video.music,
+        soundDesign: design?.map ?? {},
+        sfxFileMap: resolved,
         // Numeric timestamp — the videos listing sorts on it.
         generatedAt: Date.now(),
       },

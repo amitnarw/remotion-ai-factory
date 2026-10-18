@@ -1,230 +1,276 @@
-import { useState, useEffect } from "react";
-import { getProviders, setProviderKey, addProvider as addProviderApi, testProvider, fetchProviderModels, ProviderInfo, TestResult, FetchModelsResult } from "../api";
+/**
+ * Providers — key/config management, live model fetching, end-to-end tests.
+ * ?provider=<name> deep-links to that provider card; state survives refresh.
+ */
+import { useEffect, useState } from "react";
+import { Plug, KeyRound, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  getProviders,
+  setProviderKey,
+  addProvider,
+  testProvider,
+  fetchProviderModels,
+  ProviderInfo,
+  ProvidersResponse,
+} from "../api";
+import { PageHeader, EmptyState, ErrorBanner, MetaRow } from "../components/shared";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { InfoTip } from "../components/InfoTip";
+import { useQuery, setQuery } from "../lib/navigation";
+import { cn } from "../lib/utils";
 
 export default function Providers() {
+  const query = useQuery();
+  const selected = query.get("provider") ?? undefined;
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [defaultProvider, setDefaultProvider] = useState<string | undefined>(undefined);
+  const [defaultProvider, setDefaultProvider] = useState<string | undefined>();
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  // Add-provider form
   const [newName, setNewName] = useState("");
   const [newPackage, setNewPackage] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [newApiKeyEnv, setNewApiKeyEnv] = useState("");
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [saveResult, setSaveResult] = useState<{ name: string; ok: boolean; message?: string } | null>(null);
-  const [fetchResult, setFetchResult] = useState<(FetchModelsResult & { name: string }) | null>(null);
-  const [fetching, setFetching] = useState<string | null>(null);
+
+  const load = () =>
+    getProviders()
+      .then((d: ProvidersResponse) => {
+        setProviders(d.providers || []);
+        setDefaultProvider(d.defaultProvider);
+      })
+      .catch((e) => setAddError(String(e)));
 
   useEffect(() => {
     load();
   }, []);
 
-  const load = async () => {
-    const d = await getProviders();
-    setProviders(d.providers || []);
-    setDefaultProvider(d.defaultProvider);
-  };
+  // Deep-link scroll for ?provider=<name>.
+  useEffect(() => {
+    if (!selected) return;
+    const el = document.getElementById(`provider-${selected}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selected, providers.length]);
 
   const setKey = async (name: string) => {
-    const key = keys[name] || "";
+    setBusy(name);
     try {
-      await setProviderKey(name, key);
-      load();
-      // After saving a key, immediately pull the real model list for it.
-      const success = { name, ok: true };
-      setSaveResult(success);
+      await setProviderKey(name, keys[name] || "");
+      toast.success(`Key saved for ${name}`, { description: "Written to the local .env only." });
+      await load();
+      // Immediately pull the real model list — a fresh key is worthless without it.
       refreshModels(name);
     } catch (e) {
-      const failure = { name, ok: false, message: String(e) };
-      setSaveResult(failure);
+      toast.error(`Saving key for ${name} failed`, { description: String(e) });
+    } finally {
+      setBusy(null);
     }
   };
 
   const refreshModels = async (name: string) => {
-    setFetchResult(null);
-    setFetching(name);
+    setBusy(name);
     try {
       const r = await fetchProviderModels(name);
-      setFetchResult({ ...r, name });
-      load();
+      if (r.ok) {
+        toast.success(`Fetched ${r.models.length} models for ${name}`, {
+          description: `source: ${r.source} — saved to ai.config.json`,
+        });
+      } else {
+        toast.error(`Could not fetch models for ${name}`, {
+          description: `${r.error ?? "unknown error"}${r.fix ? `\n→ Fix: ${r.fix}` : ""}`,
+        });
+      }
+      await load();
     } catch (e) {
-      setFetchResult({ name, ok: false, models: [], source: "", error: String(e) });
+      toast.error(`Could not fetch models for ${name}`, { description: String(e) });
     } finally {
-      setFetching(null);
+      setBusy(null);
     }
   };
 
   const test = async (p: ProviderInfo) => {
-    setTestResult(null);
+    setBusy(p.name);
     try {
       const r = await testProvider(p.name);
-      const result: TestResult = { ...r, name: p.name };
-      setTestResult(result);
+      if (r.ok) {
+        toast.success(`Test passed for ${p.name}`, {
+          description: `${r.note ?? "configured"}${r.latencyMs ? ` · ${r.latencyMs}ms` : ""}`,
+        });
+      } else {
+        toast.error(`Test failed for ${p.name}`, {
+          description: `${r.error ?? "unknown error"}${r.fix ? `\n→ Fix: ${r.fix}` : ""}`,
+        });
+      }
     } catch (e) {
-      const result: TestResult = { name: p.name, ok: false, error: String(e) };
-      setTestResult(result);
+      toast.error(`Test failed for ${p.name}`, { description: String(e) });
+    } finally {
+      setBusy(null);
     }
   };
 
   const handleAddProvider = async () => {
-    if (!newName) return;
+    if (!newName.trim()) return;
     try {
-      await addProviderApi({ name: newName, package: newPackage || undefined, baseUrl: newBaseUrl || undefined, apiKeyEnv: newApiKeyEnv || undefined });
-      setNewName(""); setNewPackage(""); setNewBaseUrl(""); setNewApiKeyEnv("");
+      await addProvider({
+        name: newName.trim(),
+        package: newPackage || undefined,
+        baseUrl: newBaseUrl || undefined,
+        apiKeyEnv: newApiKeyEnv || undefined,
+      });
+      toast.success(`Provider ${newName.trim()} added`, {
+        description: "Paste its API key on its card, then Fetch models.",
+      });
+      setNewName("");
+      setNewPackage("");
+      setNewBaseUrl("");
+      setNewApiKeyEnv("");
+      setShowAdd(false);
       load();
     } catch (e) {
-      alert("Failed: " + String(e));
+      setAddError(String(e));
+      toast.error("Adding provider failed");
     }
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto" }}>
-      <h2 style={{ fontSize: "20px", marginBottom: 16 }}>Providers</h2>
-      <div style={{ gap: 12, marginBottom: 16, display: "flex", flexWrap: "wrap" }}>
-        <input
-          placeholder="Provider name (e.g. openai)"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        />
-        <input
-          placeholder="package (openai/anthropic/google/gateway)"
-          value={newPackage}
-          onChange={(e) => setNewPackage(e.target.value)}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        />
-        <input
-          placeholder="baseUrl (optional)"
-          value={newBaseUrl}
-          onChange={(e) => setNewBaseUrl(e.target.value)}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        />
-        <input
-          placeholder="API key env var (e.g. OPENAI_API_KEY)"
-          value={newApiKeyEnv}
-          onChange={(e) => setNewApiKeyEnv(e.target.value)}
-          style={{ padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14 }}
-        />
-        <button onClick={handleAddProvider} style={{ padding: "10px 20px", background: "#111827", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>
-          Add provider
-        </button>
-      </div>
+    <div>
+      <PageHeader title="Providers">
+        <Button
+          variant={showAdd ? "secondary" : "outline"}
+          size="sm"
+          onClick={() => setShowAdd((s) => !s)}
+        >
+          <Plug className="h-4 w-4" /> {showAdd ? "Close form" : "Add provider"}
+        </Button>
+      </PageHeader>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
-        <thead>
-          <tr style={{ textAlign: "left", color: "#6b7280", fontSize: 12 }}>
-            <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Provider</th>
-            <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Key env</th>
-            <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Status</th>
-            <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Models</th>
-            <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
+      {addError ? <ErrorBanner error={addError} fix='Start the API server with "npm run server" and reload' /> : null}
+
+      {showAdd ? (
+        <Card className="mb-5">
+          <CardHeader>
+            <CardTitle className="text-base">Add a provider</CardTitle>
+            <CardDescription>
+              Package must be an installed ai-sdk adapter (openai / anthropic / google / gateway…).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            <Input placeholder="name (e.g. ollama-cloud)" value={newName} onChange={(e) => setNewName(e.target.value)} />
+            <Input placeholder="package (openai/anthropic/google/gateway)" value={newPackage} onChange={(e) => setNewPackage(e.target.value)} />
+            <Input placeholder="baseUrl (optional)" value={newBaseUrl} onChange={(e) => setNewBaseUrl(e.target.value)} />
+            <Input placeholder="API key env var (e.g. OPENAI_API_KEY)" value={newApiKeyEnv} onChange={(e) => setNewApiKeyEnv(e.target.value)} />
+            <div className="sm:col-span-2">
+              <Button onClick={handleAddProvider} disabled={!newName.trim()}>
+                Add provider
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {providers.length === 0 && !addError ? (
+        <EmptyState
+          icon={<Plug />}
+          title="No providers"
+          body="Add one for AI-spec generation — the story engine and every local render path work without any provider."
+        />
+      ) : (
+        <div className="space-y-4">
           {providers.map((p) => (
-            <tr key={p.name} style={{ borderBottom: "1px solid #e5e7eb" }}>
-              <td style={{ padding: 8 }}>{p.name}</td>
-              <td style={{ padding: 8 }}>
-                {!p.apiKeyEnv ? (
-                  <span style={{ color: "#6b7280", fontSize: 13 }}>Local — no key needed</span>
-                ) : (
-                  <>
-                    <input
+            <Card
+              key={p.name}
+              id={`provider-${p.name}`}
+              className={cn(
+                "scroll-mt-20 transition-all",
+                selected === p.name &&
+                  "border-primary/60 bg-primary/[0.06] shadow-[0_0_0_1px_var(--primary)]",
+              )}
+              onClick={(e) => {
+                const el = e.target as HTMLElement;
+                if (el.closest("input,button,a")) return;
+                setQuery({ provider: selected === p.name ? undefined : p.name });
+              }}
+            >
+              <CardHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <KeyRound
+                      className={cn("h-4 w-4", p.keyConfigured ? "text-emerald-400" : "text-muted-foreground")}
+                    />
+                    {p.name}
+                  </CardTitle>
+                  {p.name === defaultProvider ? <Badge variant="amber">default</Badge> : null}
+                  {p.keyConfigured ? (
+                    <Badge variant="success">key configured</Badge>
+                  ) : p.apiKeyEnv ? (
+                    <Badge variant="destructive">key not set</Badge>
+                  ) : (
+                    <Badge variant="secondary">local — no key needed</Badge>
+                  )}
+                  {p.models?.length ? <Badge variant="outline">{p.models.length} models</Badge> : null}
+                  <span className="ml-auto flex gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => test(p)} disabled={busy === p.name}>
+                      {busy === p.name ? "Testing…" : "Test"}
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => refreshModels(p.name)} disabled={busy === p.name}>
+                      {"Fetch models"}
+                    </Button>
+                  </span>
+                </div>
+                <div className="pt-1">
+                  <MetaRow
+                    items={[
+                      { label: "package", value: p.package },
+                      { label: "baseUrl", value: p.baseUrl },
+                      { label: "keyEnv", value: p.apiKeyEnv },
+                    ]}
+                  />
+                </div>
+              </CardHeader>
+              {p.apiKeyEnv ? (
+                <CardContent>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="password"
+                      className="max-w-xs"
                       placeholder={p.apiKeyEnv}
                       value={keys[p.name] || ""}
                       onChange={(e) => setKeys({ ...keys, [p.name]: e.target.value })}
-                      type="password"
-                      style={{ width: 180, padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13 }}
                     />
-                    <button
+                    <Button
+                      size="sm"
                       onClick={() => setKey(p.name)}
-                      style={{ marginLeft: 6, padding: "6px 12px", background: "#111827", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                      disabled={busy === p.name || !(keys[p.name] || "").length}
                     >
-                      Save
-                    </button>
-                  </>
-                )}
-              </td>
-              <td style={{ padding: 8 }}>
-                {!p.apiKeyEnv ? (
-                  <span style={{ color: "#16a34a", fontWeight: 600 }}>Local — no key needed</span>
-                ) : p.keyConfigured ? (
-                  <span style={{ color: "#16a34a", fontWeight: 600 }}>Configured ✓</span>
-                ) : (
-                  <span style={{ color: "#dc2626", fontWeight: 600 }}>Not set</span>
-                )}
-              </td>
-              <td style={{ padding: 8 }}>{(p.models || []).join(", ")}</td>
-              <td style={{ padding: 8 }}>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <button
-                    onClick={() => test(p)}
-                    style={{ padding: "6px 12px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
-                  >
-                    Test
-                  </button>
-                  <button
-                    onClick={() => refreshModels(p.name)}
-                    disabled={fetching === p.name}
-                    style={{ padding: "6px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: fetching === p.name ? 0.6 : 1 }}
-                  >
-                    {fetching === p.name ? "Fetching…" : "Fetch models"}
-                  </button>
-                  {p.name === defaultProvider ? (
-                    <span style={{ color: "#16a34a", fontSize: 12 }}>default</span>
+                      Save key
+                    </Button>
+                    {busy === p.name ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                    <InfoTip helpId="providers-key" />
+                    <InfoTip helpId="providers-test" />
+                  </div>
+                  {p.models?.length ? (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {p.models.slice(0, 12).map((m) => (
+                        <code key={m} className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {m}
+                        </code>
+                      ))}
+                      {p.models.length > 12 ? (
+                        <span className="pt-0.5 text-[10px] text-muted-foreground">
+                          +{p.models.length - 12} more (visible on Generate → Advanced)
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
-                </div>
-              </td>
-            </tr>
+                </CardContent>
+              ) : null}
+            </Card>
           ))}
-        </tbody>
-      </table>
-
-      {testResult && (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 8,
-            background: testResult.ok ? "#f0fdf4" : "#fef2f2",
-            color: testResult.ok ? "#166534" : "#991b1b",
-            marginBottom: 8,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {testResult.ok
-            ? `Test passed for ${testResult.name} — ${testResult.note ?? "configured"}${testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ""}`
-            : `Test failed: ${testResult.error ?? "unknown error"}${testResult.fix ? `\n→ Fix: ${testResult.fix}` : ""}`}
-        </div>
-      )}
-      {saveResult && (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 8,
-            background: saveResult.ok ? "#f0fdf4" : "#fef2f2",
-            color: saveResult.ok ? "#166534" : "#991b1b",
-            marginBottom: 8,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {saveResult.ok
-            ? `API key saved for ${saveResult.name} — written to .env (never sent to the browser)`
-            : `Saving key for ${saveResult.name} failed: ${saveResult.message || "unknown error"}`}
-        </div>
-      )}
-      {fetchResult && (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 8,
-            background: fetchResult.ok ? "#f0fdf4" : "#fef2f2",
-            color: fetchResult.ok ? "#166534" : "#991b1b",
-            marginBottom: 16,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {fetchResult.ok
-            ? `Fetched ${fetchResult.models.length} models for ${fetchResult.name} from ${fetchResult.source} — saved to ai.config.json`
-            : `Could not fetch models for ${fetchResult.name}: ${fetchResult.error ?? "unknown error"}${fetchResult.fix ? `\n→ Fix: ${fetchResult.fix}` : ""}`}
         </div>
       )}
     </div>

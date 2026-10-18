@@ -13,6 +13,9 @@ export interface StoryMeta {
   durationInFrames: number;
   fps: number;
   music: { mood: MusicMood; seed: number };
+  /** SFX roles (tags) this composition places cues for — drives the
+   *  sound-design step in the dashboard. Order = display order. */
+  sfxRoles?: string[];
 }
 
 export const STORY_META: StoryMeta[] = [
@@ -22,6 +25,15 @@ export const STORY_META: StoryMeta[] = [
     durationInFrames: 450,
     fps: 30,
     music: { mood: "dark-tension", seed: 4227 },
+    sfxRoles: [
+      "wind_city",
+      "rise_short",
+      "whoosh_dissolve",
+      "rumble_deep",
+      "scream_distant",
+      "impact_soft_bodies",
+      "pop_light",
+    ],
   },
 ];
 

@@ -32,6 +32,7 @@ import { TechVoid } from "../../scenes/TechVoid";
 import { Room } from "../../scenes/Room";
 import { CityNight } from "../../scenes/CityNight";
 import { Sky } from "../../scenes/Sky";
+import { useSfxFile } from "../../audio/use-sfx";
 import {
   breathe,
   entranceStyle,
@@ -549,11 +550,14 @@ const SfxCue: React.FC<{
   tag: string;
   at: number;
   volume?: number;
-}> = ({ tag, at, volume = 1 }) => (
-  <Sequence from={sec(at)} durationInFrames={DURATION_FRAMES}>
-    <Audio src={staticFile(`sfx/${tag}.wav`)} volume={volume} />
-  </Sequence>
-);
+}> = ({ tag, at, volume = 1 }) => {
+  const file = useSfxFile(tag);
+  return (
+    <Sequence from={sec(at)} durationInFrames={DURATION_FRAMES}>
+      <Audio src={staticFile(file)} volume={volume} />
+    </Sequence>
+  );
+};
 
 const StoryAudio: React.FC = () => (
   <>

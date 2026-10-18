@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
 // `import.meta.dirname` (not __dirname): package.json sets "type": "module",
@@ -8,7 +9,7 @@ const here = import.meta.dirname;
 
 export default defineConfig({
   root: here,
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   // Serve the Remotion public/ dir so <Player> preview can resolve
   // staticFile("sfx/…") audio in the browser.
   publicDir: resolve(here, "../public"),
