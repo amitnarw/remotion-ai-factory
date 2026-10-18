@@ -1,6 +1,5 @@
 /**
- * Shared dashboard building blocks: PageHeader, EmptyState, ErrorBanner,
- * SoundPlayer (CC0/synth audition) — all dark-theme native.
+ * Shared dashboard building blocks — solid, borderless, kid-simple.
  */
 import * as React from "react";
 import { Play, Square, AlertTriangle } from "lucide-react";
@@ -18,8 +17,8 @@ export function PageHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+    <div className="mb-7 flex flex-wrap items-end justify-between gap-3">
+      <h2 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight">
         {title}
         {hintId ? <InfoTip helpId={hintId} /> : null}
       </h2>
@@ -40,32 +39,36 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-8 py-14 text-center">
-      {icon ? <div className="mx-auto mb-4 text-muted-foreground [&_svg]:size-10">{icon}</div> : null}
-      <h3 className="mb-1 font-semibold text-lg">{title}</h3>
-      <p className="mx-auto max-w-sm text-sm text-muted-foreground">{body}</p>
-      {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
+    <div className="rounded-3xl bg-card px-8 py-16 text-center shadow-xl shadow-black/20">
+      {icon ? (
+        <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-primary/20 text-primary [&_svg]:size-8">
+          {icon}
+        </div>
+      ) : null}
+      <h3 className="mb-2 text-xl font-bold">{title}</h3>
+      <p className="mx-auto max-w-sm text-[15px] font-medium text-muted-foreground">{body}</p>
+      {action ? <div className="mt-7 flex justify-center">{action}</div> : null}
     </div>
   );
 }
 
-/** Errors always state the problem AND the exact fix. */
+/** Solid red block: problem + exact fix. No hairlines. */
 export function ErrorBanner({ error, fix }: { error: string; fix?: string }) {
   return (
     <div
       role="alert"
-      className="mb-4 flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
+      className="mb-6 flex gap-3 rounded-2xl bg-destructive px-5 py-4 text-[15px] font-medium text-destructive-foreground shadow-xl shadow-destructive/20"
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      <AlertTriangle className="mt-1 h-5 w-5 shrink-0" />
       <div className="min-w-0 whitespace-pre-wrap">
-        <div className="font-medium">{error}</div>
-        {fix ? <div className="mt-1 text-muted-foreground">→ Fix: {fix}</div> : null}
+        <div>{error}</div>
+        {fix ? <div className="mt-1 opacity-80">Fix: {fix}</div> : null}
       </div>
     </div>
   );
 }
 
-/** One-shot audition button for an SFX variant URL. */
+/** Round solid audition button for an SFX variant URL. */
 export function SoundPlayer({
   url,
   className,
@@ -106,11 +109,11 @@ export function SoundPlayer({
   };
   return (
     <Button
-      variant={playing ? "amber" : "secondary"}
-      size="sm"
+      variant={playing ? "amber" : "soft"}
+      size="iconSm"
       onClick={toggle}
       title={title ?? "Audition this sound"}
-      className={cn("gap-1 px-2", className)}
+      className={cn("shrink-0", className)}
       aria-label={title ?? "Audition"}
     >
       {playing ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -118,14 +121,14 @@ export function SoundPlayer({
   );
 }
 
-/** Small KV chip row used across pages. */
+/** Small muted key/value row. */
 export function MetaRow({ items }: { items: Array<{ label: string; value?: React.ReactNode }> }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-muted-foreground">
       {items
         .filter((i) => i.value !== undefined && i.value !== null && i.value !== "")
         .map((i) => (
-          <span key={i.label} className="inline-flex items-center gap-1">
+          <span key={i.label} className="inline-flex items-center gap-1.5">
             <span className="text-muted-foreground/60">{i.label}</span>
             {i.value}
           </span>

@@ -1,8 +1,8 @@
 /**
- * App shell — top nav (tab lives in the URL), global Help dialog, toasts.
- * Dark-first: index.html sets `class="dark"` and the tokens live in index.css.
+ * App shell — solid pill nav (tab lives in the URL), global Help, toasts.
+ * Dark-first: index.html sets `class="dark"`; tokens live in index.css.
  */
-import { useEffect } from "react";
+import * as React from "react";
 import { Clapperboard, Sparkles, Film, Plug } from "lucide-react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
@@ -31,7 +31,7 @@ export default function App() {
   const tab = safeTab(query.get("tab") ?? undefined);
 
   // Default the URL to the primary tab on first paint (no history spam).
-  useEffect(() => {
+  React.useEffect(() => {
     if (!query.has("tab")) setQuery({ tab: "generate" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -39,29 +39,24 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={100}>
       <div className="min-h-dvh text-foreground">
-        <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md">
-          <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
-            <div className="flex items-center gap-2 font-semibold tracking-tight">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/20 text-primary">
-                <Clapperboard className="h-4.5 w-4.5" />
+        <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md">
+          <div className="mx-auto flex h-16 max-w-5xl items-center gap-3 px-4 pt-2">
+            <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
+              <span className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/30">
+                <Clapperboard className="h-5 w-5" />
               </span>
-              <span className="text-[15px]">
-                AI Video Factory
-                <span className="ml-2 rounded-md bg-secondary px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  What If Shorts
-                </span>
-              </span>
+              <span className="text-base font-extrabold tracking-tight">AI Video Factory</span>
             </div>
-            <nav className="ml-6 flex items-center gap-1">
+            <nav className="flex flex-1 items-center justify-center gap-2">
               {TABS.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => setQuery({ tab: t.key })}
                   className={cn(
-                    "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
+                    "inline-flex h-11 items-center gap-2 rounded-2xl px-5 text-[15px] font-bold transition-all active:scale-[0.97]",
                     tab === t.key
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                      ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                      : "bg-secondary text-secondary-foreground hover:brightness-125",
                   )}
                 >
                   {t.icon}
@@ -69,24 +64,24 @@ export default function App() {
                 </button>
               ))}
             </nav>
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
               <HelpDialog />
             </div>
           </div>
         </header>
 
-        <main className="mx-auto max-w-6xl px-4 py-8">
+        <main className="mx-auto max-w-5xl px-4 py-8">
           {tab === "generate" && <Generate />}
           {tab === "videos" && <Videos />}
           {tab === "providers" && <Providers />}
         </main>
 
-        <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-          100% local pipeline — synthesis, rendering and CC0 assets. No external APIs besides the
-          providers you configure.
+        <footer className="pb-8 pt-2 text-center text-sm font-medium text-muted-foreground">
+          Everything runs on your computer — nothing is sent to the internet except the AI
+          providers you configure yourself.
         </footer>
       </div>
-      <Toaster theme="dark" position="bottom-right" richColors />
+      <Toaster theme="dark" position="bottom-center" richColors />
     </TooltipProvider>
   );
 }

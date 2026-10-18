@@ -1,30 +1,37 @@
-/* Dark-first design tokens — violet primary, amber highlights. */
+/* Kid-simple dark theme: SOLID fills everywhere, ZERO borders/lines.
+   Separation = panel color + spacing + soft shadows. */
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
 
 :root,
 .dark {
-  --background: oklch(0.145 0.022 277);
-  --foreground: oklch(0.985 0.006 280);
-  --card: oklch(0.178 0.024 277);
-  --card-foreground: oklch(0.985 0.006 280);
-  --popover: oklch(0.19 0.026 278);
-  --popover-foreground: oklch(0.985 0.006 280);
-  --primary: oklch(0.62 0.2 286);
-  --primary-foreground: oklch(0.985 0.006 280);
-  --secondary: oklch(0.25 0.028 278);
-  --secondary-foreground: oklch(0.93 0.01 280);
-  --muted: oklch(0.24 0.025 278);
-  --muted-foreground: oklch(0.705 0.02 281);
-  --accent: oklch(0.75 0.15 75);
-  --accent-foreground: oklch(0.2 0.04 75);
-  --destructive: oklch(0.6 0.2 24);
-  --destructive-foreground: oklch(0.985 0.006 280);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 13%);
-  --ring: oklch(0.62 0.2 286 / 55%);
-  --radius: 0.65rem;
+  --background: oklch(0.155 0.025 278);
+  --foreground: oklch(0.98 0.006 280);
+  /* Panels: clearly lighter than bg — they "float" on it. */
+  --card: oklch(0.215 0.03 278);
+  --card-foreground: oklch(0.98 0.006 280);
+  --popover: oklch(0.235 0.032 278);
+  --popover-foreground: oklch(0.98 0.006 280);
+  --primary: oklch(0.55 0.21 292);
+  --primary-foreground: oklch(0.99 0.003 280);
+  /* Secondary = every "plain" button: solid slate fill, always visible. */
+  --secondary: oklch(0.32 0.035 280);
+  --secondary-foreground: oklch(0.96 0.008 280);
+  --muted: oklch(0.3 0.03 280);
+  --muted-foreground: oklch(0.72 0.025 281);
+  /* Accent = amber "star" fill (Generate / Auto-best). */
+  --accent: oklch(0.78 0.16 80);
+  --accent-foreground: oklch(0.25 0.08 80);
+  --destructive: oklch(0.55 0.21 25);
+  --destructive-foreground: oklch(0.99 0.003 280);
+  --success: oklch(0.62 0.17 155);
+  --success-foreground: oklch(0.99 0.003 280);
+  /* Inputs are FILLED (no outline): lighter solid fill inside panels. */
+  --input: oklch(0.28 0.032 278);
+  --border: transparent;
+  --ring: oklch(0.55 0.21 292 / 70%);
+  --radius: 1rem;
 }
 
 @theme inline {
@@ -44,13 +51,14 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 3px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 6px);
 }
 
 html {
@@ -60,25 +68,32 @@ html {
 body {
   min-height: 100dvh;
   background:
-    radial-gradient(900px 500px at 85% -10%, oklch(0.35 0.14 290 / 0.25), transparent 60%),
-    radial-gradient(700px 400px at -10% 20%, oklch(0.4 0.1 70 / 0.10), transparent 55%),
+    radial-gradient(1000px 560px at 88% -12%, oklch(0.4 0.16 292 / 0.28), transparent 62%),
+    radial-gradient(760px 460px at -8% 24%, oklch(0.5 0.12 80 / 0.12), transparent 58%),
     var(--background);
   color: var(--foreground);
+  font-size: 16.5px;
 }
 
-/* Slim, dark scrollbars (dashboards scroll a lot). */
 * {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.45 0.03 280 / 0.5) transparent;
+  scrollbar-color: oklch(0.4 0.03 280 / 0.6) transparent;
 }
 *::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: oklch(0.45 0.03 280 / 0.5);
+  background: oklch(0.4 0.03 280 / 0.6);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Kill every outline border an element may sneak in; focus = ring only. */
+*,
+*::before,
+*::after {
+  border-color: transparent;
 }

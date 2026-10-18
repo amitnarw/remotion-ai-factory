@@ -15,7 +15,7 @@ const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 max-w-xs rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md",
+        "z-50 max-w-xs rounded-xl bg-popover px-3.5 py-2.5 text-xs font-medium text-popover-foreground shadow-xl shadow-black/40",
         className,
       )}
       {...props}

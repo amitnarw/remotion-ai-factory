@@ -22,11 +22,11 @@ export function InfoTip({ helpId, className }: { helpId: string; className?: str
           type="button"
           aria-label={`Help: ${entry.title}`}
           className={cn(
-            "rounded-full text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "grid h-6 w-6 shrink-0 place-items-center rounded-full bg-secondary font-bold text-secondary-foreground transition-colors hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             className,
           )}
         >
-          <CircleHelp className="h-3.5 w-3.5" />
+          <span className="text-xs">?</span>
         </button>
       </TooltipTrigger>
       <TooltipContent>
@@ -47,8 +47,8 @@ export function HelpDialog() {
   );
   return (
     <>
-      <Button variant="ghost" size="icon" onClick={() => setOpen(true)} title="Help & documentation">
-        <CircleHelp className="h-4.5 w-4.5 text-muted-foreground hover:text-foreground" />
+      <Button variant="secondary" size="icon" onClick={() => setOpen(true)} title="Help & documentation" className="rounded-full">
+        <CircleHelp className="h-5 w-5" />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
@@ -75,14 +75,14 @@ export function HelpDialog() {
                   </div>
                   <div className="space-y-3">
                     {entries.map((e) => (
-                      <div key={e.id} className="rounded-lg border border-border bg-card/50 p-3">
-                        <div className="mb-1 flex items-center gap-2 text-sm font-medium">
+                      <div key={e.id} className="rounded-xl bg-card p-3.5 shadow-lg shadow-black/20">
+                        <div className="mb-1 flex items-center gap-2 text-sm font-bold">
                           {e.title}
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant="muted" className="text-[10px]">
                             {e.id}
                           </Badge>
                         </div>
-                        <p className="text-xs leading-relaxed text-muted-foreground">{e.body}</p>
+                        <p className="text-xs leading-relaxed font-medium text-muted-foreground">{e.body}</p>
                       </div>
                     ))}
                   </div>

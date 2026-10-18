@@ -2,20 +2,22 @@ import * as React from "react";
 import { cn } from "../../lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 
+/** Solid color pills — no outlined badges anywhere. */
 const badgeVariants = cva(
-  "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors",
+  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-colors",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary/20 text-foreground",
-        secondary: "border-transparent bg-secondary text-secondary-foreground",
-        outline: "border-border text-muted-foreground",
-        amber: "border-transparent bg-accent/20 text-accent",
-        success: "border-transparent bg-emerald-500/15 text-emerald-300",
-        destructive: "border-transparent bg-destructive/20 text-destructive",
+        default: "bg-primary text-primary-foreground",
+        secondary: "bg-secondary text-secondary-foreground",
+        amber: "bg-accent text-accent-foreground",
+        success: "bg-success text-success-foreground",
+        destructive: "bg-destructive text-destructive-foreground",
+        muted: "bg-muted text-muted-foreground",
+        violet: "bg-primary/25 text-primary",
       },
     },
-    defaultVariants: { variant: "default" },
+    defaultVariants: { variant: "secondary" },
   },
 );
 

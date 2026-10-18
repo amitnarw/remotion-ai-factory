@@ -1,15 +1,14 @@
 /**
- * Videos — render history. ?selected=<id> deep-links/highlights an entry;
- * refreshes keep the exact selection.
+ * Videos — render history. Solid cards, big buttons, zero borders.
+ * ?selected=<id> deep-links/highlights an entry; survives refresh.
  */
 import { useEffect, useRef, useState } from "react";
-import { Film, Download, Trash2, Eye, Clock } from "lucide-react";
+import { Film, Download, Trash2, Eye, Play } from "lucide-react";
 import { listVideos, deleteVideo, Video } from "../api";
 import { toast } from "sonner";
 import { PageHeader, EmptyState, ErrorBanner, MetaRow } from "../components/shared";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Card, CardContent } from "../components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +45,7 @@ export default function Videos() {
   useEffect(() => {
     listVideos()
       .then(setVideos)
-      .catch((e) => setVideos([]));
+      .catch(() => setVideos([]));
   }, []);
 
   // Deep-link scroll: once the list landed, scroll the selected card into view.
@@ -61,12 +60,9 @@ export default function Videos() {
   const handleDelete = async (v: Video) => {
     try {
       await deleteVideo(v.id);
-      toast.success(`Deleted “${v.premise.slice(0, 48)}…”`, {
-        description: "Rendered videos, specs and review stills removed.",
-      });
+      toast.success("Deleted!", { description: "The video and its files are gone." });
       if (selected === v.id) setQuery({ selected: undefined });
-      const fresh = await listVideos();
-      setVideos(fresh);
+      setVideos(await listVideos());
     } catch (e) {
       setDeleteError(String(e));
       toast.error("Delete failed");
@@ -76,127 +72,128 @@ export default function Videos() {
 
   return (
     <div>
-      <PageHeader title="Videos" hintId="videos-review" />
+      <PageHeader title="Your videos" hintId="videos-review" />
       {deleteError ? (
-        <ErrorBanner error={deleteError} fix="Retry — if the server restarted, refresh this list first" />
+        <ErrorBanner error={deleteError} fix="Try again — if the app was restarted, refresh the page first" />
       ) : null}
 
       {videos === null ? (
-        <div className="text-sm text-muted-foreground">Loading renders…</div>
+        <div className="text-[15px] font-semibold text-muted-foreground">Loading…</div>
       ) : videos.length === 0 ? (
         <EmptyState
           icon={<Film />}
-          title="No renders yet"
-          body="Generate your first story video on the Generate tab — it lands here with verified audio and every frame drawn at 1080×1920."
+          title="No videos yet"
+          body="Go to Generate, pick a video and press the big yellow button — it will show up here."
         />
       ) : (
-        <div className="space-y-4">
-          {videos.map((v, i) => (
-            <Card
+        <div className="space-y-5">
+          {videos.map((v) => (
+            <div
               key={v.id}
               ref={selected === v.id ? selectedRef : undefined}
               className={cn(
-                "transition-all",
-                selected === v.id &&
-                  "border-primary/60 bg-primary/[0.06] shadow-[0_0_0_1px_var(--primary)]",
+                "flex flex-wrap items-start gap-5 rounded-3xl p-6 shadow-xl shadow-black/20 transition-all",
+                selected === v.id ? "bg-primary text-primary-foreground" : "bg-card hover:brightness-110",
               )}
             >
-              <CardContent className="flex flex-wrap items-start gap-4 p-5">
-                <button
-                  className="group relative shrink-0 overflow-hidden rounded-lg border border-border bg-black"
-                  onClick={() => setOpenVideo(v)}
-                  title="Play in a dialog"
+              <button
+                onClick={() => setOpenVideo(v)}
+                title="Watch this video"
+                className={cn(
+                  "grid h-24 w-24 shrink-0 place-items-center rounded-2xl transition-transform active:scale-[0.97]",
+                  selected === v.id ? "bg-black/25" : "bg-primary/20 text-primary",
+                )}
+              >
+                <Play className="h-9 w-9" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Badge variant={selected === v.id ? "default" : v.engine === "story" ? "violet" : "secondary"}>
+                    {v.engine === "story" ? "Story" : "AI spec"}
+                  </Badge>
+                  {selected === v.id ? <Badge variant="amber">picked</Badge> : null}
+                  <Badge variant={selected === v.id ? "default" : "muted"}>{v.durationSec ?? "?"}s</Badge>
+                </div>
+                <h3 className="truncate text-lg font-extrabold leading-snug" title={v.premise}>
+                  {v.premise}
+                </h3>
+                <div className="mt-2">
+                  <MetaRow
+                    items={[
+                      { label: "saved as", value: <code className="text-[11px]">{v.output}</code> },
+                      {
+                        label: "made",
+                        value: v.generatedAt ? new Date(v.generatedAt).toLocaleString("en-GB") : undefined,
+                      },
+                      { label: "provider", value: v.engine !== "story" ? v.provider : undefined },
+                    ]}
+                  />
+                </div>
+              </div>
+              <div className={cn("flex shrink-0 flex-wrap items-center gap-2.5", selected === v.id && "opacity-95")}>
+                <Button
+                  variant={selected === v.id ? "amber" : "secondary"}
+                  size="sm"
+                  asChild
+                  disabled={!v.output}
                 >
-                  <div className="grid h-[104px] w-[59px] place-items-center">
-                    <Eye className="h-5 w-5 text-muted-foreground/60 transition-colors group-hover:text-foreground" />
-                  </div>
-                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center font-mono text-[9px] text-muted-foreground">
-                    {v.durationSec ?? "?"}s
-                  </span>
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex flex-wrap items-center gap-2">
-                    <Badge variant={v.engine === "story" ? "amber" : "secondary"}>
-                      {v.engine === "story" ? "Story" : "AI spec"}
-                    </Badge>
-                    {selected === v.id ? <Badge variant="default">selected</Badge> : null}
-                    {v.music?.mood ? (
-                      <Badge variant="outline">
-                        <Clock className="h-3 w-3" /> {v.music.mood}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <h3 className="truncate font-medium leading-snug" title={v.premise}>
-                    {v.premise}
-                  </h3>
-                  <div className="mt-1.5">
-                    <MetaRow
-                      items={[
-                        { label: "file", value: <code className="text-[11px]">{v.output}</code> },
-                        { label: "rendered", value: v.generatedAt ? new Date(v.generatedAt).toLocaleString("en-GB") : undefined },
-                        { label: "provider", value: v.engine !== "story" ? v.provider : undefined },
-                        { label: "model", value: v.engine !== "story" ? v.model : undefined },
-                      ]}
-                    />
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button variant="secondary" size="sm" asChild disabled={!v.output}>
-                    <a href={`/media/${v.output}`} target="_blank" rel="noreferrer" download>
-                      <Download className="h-4 w-4" /> MP4
-                    </a>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setOpenReview({ id: v.id, reviewFolder: v.reviewFolder })}
-                    disabled={!v.reviewFolder}
-                    title={
-                      v.reviewFolder
-                        ? "Frame-by-frame review (AI-spec renders)"
-                        : "No review folder — story renders are frame-verified at build time"
-                    }
-                  >
-                    <Eye className="h-4 w-4" /> Review
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(v)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                  <a href={`/media/${v.output}`} target="_blank" rel="noreferrer" download>
+                    <Download className="h-4 w-4" /> Download
+                  </a>
+                </Button>
+                <Button
+                  variant={selected === v.id ? "amber" : "secondary"}
+                  size="sm"
+                  onClick={() => setOpenReview({ id: v.id, reviewFolder: v.reviewFolder })}
+                  disabled={!v.reviewFolder}
+                  title={
+                    v.reviewFolder
+                      ? "See every second of the video as a picture"
+                      : "Story videos were already checked picture-by-picture"
+                  }
+                >
+                  <Eye className="h-4 w-4" /> Pictures
+                </Button>
+                <Button
+                  variant={selected === v.id ? "amber" : "destructive"}
+                  size="iconSm"
+                  onClick={() => setDeleteTarget(v)}
+                  title="Delete this video"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
 
       {/* Video playback dialog */}
       <Dialog open={openVideo != null} onOpenChange={(o) => !o && setOpenVideo(null)}>
-        <DialogContent className="max-w-[min(420px,92vw)] p-4">
+        <DialogContent className="max-w-[min(440px,92vw)] p-5">
           {openVideo ? (
             <>
               <DialogHeader>
-                <DialogTitle className="text-sm leading-snug pr-6">{openVideo.premise}</DialogTitle>
+                <DialogTitle className="pr-8 text-base leading-snug">{openVideo.premise}</DialogTitle>
                 <DialogDescription>
-                  {openVideo.engine === "story" ? "Story render · verified" : "AI spec render"} ·{" "}
-                  {openVideo.durationSec ?? "?"}s · 1080×1920
+                  {openVideo.engine === "story" ? "Story video (checked ✓)" : "AI-spec video"} ·{" "}
+                  {openVideo.durationSec ?? "?"}s · tall 1080×1920
                 </DialogDescription>
               </DialogHeader>
-              <video controls className="w-full rounded-lg bg-black" src={`/media/${openVideo.output}`} />
+              <video controls className="w-full rounded-2xl bg-black" src={`/media/${openVideo.output}`} />
             </>
           ) : null}
         </DialogContent>
       </Dialog>
 
-      {/* Review frames dialog (AI-spec stills) */}
+      {/* Review pictures dialog */}
       <Dialog open={openReview != null} onOpenChange={(o) => !o && setOpenReview(null)}>
-        <DialogContent className="max-w-[min(760px,94vw)]">
+        <DialogContent className="max-w-[min(780px,94vw)]">
           {openReview ? (
             <>
               <DialogHeader>
-                <DialogTitle>Frame review</DialogTitle>
-                <DialogDescription>
-                  One still per second — the authoring inspection set for this render.
-                </DialogDescription>
+                <DialogTitle>Pictures of every second</DialogTitle>
+                <DialogDescription>Each picture below is one second of the video.</DialogDescription>
               </DialogHeader>
               <StillGallery id={openReview.id} reviewFolder={openReview.reviewFolder} />
             </>
@@ -208,16 +205,15 @@ export default function Videos() {
       <AlertDialog open={deleteTarget != null} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this render?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this video?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{deleteTarget?.premise}” and ALL of its rendered versions plus review stills will be
-              removed. This cannot be undone.
+              “{deleteTarget?.premise}” and ALL of its files will be removed. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteTarget && handleDelete(deleteTarget)}>
-              Delete everything
+              Yes, delete it
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -244,22 +240,22 @@ function StillGallery({ id, reviewFolder }: { id: string; reviewFolder?: string 
   if (!reviewFolder) {
     return (
       <EmptyState
-        title="No review folder"
-        body="Story renders are verified at build time (frames + audio QC), so no extraction strip is generated for them."
+        title="No pictures for this one"
+        body="Story videos were already checked picture-by-picture while being made."
       />
     );
   }
   if (!frames.length) {
-    return <div className="text-sm text-muted-foreground">Extracting stills…</div>;
+    return <div className="text-[15px] font-semibold text-muted-foreground">Loading…</div>;
   }
   return (
-    <div className="grid max-h-[60dvh] grid-cols-3 gap-2 overflow-y-auto rounded-lg border border-border bg-black/30 p-2 pr-3 sm:grid-cols-4">
+    <div className="grid max-h-[60dvh] grid-cols-3 gap-3 overflow-y-auto rounded-2xl bg-black/40 p-3 pr-4 sm:grid-cols-4">
       {frames.map((src) => (
         <img
           key={src}
           src={src}
           loading="lazy"
-          className="aspect-[9/16] w-full rounded-md border border-border object-cover"
+          className="aspect-[9/16] w-full rounded-xl object-cover shadow-lg"
         />
       ))}
     </div>
