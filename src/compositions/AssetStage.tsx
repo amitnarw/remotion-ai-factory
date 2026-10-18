@@ -41,9 +41,12 @@ function Character({
   // One mixer per clone instance: skeleton-cloned GLTFs keep their own skeleton
   // references, so per-instance AnimationMixer + clipAction is correct.
   const clones = useMemo(() => {
-    const out: Array<{ clone: THREE.Object3D; shirt: THREE.Mesh | null; pants: THREE.Mesh | null; mixer: THREE.AnimationMixer; phase: number; jitter: number }> = [];
+    const out: Array<{ clone: THREE.Object3D; shirt: THREE.Mesh | null; pants: THREE.Mesh | null; mixer: THREE.AnimationMixer; phase: number; jitter: number; groundY: number }> = [];
     for (let i = 0; i < count; i++) {
       const c = skeletonClone(gltf.scene);
+      // Distance to lift the model so its lowest vertex (feet) sits on y=0.
+      const box = new THREE.Box3().setFromObject(c);
+      const groundY = -box.min.y;
       let shirt: THREE.Mesh | null = null;
       let pants: THREE.Mesh | null = null;
       c.traverse((o) => {
@@ -65,7 +68,7 @@ function Character({
       const mixer = new THREE.AnimationMixer(c);
       const clips = gltf.animations.filter((a) => a.name.toLowerCase().includes(action ?? "idle") || a.name.toLowerCase().includes("idle"));
       if (clips.length) mixer.clipAction(clips[0]).play();
-      out.push({ clone: c, shirt, pants, mixer, phase: seed * Math.PI * 2, jitter: seed2 });
+      out.push({ clone: c, shirt, pants, mixer, phase: seed * Math.PI * 2, jitter: seed2, groundY });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,6 +88,7 @@ function Character({
           pantsColor={pantsColor}
           phase={c.phase}
           jitter={c.jitter}
+          groundY={c.groundY}
           shirt={c.shirt}
           pants={c.pants}
           frame={frame}
@@ -99,7 +103,7 @@ function Character({
 }
 
 function CharacterInstance({
-  node, index, count, action, zone, shirtColor, pantsColor, phase, jitter, shirt, pants, frame, specId, gravityOff, gravityOn, mixer,
+  node, index, count, action, zone, shirtColor, pantsColor, phase, jitter, groundY, shirt, pants, frame, specId, gravityOff, gravityOn, mixer,
 }: {
   node: THREE.Object3D;
   index: number;
@@ -110,6 +114,7 @@ function CharacterInstance({
   pantsColor?: string;
   phase: number;
   jitter: number;
+  groundY: number;
   shirt: THREE.Mesh | null;
   pants: THREE.Mesh | null;
   frame: number;
@@ -119,12 +124,15 @@ function CharacterInstance({
   mixer: THREE.AnimationMixer;
 }) {
   const area: Record<string, [number, number, number, number]> = {
-    foreground: [-3, 3, -2.5, 2],
-    midground: [-8, 8, -6, 3],
-    background: [-14, -8, 16, 30],
+    foreground: [-4, 4, -4.5, -2],
+    midground: [-9, 9, -8.5, -4],
+    // Far but IN the camera's view (camera looks toward -z from z≈11..15).
+    background: [-20, 20, -24, -12],
   };
   const [x0, x1, z0, z1] = area[zone ?? "midground"];
-  const px = x0 + jitter * (x1 - x0);
+  // Even deterministic spread across the zone (index slots) + mild jitter, so
+  // crowd members never stack on top of each other.
+  const px = x0 + ((index + 0.5 + (jitter - 0.5) * 0.5) / count) * (x1 - x0);
   const pz = z0 + random(`${specId}-pz-${index}-${count}`) * (z1 - z0);
 
   // Per-character animation timing: progress through the walk/idle cycle.
@@ -181,15 +189,17 @@ function CharacterInstance({
 
   mixer.update(1 / 30);
 
-  // Characters are center-originated; offset by half height so feet sit on ground.
-  const bodyY = bob + gravityY + 0.85;
+  // Feet on ground: lift by the model's bounding-box bottom, scaled by the
+  // instance scale; the squash compresses toward the feet so contact holds.
+  const s = 0.9 + jitter * 0.2;
+  const bodyY = (bob + gravityY) + groundY * s * squash;
 
   return (
     <primitive
       object={node}
       position={[px, bodyY, pz]}
       rotation={[tilt, gravitySpin, 0]}
-      scale={[1, squash, 1]}
+      scale={[s, s * squash, s]}
     />
   );
 }
@@ -215,7 +225,6 @@ function KitEnv({ kit, specId, entries }: { kit: string; specId: string; entries
       <Ground kit={kit} />
       <BuildingRing entries={buildings} specId={specId} />
       <TreeScatter entries={nature} specId={specId} />
-      <SkyDome kit={kit} />
       <PrefetchGlbs files={files} />
     </group>
   );
@@ -229,11 +238,44 @@ function Ground({ kit }: { kit: string }) {
     pier: "#4d6b5f",
     interior: "#6b5d52",
   };
+  const outer = colors[kit] ?? "#444";
+  if (kit !== "city-street") {
+    return (
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[120, 120]} />
+        <meshStandardMaterial color={outer} roughness={0.9} />
+      </mesh>
+    );
+  }
+  // City kit: asphalt road corridor + lighter sidewalks + outer pavement.
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[120, 120]} />
-      <meshStandardMaterial color={colors[kit] ?? "#444"} roughness={0.9} />
-    </mesh>
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, -40]} receiveShadow>
+        <planeGeometry args={[120, 160]} />
+        <meshStandardMaterial color={outer} roughness={0.9} />
+      </mesh>
+      {/* Sidewalks */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[6.75, 0.02, -20]} receiveShadow>
+        <planeGeometry args={[4.5, 130]} />
+        <meshStandardMaterial color="#575c64" roughness={0.85} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-6.75, 0.02, -20]} receiveShadow>
+        <planeGeometry args={[4.5, 130]} />
+        <meshStandardMaterial color="#575c64" roughness={0.85} />
+      </mesh>
+      {/* Road */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, -20]} receiveShadow>
+        <planeGeometry args={[9, 130]} />
+        <meshStandardMaterial color="#2e3238" roughness={0.95} />
+      </mesh>
+      {/* Center dashes */}
+      {[0, 1, 2, 3, 4].map((i) => (
+        <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, -2 - i * 8]} receiveShadow>
+          <planeGeometry args={[0.3, 2.4]} />
+          <meshStandardMaterial color="#c8c8c8" roughness={0.7} />
+        </mesh>
+      ))}
+    </group>
   );
 }
 
@@ -256,8 +298,17 @@ function BuildingCluster({ entry, specId, castIndex }: { entry: CastEntry; specI
     for (let i = 0; i < count; i++) {
       const a1 = random(`${specId}-b${castIndex}-${i}-a`);
       const a2 = random(`${specId}-b${castIndex}-${i}-b`);
-      const s = 0.8 + a1 * 1.6;
-      out.push({ pos: [-24 + a2 * 48, 0, -30 - a1 * 26], rot: a2 * Math.PI / 2, s });
+      const s = 1.1 + a1 * 1.5;
+      // Flank the street: open center corridor, buildings on both sides.
+      const side = a2 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (5.5 + a1 * 7), 0, -8 - a1 * 14], rot: a2 * Math.PI / 2 + (side < 0 ? Math.PI : 0), s });
+    }
+    // Far skyline row: hazy background towers to fill the upper sky band.
+    for (let i = 0; i < 6; i++) {
+      const a1 = random(`${specId}-b${castIndex}-far-${i}-a`);
+      const a2 = random(`${specId}-b${castIndex}-far-${i}-b`);
+      const s = 1.6 + a1 * 2;
+      out.push({ pos: [-26 + a2 * 52, 0, -34 - a1 * 12], rot: a2 * Math.PI / 2, s });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -291,7 +342,16 @@ function TreeRing({ entry, specId, castIndex }: { entry: CastEntry; specId: stri
       const a1 = random(`${specId}-t${castIndex}-${i}-a`);
       const a2 = random(`${specId}-t${castIndex}-${i}-b`);
       const s = 0.9 + a1 * 0.9;
-      out.push({ pos: [-26 + a2 * 52, 0, -34 + a1 * 12], rot: a1 * 6.28, s });
+      // Trees along the street edges, close enough to read in frame.
+      const side = a1 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (5 + a2 * 18), 0, -7 - a1 * 19], rot: a1 * 6.28, s });
+    }
+    // A few foreground edge trees near the camera for depth framing.
+    for (let i = 0; i < 3; i++) {
+      const a1 = random(`${specId}-t${castIndex}-near-${i}-a`);
+      const a2 = random(`${specId}-t${castIndex}-near-${i}-b`);
+      const side = a2 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (3.5 + a1 * 2.5), 0, -4 - a1 * 3], rot: a1 * 6.28, s: 0.9 + a1 * 0.6 });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -336,18 +396,18 @@ function CameraRig({ gravityOff, gravityOn }: { gravityOff: number | null; gravi
   useFrame(() => {
     const t = frame / 30;
     let y = 1.75 + Math.sin(frame * 0.01) * 0.08;
-    let z = 14 - Math.min(t * 0.4, 5);
-    let tilt = -0.04;
+    let z = 15 - Math.min(t * 0.3, 4);
+    let tilt = -0.03;
     if (gravityOff != null && gravityOn != null) {
       if (t >= gravityOff && t < gravityOn) {
         const f = (t - gravityOff) / Math.max(0.001, gravityOn - gravityOff);
         y += f * 7;
-        tilt = -0.12 - f * 0.15;
+        tilt = -0.05 - f * 0.08;
         z -= f * 2;
       } else if (t >= gravityOn) {
         const f = Math.min(1, (t - gravityOn) / 2.5);
         y += 6.4 - f * 6.5;
-        tilt = -0.2 + f * 0.18;
+        tilt = -0.08 + f * 0.1;
       }
     }
     camera.position.set(0, y, z);

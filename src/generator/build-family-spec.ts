@@ -71,15 +71,8 @@ export function buildFamilySpec(premise: string): ShotSpec | null {
   }
   if (/time stop|time stopped|time stops/.test(p)) {
     return withTimer(
-      {
-        ...base,
-        id: "time-stopped-5s",
-        scenes: base.scenes.map((s) =>
-          s.scene === "city"
-            ? { ...s, physics: { ...s.physics, gravityOff: 3.2, gravityOn: 8.2 } }
-            : s,
-        ),
-      },
+      // Base already carries the 3.2→8.2 float physics; only copy changes.
+      { ...base, id: "time-stopped-5s" },
       "TIME WITHOUT A SUNSET",
       3.2,
       8.2,
@@ -172,6 +165,7 @@ export function buildFamilySpec(premise: string): ShotSpec | null {
       {
         ...base,
         id: "sun-never-set-1000y",
+        // Sun-set is ambient: strip the float arc so the scene is a calm street.
         scenes: base.scenes.map((s) => ({
           ...s,
           physics: { ...s.physics, gravityOff: null, gravityOn: null },
