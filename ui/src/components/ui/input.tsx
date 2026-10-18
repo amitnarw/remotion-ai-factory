@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
-/** FILLED inputs — a lighter block inside the panel; no outline, focus = ring. */
+/** FILLED inputs, a lighter block inside the panel; no outline, focus = ring. */
 const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, type, ...props }, ref) => (
     <input

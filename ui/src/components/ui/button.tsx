@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
 /**
- * SOLID buttons only — every variant is a filled block a kid can spot instantly.
+ * SOLID buttons only, every variant is a filled block a kid can spot instantly.
  * Big, plush, rounded. No outlines, no ghosts, no transparent buttons.
  */
 const buttonVariants = cva(

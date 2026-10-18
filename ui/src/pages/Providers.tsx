@@ -1,5 +1,5 @@
 /**
- * Providers — key/config management with solid, borderless cards.
+ * Providers, key/config management with solid, borderless cards.
  * ?provider=<name> deep-links to that provider card.
  */
 import { useEffect, useState } from "react";
@@ -146,10 +146,10 @@ export default function Providers() {
         <Card className="mb-6 p-6">
           <h3 className="mb-4 text-lg font-extrabold">New provider</h3>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Input placeholder="Name — e.g. openai" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            <Input placeholder="Package — openai / anthropic / google" value={newPackage} onChange={(e) => setNewPackage(e.target.value)} />
+            <Input placeholder="Name, e.g. openai" value={newName} onChange={(e) => setNewName(e.target.value)} />
+            <Input placeholder="Package, openai / anthropic / google" value={newPackage} onChange={(e) => setNewPackage(e.target.value)} />
             <Input placeholder="Address (optional)" value={newBaseUrl} onChange={(e) => setNewBaseUrl(e.target.value)} />
-            <Input placeholder="Key name — e.g. OPENAI_API_KEY" value={newApiKeyEnv} onChange={(e) => setNewApiKeyEnv(e.target.value)} />
+            <Input placeholder="Key name, e.g. OPENAI_API_KEY" value={newApiKeyEnv} onChange={(e) => setNewApiKeyEnv(e.target.value)} />
           </div>
           <div className="mt-4">
             <Button size="lg" onClick={handleAddProvider} disabled={!newName.trim()}>
@@ -163,7 +163,7 @@ export default function Providers() {
         <EmptyState
           icon={<Plug />}
           title="No providers yet"
-          body="Providers are only needed for the AI-spec pipeline. Everything else — including making story videos — works without them."
+          body="Providers are only needed for the AI-spec pipeline. Everything else, including making story videos, works without them."
         />
       ) : (
         <div className="space-y-5">

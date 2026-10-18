@@ -1,5 +1,5 @@
 /**
- * lib/help.ts — single source of truth for in-dashboard documentation.
+ * lib/help.ts, single source of truth for in-dashboard documentation.
  * Each control with an `InfoTip` pulls its copy from this registry, and the
  * global Help dialog lists all of it — one file to edit, always in sync.
  */
@@ -16,59 +16,58 @@ export const HELP: HelpEntry[] = [
     title: "Story engine",
     group: "Generate",
     body:
-      "Each story is a bespoke, human-audited composition in src/whatif/videos/<slug>/ — " +
-      "real code with beats, scenes, typography, a synthesized music score and placed sound effects. " +
-      "Rendering it produces the same verified 1080×1920 vertical MP4 every time.",
+      "Each story is a finished short film made here. Beats, scenes, music " +
+      "and sounds were all picked in this dashboard. Rendering it always " +
+      "makes the same video every time.",
   },
   {
     id: "sound-design",
     title: "Sound design step",
     group: "Sound design",
     body:
-      "Every video places sound cues (wind beds, whooshes, impacts…). Each role has one or more " +
-      "variants: a crafted synth sound and — where available — CC0 field recordings from kenney.nl. " +
-      "Audition them here, pick per role, or leave Auto (best). Your choices are saved for future renders.",
+      "Every video places sounds: wind beds, whooshes, impacts. Each role has " +
+      "one or more variants. Audition them here, pick per role, or leave Auto " +
+      "(best). Your choices are saved for future renders.",
   },
   {
     id: "auto-best",
     title: "Auto (best)",
     group: "Sound design",
     body:
-      "Auto keeps the strongest variant per role — usually a real CC0 recording — and is the default. " +
-      "Pick an explicit variant only when you want a different character for that sound.",
+      "Auto picks the strongest sound for each role and is the default. Pick " +
+      "an explicit variant only when you want a different sound.",
   },
   {
     id: "advanced-template",
-    title: "AI spec (advanced)",
+    title: "Old way (advanced)",
     group: "Generate",
     body:
-      "The legacy pipeline: an LLM writes a shot spec from your premise, then the template renderer " +
-      "animates it. Needs a provider key (or the offline family templates). The story engine is the primary path.",
+      "This is the older pipeline for testing extra options. You don't need it " +
+      "to make videos with the story engine.",
   },
   {
     id: "job-stages",
     title: "Render stages",
     group: "Generate",
     body:
-      "Story videos run four stages: Music bed (synthesized to the story's mood + seed), Bundle " +
-      "(Remotion packs the composition), Render (every frame drawn at 1080×1920) and Encode (H.264 + AAC mux). " +
-      "Renders are verified automatically: per-second loudness checks with zero tolerance for dead audio.",
+      "Story videos run four stages: music bed, packing, rendering frames, " +
+      "and saving. Renders are checked automatically: every second is measured " +
+      "for sound so nothing comes out silent.",
   },
   {
     id: "videos-review",
     title: "Review frames",
     group: "Videos",
     body:
-      "Story renders ship with an extracted frame strip (one still per second) that was visually inspected " +
-      "during the authoring loop. Story videos are verified at build time, so review folders only exist for " +
-      "AI-spec pipeline renders.",
+      "Story renders come with one still per second so you can check every " +
+      "moment. These review folders exist for the older pipeline's renders.",
   },
   {
     id: "providers-key",
-    title: "API keys",
+    title: "Sign-in keys",
     group: "Providers",
     body:
-      "Keys are saved to the local .env file — never sent to the browser, never used for anything besides your own renders. " +
+      "Keys are saved only on this computer, never shared with anything else. " +
       "After saving, click Fetch models to load the live model list.",
   },
   {
@@ -76,8 +75,8 @@ export const HELP: HelpEntry[] = [
     title: "Test provider",
     group: "Providers",
     body:
-      "Runs a real 1-token generation against the provider to verify the key works end-to-end. " +
-      "Latency and token counts are shown in the toast.",
+      "Sends one test message to the provider to check the key works. How long " +
+      "it took is shown in the toast.",
   },
 ];
 

@@ -1,5 +1,5 @@
 /**
- * InfoTip — per-control "?" tooltip (copy from lib/help.ts), plus the global
+ * InfoTip, per-control "?" tooltip (copy from lib/help.ts), plus the global
  * Help dialog listing every entry with live text search.
  */
 import * as React from "react";

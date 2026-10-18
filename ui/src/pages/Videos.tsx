@@ -1,5 +1,5 @@
 /**
- * Videos — render history. Solid cards, big buttons, zero borders.
+ * Videos, render history. Solid cards, big buttons, zero borders.
  * ?selected=<id> deep-links/highlights an entry; survives refresh.
  */
 import { useEffect, useRef, useState } from "react";
@@ -74,7 +74,7 @@ export default function Videos() {
     <div>
       <PageHeader title="Your videos" hintId="videos-review" />
       {deleteError ? (
-        <ErrorBanner error={deleteError} fix="Try again — if the app was restarted, refresh the page first" />
+        <ErrorBanner error={deleteError} fix="Try again, if the app was restarted, refresh the page first" />
       ) : null}
 
       {videos === null ? (
@@ -83,7 +83,7 @@ export default function Videos() {
         <EmptyState
           icon={<Film />}
           title="No videos yet"
-          body="Go to Generate, pick a video and press the big yellow button — it will show up here."
+          body="Go to Generate, pick a video and press the big yellow button, it will show up here."
         />
       ) : (
         <div className="space-y-5">
@@ -176,7 +176,7 @@ export default function Videos() {
               <DialogHeader>
                 <DialogTitle className="pr-8 text-base leading-snug">{openVideo.premise}</DialogTitle>
                 <DialogDescription>
-                  {openVideo.engine === "story" ? "Story video — checked" : "AI-spec video"} ·{" "}
+                  {openVideo.engine === "story" ? "Story video, checked" : "AI-spec video"} ·{" "}
                   {openVideo.durationSec ?? "?"}s · tall 1080×1920
                 </DialogDescription>
               </DialogHeader>

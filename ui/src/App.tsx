@@ -1,5 +1,5 @@
 /**
- * App shell — solid pill nav (tab lives in the URL), global Help, toasts.
+ * App shell, solid pill nav (tab lives in the URL), global Help, toasts.
  * Dark-first: index.html sets `class="dark"`; tokens live in index.css.
  */
 import * as React from "react";
@@ -45,7 +45,7 @@ export default function App() {
               <span className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/30">
                 <Clapperboard className="h-5 w-5" />
               </span>
-              <span className="text-base font-extrabold tracking-tight">AI Video Factory</span>
+              <span className="text-base font-extrabold tracking-tight">Video Factory</span>
             </div>
             <nav className="flex flex-1 items-center justify-center gap-2">
               {TABS.map((t) => (
@@ -77,8 +77,8 @@ export default function App() {
         </main>
 
         <footer className="pb-8 pt-2 text-center text-sm font-medium text-muted-foreground">
-          Everything runs on your computer — nothing is sent to the internet except the AI
-          providers you configure yourself.
+          Everything runs on this computer. Nothing is uploaded anywhere, except
+          the accounts you set up yourself.
         </footer>
       </div>
       <Toaster theme="dark" position="bottom-center" richColors />

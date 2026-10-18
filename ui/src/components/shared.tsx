@@ -1,5 +1,5 @@
 /**
- * Shared dashboard building blocks — solid, borderless, kid-simple.
+ * Shared dashboard building blocks, solid, borderless, kid-simple.
  */
 import * as React from "react";
 import { Play, Square, AlertTriangle } from "lucide-react";

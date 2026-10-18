@@ -1,5 +1,5 @@
 /**
- * lib/navigation.tsx — URL query param state, zero deps.
+ * lib/navigation.tsx, URL query param state, zero deps.
  *
  * Every tab exposes its state via search params so a refresh / share link
  * restores the exact view:

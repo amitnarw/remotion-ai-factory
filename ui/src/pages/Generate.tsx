@@ -1,11 +1,11 @@
 /**
- * Generate — the Story Studio wizard. One step at a time, kid-simple.
+ * Generate, the Story Studio wizard. One step at a time, kid-simple.
  *
  *   ?tab=generate&step=1|3&path=ready&story=<slug>&plan=<jobId>&draft=<slug>&job=<renderId>
  *
  * Two paths through the same three steps:
- *   READY — hand-crafted videos (pick → sound design → make)
- *   NEW   — your topic / your whole story → the writer drafts the storyboard →
+ *   READY, hand-crafted videos (pick → sound design → make)
+ *   NEW, your topic / your whole story → the writer drafts the storyboard →
  *           you REVIEW it (scenes, camera, narration, sounds) → approve →
  *           render with local KittenTTS voices, synthesized music + v2 SFX.
  */
@@ -20,6 +20,7 @@ import {
   Clapperboard,
   PenLine,
   BookText,
+  BookOpen,
   Wand2,
   Eye,
   Camera,
@@ -161,14 +162,14 @@ export default function Generate() {
             if (st === "done" || st === "failed") stopPolling();
           } catch {
             stopPolling();
-            setGenError("Lost track of the job — the app restarted. Start again.");
+            setGenError("Lost track of the job, the app restarted. Start again.");
             setStatus("idle");
           }
         }, 2000) as unknown as number;
         stopPolling();
         pollRef.current = { id: jobId, timer };
       };
-      // Full sync — the job may have finished before we attached.
+      // Full sync, the job may have finished before we attached.
       getJob(jobId)
         .then((fresh) => {
           const st = adopt(fresh);
@@ -184,7 +185,7 @@ export default function Generate() {
     [adopt, stopPolling],
   );
 
-  /* Attach by URL: render job (step 3), plan job (review) — deep-link-proof. */
+  /* Attach by URL: render job (step 3), plan job (review), deep-link-proof. */
   useEffect(() => {
     if (step === "3" && jobParam) {
       setStage(jobParam.includes("-t") ? "script" : "voice");
@@ -234,7 +235,7 @@ export default function Generate() {
 
   return (
     <div className="mx-auto max-w-2xl pb-10">
-      {/* Stepper (non-clickable — back buttons below guide the way) */}
+      {/* Stepper (non-clickable, back buttons below guide the way) */}
       <div className="mb-8 flex items-center justify-center gap-2">
         {([1, 2, 3] as const).map((n, i) => {
           const isCurrent =
@@ -271,7 +272,7 @@ export default function Generate() {
         })}
       </div>
 
-      {genError ? <ErrorBanner error={genError} fix="Start again — everything runs locally and re-runs cleanly" /> : null}
+      {genError ? <ErrorBanner error={genError} fix="Start again, everything runs locally and re-runs cleanly" /> : null}
 
       {step === "1" ? (
         <Step1
@@ -332,9 +333,20 @@ export default function Generate() {
 }
 
 /* ==================================================================== */
-/*  STEP 1 — idea entry / drafts / ready videos                          */
+/*  STEP 1, idea entry / drafts / ready videos                          */
 /* ==================================================================== */
 const LENGTHS = [15, 20, 30, 45, 60];
+
+/** A model submission, beginning, flip, escalation, warm smiley payoff. */
+const STORY_SAMPLE = `What if shadows could hold you?
+
+Bruno the blob sat on his bench, sipping cocoa. His shadow stretched across the pavement, long and lazy in the sunset.
+
+At midnight, the shadow grabbed his ankle. He pulled, but it would not let go. He ran down the street, but the shadow skated right behind him, thin as ink.
+
+By morning he gave up, sat back down and said: "Fine. You can hold my cocoa."
+
+The shadow let go of his ankle and steadied the mug instead.`;
 
 function Step1({
   stories,
@@ -379,14 +391,14 @@ function Step1({
             {
               key: "topic" as const,
               icon: <PenLine className="h-7 w-7" />,
-              title: "I have a topic",
-              sub: "Type what the video is about — the writer invents the story.",
+              title: "I have an idea",
+              sub: "Type what the video is about.",
             },
             {
               key: "story" as const,
               icon: <BookText className="h-7 w-7" />,
               title: "I have the whole story",
-              sub: "Paste your story — the studio directs it with scenes, sounds and voices.",
+              sub: "Paste your story, and we turn it into scenes with sounds.",
             },
           ]
         ).map((c) => (
@@ -427,21 +439,37 @@ function Step1({
         <Card className="p-6">
           <div className="space-y-4">
             {mode === "topic" ? (
-              <Input
-                autoFocus
-                placeholder="What if the moon was twice as close?"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                className="text-lg"
-              />
+              <>
+                <Input
+                  autoFocus
+                  placeholder="What if the moon was twice as close?"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  className="text-lg"
+                />
+                <p className="text-xs font-medium text-muted-foreground">
+                  One sentence is enough. If we need anything else we will ask while writing.
+                </p>
+              </>
             ) : (
-              <Textarea
-                autoFocus
-                placeholder="Paste your whole story here…"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                className="min-h-40"
-              />
+              <>
+                <Textarea
+                  autoFocus
+                  placeholder="Paste your whole story here…"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  className="min-h-40"
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button variant="secondary" size="sm" onClick={() => { setInput(STORY_SAMPLE); toast.info("This is an example, keep it, edit it, or paste your own."); }}>
+                    <BookOpen className="h-4 w-4" /> Show me an example
+                  </Button>
+                  <p className="max-w-sm text-xs font-medium text-muted-foreground">
+                    Write it any way you like, bullet points, dialogue, plain paragraphs. Tell us how
+                    it starts, what goes wrong, and how it ends.
+                  </p>
+                </div>
+              </>
             )}
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="mr-1 text-sm font-bold text-muted-foreground">
@@ -470,7 +498,7 @@ function Step1({
               <InfoTip helpId="story-engine" />
             </div>
             <p className="text-xs font-medium text-muted-foreground">
-              The writer shows you the complete story first — nothing renders until you approve it.
+              We show you the complete story first. Nothing renders until you say yes.
             </p>
           </div>
         </Card>
@@ -542,7 +570,7 @@ function Step1({
 }
 
 /* ==================================================================== */
-/*  STEP 2 (ready path) — sound design                                   */
+/*  STEP 2 (ready path), sound design                                   */
 /* ==================================================================== */
 function Step2Ready({
   storySlug,
@@ -678,7 +706,7 @@ function VariantChip({
 }
 
 /* ==================================================================== */
-/*  STEP 2 (new path) — story review                                     */
+/*  STEP 2 (new path), story review                                     */
 /* ==================================================================== */
 const VOICE_MODES_UI = [
   { key: "both", label: "Narrator + blob", icon: <Users className="h-4 w-4" /> },
@@ -791,7 +819,7 @@ function StoryReview({
         setFetched(true);
         getStory(job.slug)
           .then((d) => setSb(d.storyboard as Storyboard))
-          .catch(() => setLoadFailed("The story got lost — please write it again."));
+          .catch(() => setLoadFailed("The story got lost, please write it again."));
       }
     }
     if (status === "failed" && job?.error) {
@@ -824,7 +852,7 @@ function StoryReview({
         slug,
         previous: sb,
       });
-      // New plan job — swap the plan id in the URL; the writer panel shows.
+      // New plan job, swap the plan id in the URL; the writer panel shows.
       setSb(null);
       setQuery({ plan: jobId, draft: undefined });
       toast.success("Rewriting your story…");
@@ -869,7 +897,7 @@ function StoryReview({
   const audition = (v: VoiceInfo) => {
     if (v.sample) return; // SoundPlayer handles cached samples
     void requestVoiceSample(v.id).then((r) =>
-      toast.info(r.url ? `${v.id} is ready — press play again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
+      toast.info(r.url ? `${v.id} is ready, press play again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
     );
   };
 
@@ -892,8 +920,8 @@ function StoryReview({
             {loadFailed
               ? loadFailed
               : status === "failed"
-                ? "One retry usually fixes it — see the note below."
-                : "Inventing the hook, beats, camera moves and sounds. Usually 1–2 minutes."}
+                ? "One retry usually fixes it, see the note below."
+                : "Making your story, usually a minute or two."}
           </p>
           {status === "running" && !loadFailed ? (
             <div className="mx-auto mt-5 h-4 w-56 overflow-hidden rounded-full bg-input">
@@ -982,7 +1010,7 @@ function StoryReview({
         </Card>
       ))}
 
-      {/* Voice choice — mode + casting */}
+      {/* Voice choice, mode + casting */}
       <Card className="p-5">
         <p className="mb-3 flex items-center gap-2 text-sm font-extrabold">
           <Megaphone className="h-4 w-4 text-primary" /> Who tells the story?
@@ -1056,7 +1084,7 @@ function StoryReview({
         ) : (
           <div className="flex flex-wrap gap-3">
             <Button variant="success" size="lg" className="flex-1" disabled={approving} onClick={approve}>
-              <ThumbsUp className="h-5 w-5" /> {approving ? "Starting…" : "Approve — make the video!"}
+              <ThumbsUp className="h-5 w-5" /> {approving ? "Starting…" : "Approve, make the video!"}
             </Button>
             <Button variant="secondary" size="lg" onClick={() => setRewriteOpen(true)}>
               <Wand2 className="h-5 w-5" /> Rewrite…
@@ -1064,7 +1092,7 @@ function StoryReview({
           </div>
         )}
         <p className="mt-3 text-center text-xs font-semibold text-muted-foreground">
-          Every detail above is exactly what gets rendered — nothing surprises you.
+          Every detail above is exactly what gets rendered, nothing surprises you.
         </p>
       </Card>
 
@@ -1076,7 +1104,7 @@ function StoryReview({
 }
 
 /* ==================================================================== */
-/*  Voice casting row — audition + pick per role                        */
+/*  Voice casting row, audition + pick per role                        */
 /* ==================================================================== */
 const PACE_LABEL: Record<VoiceInfo["pace"], string> = {
   fast: "fast talker",
@@ -1127,7 +1155,7 @@ function VoiceCastRow({
                   e.stopPropagation();
                   onAudition(v);
                 }}
-                title="Record a sample of this voice (takes ~30s once)"
+                title="Record a sample of this voice (takes half a minute once)"
                 className="grid h-7 w-7 place-items-center rounded-full bg-secondary"
               >
                 <Play className="h-3.5 w-3.5" />
@@ -1147,7 +1175,7 @@ function VoiceCastRow({
 }
 
 /* ==================================================================== */
-/*  STEP 3 — render / result                                             */
+/*  STEP 3, render / result                                             */
 /* ==================================================================== */
 const ENGINE_STAGES: Record<string, string[]> = {
   storyboard: ["voice", "music", "bundle", "render", "encode"],
@@ -1231,7 +1259,7 @@ function Step3OrJob({
           </div>
           <h3 className="text-2xl font-extrabold">Everything is set!</h3>
           <p className="mx-auto mt-2 max-w-sm text-[15px] font-medium text-muted-foreground">
-            {readyTitle ?? "This video"} is ready to be made — one more button.
+            {readyTitle ?? "This video"} is ready to be made, one more button.
           </p>
           <div className="mt-6">
             <Button variant="amber" size="xl" className="w-full" onClick={() => onMakeReady(readySlug)}>
@@ -1306,7 +1334,7 @@ function JobPanel({
           <span className="text-2xl text-muted-foreground">%</span>
         </div>
         <p className="mt-2 text-lg font-bold">
-          {status === "failed" ? "Oh no — something went wrong." : "Your video is being made…"}
+          {status === "failed" ? "Oh no, something went wrong." : "Your video is being made"}
           {status === "running" && etaSec != null ? (
             <span className="ml-2 text-muted-foreground">about {Math.round(etaSec)}s left</span>
           ) : null}
@@ -1344,7 +1372,7 @@ function JobPanel({
       {status === "failed" ? (
         <ErrorBanner
           error={job.error ?? "Something went wrong while making the video."}
-          fix="Press “Make the video” again — if it keeps failing, the log below says which step broke"
+          fix="Press “Make the video” again, if it keeps failing, the log below says which step broke"
         />
       ) : null}
 

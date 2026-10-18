@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 
-/** Solid color pills — no outlined badges anywhere. */
+/** Solid color pills, no outlined badges anywhere. */
 const badgeVariants = cva(
   "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-colors",
   {

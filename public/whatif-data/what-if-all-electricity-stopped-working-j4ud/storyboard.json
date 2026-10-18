@@ -1,0 +1,260 @@
+{
+  "title": "What If ALL Electricity Stopped Working?",
+  "topic": "what if whole world electricity stops working?",
+  "sourceStory": "The blob enjoys a cozy electric Tuesday in his warm room, tea steaming. At once, every neon sign, screen and signal on Earth dies together. The blackout pulls him into a dark void where his dead phone mocks him, then the apex pulls all the way back to show the whole unplugged planet from above. Payoff: his mug of tea never needed power — and the lights flick back on, resetting the loop.",
+  "targetSeconds": 15,
+  "fps": 30,
+  "music": {
+    "mood": "dark-tension",
+    "seed": 4242
+  },
+  "ambience": "wind_city",
+  "voice": {
+    "mode": "silent",
+    "narratorVoice": "Bruno",
+    "characterVoice": "Rosie"
+  },
+  "hook": {
+    "words": "What if ALL electricity stopped working?",
+    "highlight": "ALL"
+  },
+  "payoff": {
+    "words": "Tea never needed power — and the lights flick back on."
+  },
+  "loopable": true,
+  "beats": [
+    {
+      "seconds": 2.5,
+      "scene": "city-night",
+      "shot": {
+        "size": "wide",
+        "angle": "eye-level",
+        "move": "crash-zoom",
+        "intensity": 1.6
+      },
+      "character": {
+        "pose": "walk",
+        "expression": "worry",
+        "action": "blob walks under glowing neon signs, looks up as streetlights flicker and dim"
+      },
+      "text": {
+        "lines": [
+          "WHAT IF",
+          "POWER",
+          "DIES?"
+        ],
+        "highlight": "POWER"
+      },
+      "narration": "Every electric thing. Dead.",
+      "dialogue": null,
+      "props": [],
+      "sfx": [
+        {
+          "role": "pop_light",
+          "at": 0.3
+        },
+        {
+          "role": "rumble_deep",
+          "at": 1.1
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "scene": "room",
+      "shot": {
+        "size": "medium",
+        "angle": "eye-level",
+        "move": "static",
+        "intensity": 0.5
+      },
+      "character": {
+        "pose": "idle",
+        "expression": "smile",
+        "action": "blob relaxes in his cozy room, steaming mug in hand, warm lamp glowing behind him"
+      },
+      "text": {
+        "lines": [
+          "TUESDAY."
+        ],
+        "highlight": "TUESDAY"
+      },
+      "narration": null,
+      "dialogue": "Best day ever.",
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "impact_soft_bodies",
+          "at": 0.9
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "scene": "city-night",
+      "shot": {
+        "size": "wide",
+        "angle": "eye-level",
+        "move": "whip-pan",
+        "intensity": 1.6
+      },
+      "character": {
+        "pose": "idle",
+        "expression": "worry",
+        "action": "blob frozen mid-step as every neon sign and streetlight snaps pitch black at once"
+      },
+      "text": {
+        "lines": [
+          "LIGHTS",
+          "OUT."
+        ],
+        "highlight": "OUT"
+      },
+      "narration": "Then... everything stops. Together.",
+      "dialogue": null,
+      "props": [],
+      "sfx": [
+        {
+          "role": "pop_light",
+          "at": 0.2
+        },
+        {
+          "role": "whoosh_dissolve",
+          "at": 0.6
+        },
+        {
+          "role": "scream_distant",
+          "at": 1.9
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "scene": "tech-void",
+      "shot": {
+        "size": "medium",
+        "angle": "eye-level",
+        "move": "dutch",
+        "intensity": 1
+      },
+      "character": {
+        "pose": "float",
+        "expression": "worry",
+        "action": "blob floats in a black void, frame tilted, as faint glow lines around him fade out one by one"
+      },
+      "text": {
+        "lines": [
+          "PHONE",
+          "DEAD."
+        ],
+        "highlight": "DEAD"
+      },
+      "narration": null,
+      "dialogue": "My phone is DEAD!",
+      "props": [],
+      "sfx": [
+        {
+          "role": "rumble_deep",
+          "at": 0.4
+        },
+        {
+          "role": "whoosh_dissolve",
+          "at": 1.5
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "scene": "tech-void",
+      "shot": {
+        "size": "establishing",
+        "angle": "top-down",
+        "move": "pull-back",
+        "intensity": 2
+      },
+      "character": {
+        "pose": "fall",
+        "expression": "wow",
+        "action": "blob falls slowly through blackness while a tiny dark city shrinks far below him"
+      },
+      "text": {
+        "lines": [
+          "UNPLUGGED"
+        ],
+        "highlight": "UNPLUGGED"
+      },
+      "narration": "The whole planet. Unplugged.",
+      "dialogue": null,
+      "props": [],
+      "sfx": [
+        {
+          "role": "rise_short",
+          "at": 0.4
+        },
+        {
+          "role": "rumble_deep",
+          "at": 1.1
+        },
+        {
+          "role": "scream_distant",
+          "at": 1.9
+        }
+      ]
+    },
+    {
+      "seconds": 2.5,
+      "scene": "room",
+      "shot": {
+        "size": "cu",
+        "angle": "eye-level",
+        "move": "push-in",
+        "intensity": 0.7
+      },
+      "character": {
+        "pose": "idle",
+        "expression": "smile",
+        "action": "blob hugs his steaming mug close as warm lamp light flicks back on around him"
+      },
+      "text": {
+        "lines": [
+          "TEA",
+          "NEVER",
+          "NEEDS POWER"
+        ],
+        "highlight": "TEA"
+      },
+      "narration": "Tea never needed power.",
+      "dialogue": null,
+      "props": [
+        "mug"
+      ],
+      "sfx": [
+        {
+          "role": "pop_light",
+          "at": 0.4
+        },
+        {
+          "role": "impact_soft_bodies",
+          "at": 1.3
+        }
+      ]
+    }
+  ],
+  "slug": "what-if-all-electricity-stopped-working-j4ud",
+  "createdAt": 1792340961349,
+  "mode": "topic",
+  "writer": {
+    "provider": "ollama",
+    "model": "glm-5.3-flash",
+    "attempts": 3,
+    "doctorIssues": [
+      "beat 1: hook text runs 4 words (\"WHAT IF POWER DIES?\") — trim to ≤3 bold words, e.g. \"POWER DIES?\"",
+      "beat 2: nothing signals this is BEFORE beat 1's blackout night, so the cozy-room rewind reads as a continuity jump — add a time cue (daylight, clock prop).",
+      "beat 3: this beat restates the blackout beat 1 already showed and confirmed (\"Every electric thing. Dead.\") — keep beat 1 as a flicker-tease so beat 3 lands as the first full kill.",
+      "beat 4: dialogue and text both hype a dead phone, but no phone exists in props or action — add a dark-screen phone prop.",
+      "beat 5: pose says \"fall\" while the pull-back makes the city shrink below him — pick one (drift with the pull-back, or fall toward a growing planet)."
+    ]
+  }
+}

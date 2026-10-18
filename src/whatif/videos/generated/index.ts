@@ -3,6 +3,7 @@
  * (scripts/storyboard-codegen.ts). Every approved storyboard story.
  */
 import * as React from "react";
+import { COMPONENT as C_what_if_all_electricity_stopped_working_j4ud } from "./what-if-all-electricity-stopped-working-j4ud";
 import { COMPONENT as C_what_if_the_moon_was_twice_as_close_h3ct } from "./what-if-the-moon-was-twice-as-close-h3ct";
 import { COMPONENT as C_what_if_the_moon_was_twice_as_close_zh7l } from "./what-if-the-moon-was-twice-as-close-zh7l";
 
@@ -16,6 +17,7 @@ export interface GeneratedStory {
 }
 
 export const GENERATED_STORIES: GeneratedStory[] = [
+  C_what_if_all_electricity_stopped_working_j4ud,
   C_what_if_the_moon_was_twice_as_close_h3ct,
   C_what_if_the_moon_was_twice_as_close_zh7l,
 ];

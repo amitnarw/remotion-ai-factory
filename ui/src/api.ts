@@ -59,7 +59,7 @@ export async function getStories(): Promise<StoryInfo[]> {
   return r.stories;
 }
 
-/* Story Studio — plan → review → approve → render */
+/* Story Studio, plan → review → approve → render */
 export interface StoryDraft {
   slug: string;
   title: string;
@@ -154,7 +154,7 @@ export async function generateStory(
   );
 }
 
-/* Sound design — per-role SFX variant chooser */
+/* Sound design, per-role SFX variant chooser */
 export interface SfxVariantInfo {
   id: string;
   file: string;
@@ -224,7 +224,7 @@ async function errorText(r: Response): Promise<string> {
     if (body.error) text = body.error;
     if (body.fix) text += `\n→ Fix: ${body.fix}`;
   } catch {
-    /* non-JSON error body — keep generic */
+    /* non-JSON error body, keep generic */
   }
   return text;
 }

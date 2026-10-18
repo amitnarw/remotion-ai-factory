@@ -8,7 +8,7 @@
 .dark {
   --background: oklch(0.155 0.025 278);
   --foreground: oklch(0.98 0.006 280);
-  /* Panels: clearly lighter than bg — they "float" on it. */
+  /* Panels: clearly lighter than bg, they "float" on it. */
   --card: oklch(0.215 0.03 278);
   --card-foreground: oklch(0.98 0.006 280);
   --popover: oklch(0.235 0.032 278);
