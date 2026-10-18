@@ -3,7 +3,7 @@
  * ?provider=<name> deep-links to that provider card.
  */
 import { useEffect, useState } from "react";
-import { Plug, KeyRound, Loader2, Plus, Minus } from "lucide-react";
+import { Plug, KeyRound, Loader2, Plus, Minus, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   getProviders,
@@ -193,7 +193,9 @@ export default function Providers() {
                 <span className="text-lg font-extrabold">{p.name}</span>
                 {p.name === defaultProvider ? <Badge variant="amber">star</Badge> : null}
                 {p.keyConfigured ? (
-                  <Badge variant={selected === p.name ? "default" : "success"}>key saved ✓</Badge>
+                  <Badge variant={selected === p.name ? "default" : "success"} className="gap-1">
+                    <Check className="h-3 w-3" /> key saved
+                  </Badge>
                 ) : p.apiKeyEnv ? (
                   <Badge variant="destructive">no key yet</Badge>
                 ) : (

@@ -1,9 +1,10 @@
 {
   "slug": "gravity-5s",
   "map": {
-    "wind_city": "auto",
-    "pop_light": "auto",
-    "whoosh_dissolve": "auto"
+    "wind_city": "synth",
+    "pop_light": "kenney:click-002",
+    "whoosh_dissolve": "kenney:card-fan-2",
+    "rise_short": "kenney:forcefield-001"
   },
-  "updatedAt": 1792332574991
+  "updatedAt": 1792340095530
 }

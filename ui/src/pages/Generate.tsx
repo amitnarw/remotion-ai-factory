@@ -22,9 +22,19 @@ import {
   BookText,
   Wand2,
   Eye,
+  Camera,
   Megaphone,
   RefreshCw,
   ThumbsUp,
+  ArrowLeft,
+  Play,
+  Mic,
+  Smile,
+  Users,
+  VolumeX,
+  Zap,
+  Star,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -455,7 +465,7 @@ function Step1({
             <div className="flex items-center gap-3">
               <Button variant="amber" size="lg" className="flex-1" disabled={writing || input.trim().length < 3} onClick={write}>
                 <Wand2 className={cn("h-5 w-5", writing && "animate-pulse")} />
-                {writing ? "Writing…" : "Write the story ✍️"}
+                {writing ? "Writing…" : "Write the story"}
               </Button>
               <InfoTip helpId="story-engine" />
             </div>
@@ -587,8 +597,9 @@ function Step2Ready({
             <p className="mb-4 text-sm font-medium text-muted-foreground">{role.description}</p>
             <div className="flex flex-wrap gap-2.5">
               <VariantChip
+                icon={<Star className="h-3.5 w-3.5" />}
                 active={(choices[role.id] ?? "auto") === "auto"}
-                label="⭐ Auto"
+                label="Auto"
                 sub="the best sound"
                 onClick={() => setChoice(role.id, "auto")}
               />
@@ -612,7 +623,7 @@ function Step2Ready({
       )}
       <div className="flex justify-between">
         <Button variant="secondary" size="lg" onClick={onBack}>
-          ◀ Step 1
+          <ArrowLeft className="h-5 w-5" />Step 1
         </Button>
         <Button variant="amber" size="lg" disabled={!story} onClick={onDone}>
           Next <ArrowRight className="h-5 w-5" />
@@ -628,12 +639,14 @@ function VariantChip({
   sub,
   onClick,
   url,
+  icon,
 }: {
   active: boolean;
   label: string;
   sub: string;
   onClick: () => void;
   url?: string;
+  icon?: React.ReactNode;
 }) {
   return (
     <button
@@ -645,6 +658,9 @@ function VariantChip({
           : "bg-input hover:brightness-125",
       )}
     >
+      {icon ? (
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-black/20">{icon}</span>
+      ) : null}
       {url ? <SoundPlayer url={url} title={`Play ${label}`} /> : null}
       <span>
         <span className="block text-sm font-extrabold leading-tight">{label}</span>
@@ -665,20 +681,20 @@ function VariantChip({
 /*  STEP 2 (new path) — story review                                     */
 /* ==================================================================== */
 const VOICE_MODES_UI = [
-  { key: "both", label: "🎙 Narrator + blob" },
-  { key: "narrator", label: "🎙 Narrator only" },
-  { key: "character", label: "😄 Blob only" },
-  { key: "silent", label: "🔇 No voices" },
+  { key: "both", label: "Narrator + blob", icon: <Users className="h-4 w-4" /> },
+  { key: "narrator", label: "Narrator only", icon: <Mic className="h-4 w-4" /> },
+  { key: "character", label: "Blob only", icon: <Smile className="h-4 w-4" /> },
+  { key: "silent", label: "No voices", icon: <VolumeX className="h-4 w-4" /> },
 ];
 
 const CAMERA_LABEL: Record<string, string> = {
   static: "still",
   "push-in": "zoom in",
   "pull-back": "zoom out",
-  "pan-left": "pan ◀",
-  "pan-right": "pan ▶",
-  "truck-left": "slide ◀",
-  "truck-right": "slide ▶",
+  "pan-left": "pan left",
+  "pan-right": "pan right",
+  "truck-left": "slide left",
+  "truck-right": "slide right",
   "tilt-up": "tilt up",
   "tilt-down": "tilt down",
   "crane-up": "fly up",
@@ -853,7 +869,7 @@ function StoryReview({
   const audition = (v: VoiceInfo) => {
     if (v.sample) return; // SoundPlayer handles cached samples
     void requestVoiceSample(v.id).then((r) =>
-      toast.info(r.url ? `${v.id} is ready — press ▶ again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
+      toast.info(r.url ? `${v.id} is ready — press play again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
     );
   };
 
@@ -893,7 +909,7 @@ function StoryReview({
         ) : null}
         <LogConsole logs={logs} />
         <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>
-          ◀ Back
+          <ArrowLeft className="h-5 w-5" />Back
         </Button>
       </div>
     );
@@ -923,7 +939,10 @@ function StoryReview({
               {i + 1}
             </span>
             <span className="flex flex-wrap gap-2">
-              <Badge variant="secondary">🎥 {CAMERA_LABEL[beat.shot.move] ?? beat.shot.move}</Badge>
+              <Badge variant="secondary" className="gap-1">
+                <Camera className="h-3 w-3" />
+                {CAMERA_LABEL[beat.shot.move] ?? beat.shot.move}
+              </Badge>
               <Badge variant="muted">{beat.seconds.toFixed(1)}s</Badge>
               <Badge variant="muted">{SCENE_LABEL[beat.scene] ?? beat.scene}</Badge>
             </span>
@@ -953,8 +972,8 @@ function StoryReview({
               <AudioLines className="mt-0.5 h-4 w-4 shrink-0" />
               sounds:{" "}
               {[
-                ...(beat.sfx ?? []).map((s) => `▶ ${SFX_LABEL[s.role] ?? s.role}`),
-                sb.ambience !== "none" ? `≋ ${AMBIENCE_LABEL[sb.ambience]}` : null,
+                ...(beat.sfx ?? []).map((s) => SFX_LABEL[s.role] ?? s.role),
+                sb.ambience !== "none" ? AMBIENCE_LABEL[sb.ambience] : null,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -980,6 +999,7 @@ function StoryReview({
                   : "bg-input text-muted-foreground hover:brightness-125",
               )}
             >
+              {m.icon}
               {m.label}
             </button>
           ))}
@@ -988,7 +1008,8 @@ function StoryReview({
           <div className="space-y-4">
             {(sb.voice?.mode ?? "narrator") !== "character" ? (
               <VoiceCastRow
-                title="🎙 The narrator's voice"
+                icon={<Mic className="h-3.5 w-3.5" />}
+                title="The narrator's voice"
                 current={sb.voice?.narratorVoice ?? "Bruno"}
                 voices={voices}
                 onPick={(id) => flipVoice({ narratorVoice: id })}
@@ -997,7 +1018,8 @@ function StoryReview({
             ) : null}
             {(sb.voice?.mode ?? "narrator") !== "narrator" ? (
               <VoiceCastRow
-                title="😄 The blob's voice"
+                icon={<Smile className="h-3.5 w-3.5" />}
+                title="The blob's voice"
                 current={sb.voice?.characterVoice ?? "Rosie"}
                 voices={voices}
                 onPick={(id) => flipVoice({ characterVoice: id })}
@@ -1047,7 +1069,7 @@ function StoryReview({
       </Card>
 
       <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>
-        ◀ Start a new story
+        <ArrowLeft className="h-5 w-5" />Start a new story
       </Button>
     </div>
   );
@@ -1063,12 +1085,14 @@ const PACE_LABEL: Record<VoiceInfo["pace"], string> = {
 };
 
 function VoiceCastRow({
+  icon,
   title,
   current,
   voices,
   onPick,
   onAudition,
 }: {
+  icon: React.ReactNode;
   title: string;
   current: string;
   voices: VoiceInfo[];
@@ -1077,7 +1101,9 @@ function VoiceCastRow({
 }) {
   return (
     <div>
-      <p className="mb-2 text-xs font-extrabold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+        {icon} {title}
+      </p>
       <div className="flex flex-wrap gap-2.5">
         {voices.map((v) => (
           <div
@@ -1102,9 +1128,9 @@ function VoiceCastRow({
                   onAudition(v);
                 }}
                 title="Record a sample of this voice (takes ~30s once)"
-                className="grid h-7 w-7 place-items-center rounded-full bg-secondary text-xs font-bold"
+                className="grid h-7 w-7 place-items-center rounded-full bg-secondary"
               >
-                ▶
+                <Play className="h-3.5 w-3.5" />
               </button>
             )}
             <span>
@@ -1209,12 +1235,12 @@ function Step3OrJob({
           </p>
           <div className="mt-6">
             <Button variant="amber" size="xl" className="w-full" onClick={() => onMakeReady(readySlug)}>
-              <Sparkles className="h-6 w-6" /> Make the video! ⚡
+              <Zap className="h-6 w-6" /> Make the video!
             </Button>
           </div>
         </Card>
-        <Button variant="secondary" size="lg" className="w-full" onClick={() => setQuery({ step: "2", path: "ready", story: readySlug })}>
-          ◀ Change the sounds
+        <Button variant="secondary" size="lg" onClick={() => setQuery({ step: "2", path: "ready", story: readySlug })}>
+          <ArrowLeft className="h-5 w-5" /> Change the sounds
         </Button>
       </div>
     );
@@ -1232,7 +1258,7 @@ function Step3OrJob({
         </p>
       </Card>
       <Button variant="secondary" size="lg" className="w-full" onClick={() => setQuery({ step: "1" })}>
-        ◀ Back
+        <ArrowLeft className="h-5 w-5" /> Back
       </Button>
     </div>
   );
@@ -1305,7 +1331,7 @@ function JobPanel({
                 )}
               >
                 <span className="grid h-5 w-5 place-items-center rounded-full bg-black/25 text-[10px]">
-                  {st === "done" ? "✓" : i + 1}
+                  {st === "done" ? <Check className="h-3 w-3" /> : i + 1}
                 </span>
                 {STAGE_LABELS[s] ?? s}
                 {st === "done" && dur(s) > 0 ? <span className="opacity-70">{dur(s)}s</span> : null}
@@ -1341,3 +1367,4 @@ function LogConsole({ logs }: { logs: string[] }) {
     </div>
   );
 }
+

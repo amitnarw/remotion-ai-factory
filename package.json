@@ -66,7 +66,7 @@
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint src && tsc",
+    "lint": "eslint src && tsc && node scripts/check-ui-icons.mjs",
     "generate": "tsx src/generator/generate.ts",
     "sfx": "tsx scripts/setup-sfx.ts",
     "sfx:cc0": "tsx scripts/setup-sfx-cc0.ts",

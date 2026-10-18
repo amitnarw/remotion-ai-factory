@@ -176,7 +176,7 @@ export default function Videos() {
               <DialogHeader>
                 <DialogTitle className="pr-8 text-base leading-snug">{openVideo.premise}</DialogTitle>
                 <DialogDescription>
-                  {openVideo.engine === "story" ? "Story video (checked ✓)" : "AI-spec video"} ·{" "}
+                  {openVideo.engine === "story" ? "Story video — checked" : "AI-spec video"} ·{" "}
                   {openVideo.durationSec ?? "?"}s · tall 1080×1920
                 </DialogDescription>
               </DialogHeader>
