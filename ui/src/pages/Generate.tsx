@@ -1,13 +1,11 @@
 /**
- * Generate, the Story Studio wizard. One step at a time, kid-simple.
+ * Generate - the Story Studio wizard. One step at a time, kid-simple.
  *
  *   ?tab=generate&step=1|3&path=ready&story=<slug>&plan=<jobId>&draft=<slug>&job=<renderId>
  *
  * Two paths through the same three steps:
- *   READY, hand-crafted videos (pick → sound design → make)
- *   NEW, your topic / your whole story → the writer drafts the storyboard →
- *           you REVIEW it (scenes, camera, narration, sounds) → approve →
- *           render with local KittenTTS voices, synthesized music + v2 SFX.
+ *   Ready, hand-crafted videos (pick → sound design → make)
+ *   New, your topic / your whole story → we draft the storyboard → you review → approve → render.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {

@@ -163,7 +163,7 @@ export default function Providers() {
         <EmptyState
           icon={<Plug />}
           title="No providers yet"
-          body="Providers are only needed for the AI-spec pipeline. Everything else, including making story videos, works without them."
+          body="Keys are only needed for the older pipeline. Everything else works without them."
         />
       ) : (
         <div className="space-y-5">

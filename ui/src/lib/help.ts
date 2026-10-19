@@ -1,7 +1,7 @@
 /**
  * lib/help.ts, single source of truth for in-dashboard documentation.
  * Each control with an `InfoTip` pulls its copy from this registry, and the
- * global Help dialog lists all of it — one file to edit, always in sync.
+ * global Help dialog lists all of it - one file to edit, always in sync.
  */
 export interface HelpEntry {
   id: string;

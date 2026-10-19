@@ -109,7 +109,7 @@ export default function Videos() {
               <div className="min-w-0 flex-1">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Badge variant={selected === v.id ? "default" : v.engine === "story" ? "violet" : "secondary"}>
-                    {v.engine === "story" ? "Story" : "AI spec"}
+                    {v.engine === "story" ? "Story" : "Old pipeline"}
                   </Badge>
                   {selected === v.id ? <Badge variant="amber">picked</Badge> : null}
                   <Badge variant={selected === v.id ? "default" : "muted"}>{v.durationSec ?? "?"}s</Badge>
@@ -176,7 +176,7 @@ export default function Videos() {
               <DialogHeader>
                 <DialogTitle className="pr-8 text-base leading-snug">{openVideo.premise}</DialogTitle>
                 <DialogDescription>
-                  {openVideo.engine === "story" ? "Story video, checked" : "AI-spec video"} ·{" "}
+                  {openVideo.engine === "story" ? "Story video" : "Old pipeline video"} ·{" "}
                   {openVideo.durationSec ?? "?"}s · tall 1080×1920
                 </DialogDescription>
               </DialogHeader>
