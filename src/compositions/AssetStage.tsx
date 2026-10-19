@@ -2,13 +2,19 @@
  * src/compositions/AssetStage.tsx
  *
  * Asset-driven scene (scene: "asset-stage" with kit + cast):
- *   • Environment kit (ground + GLB buildings/trees)
+ *   • Environment kit (ground + backdrop GLB structures (trees, buildings))
  *   • Rigged GLB characters with animation-mixer driven actions (walk/idle/panic/look-up/kneel)
  *   • Gravity-off float arc (staggered liftoff → drift up → fall → impact squash)
  * Everything is spec-driven, seeded by spec id (deterministic per Remotion rules).
+ *
+ * Missing-model safety: every GLB load is wrapped so a file that isn't
+ * installed yet (setup-assets hasn't run) shows a deterministic procedural
+ * stand-in instead of crashing the Studio, plus one plain-language console
+ * warning with the exact fix. Real GLBs light up automatically once present.
  */
-import { useMemo, useRef } from "react";
-import { useCurrentFrame, staticFile, random } from "remotion";
+import { Suspense, Component, useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
+import { useCurrentFrame, staticFile, random, delayRender, continueRender } from "remotion";
 import { useGLTF } from "@react-three/drei";
 import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
@@ -17,6 +23,60 @@ import type { ShotSpec, SceneType, CastEntry } from "../generator/spec.schema";
 
 const PALETTE_SHIRTS = ["#e84c3d", "#3d7ee8", "#3dbd6e", "#f0ad4e", "#9b59b6", "#e67e22", "#16a085", "#c0392b"];
 const PALETTE_PANTS = ["#2c3e50", "#34495e", "#4b3832", "#5d6d7e", "#2f3640"];
+
+const GLB_LOAD_ERRORS = new Set<string>();
+
+// One render gate per model file: the still/frame capture must wait until
+// every GLB is resolved, so renders show the real models instead of catching
+// the Suspense fallback mid-load. Released on success (useEffect in the
+// model component) and on failure (boundary catch).
+const PENDING_MODEL_GATES = new Map<string, number>();
+
+function gateModelLoad(file: string) {
+  if (PENDING_MODEL_GATES.has(file)) return;
+  const handle = delayRender(`3D model loading: ${file}`, { timeoutInMilliseconds: 60000 });
+  PENDING_MODEL_GATES.set(file, handle);
+}
+
+function releaseModelLoad(file: string) {
+  const handle = PENDING_MODEL_GATES.get(file);
+  if (handle == null) return;
+  continueRender(handle);
+  PENDING_MODEL_GATES.delete(file);
+}
+
+/** One console warning per missing model, with the exact fix. */
+function modelMissingWarning(label: string, file: string) {
+  releaseModelLoad(file);
+  if (GLB_LOAD_ERRORS.has(label)) return;
+  GLB_LOAD_ERRORS.add(label);
+  console.warn(
+    `AssetStage: 3D model "${label}" is not installed — run "npm run assets" to download the free CC0 model packs (characters, city, nature), then refresh. Stand-in shapes are shown until then.`,
+  );
+}
+
+/**
+ * ModelBoundary: class error boundary around one GLB load. The load suspends
+ * (Suspense below) and fails (this boundary catches) if the file is missing.
+ */
+class ModelBoundary extends Component<{ onError: (error: unknown) => void; fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { this.props.onError(error); }
+  render() { return this.state.failed ? this.props.fallback : this.props.children; }
+}
+
+/** Boundary + Suspense pair shared by every GLB-consuming piece.
+ *  Gating: a delayRender gate is opened while the model loads and closed
+ *  either on success (by the model component's effect) or on failure (here). */
+function GlbSuspense({ file, label, fallback, children }: { file: string; label: string; fallback: ReactNode; children: ReactNode }) {
+  gateModelLoad(file);
+  return (
+    <ModelBoundary onError={() => modelMissingWarning(label, file)} fallback={fallback}>
+      <Suspense fallback={fallback}>{children}</Suspense>
+    </ModelBoundary>
+  );
+}
 
 /** One cast entry → placed, tinted, animated crowd member(s). */
 function Character({
@@ -34,9 +94,52 @@ function Character({
   gravityOff: number | null;
   gravityOn: number | null;
 }) {
-  const gltf = useGLTF(staticFile(file ?? asset));
+  // If the model is missing there is no good stand-in for walking people —
+  // the crowd simply doesn't appear (ground/city stand-ins carry the style).
+  return (
+    <GlbSuspense label={asset} file={file ?? asset} fallback={null}>
+      <CharacterInner
+        gltfFile={file ?? asset}
+        count={count}
+        action={action}
+        shirtColor={shirtColor}
+        pantsColor={pantsColor}
+        zone={zone}
+        specId={specId}
+        castIndex={castIndex}
+        gravityOff={gravityOff}
+        gravityOn={gravityOn}
+      />
+    </GlbSuspense>
+  );
+}
+
+function CharacterInner({
+  gltfFile, count, action, shirtColor, pantsColor, zone, specId, castIndex, gravityOff, gravityOn,
+}: {
+  gltfFile: string;
+  count: number;
+  action?: string;
+  shirtColor?: string;
+  pantsColor?: string;
+  zone?: string;
+  specId: string;
+  castIndex: number;
+  gravityOff: number | null;
+  gravityOn: number | null;
+}) {
+  const gltf = useGLTF(staticFile(gltfFile));
   const groupRef = useRef<THREE.Group>(null);
   const frame = useCurrentFrame();
+  const { gl, scene, camera } = useThree();
+
+  // Model resolved: paint the real asset into the current canvas frame, THEN
+  // release the load gate. Without the flush the captured frame is the stale
+  // pre-load backbuffer (stand-ins), because R3F's frame loop already advanced.
+  useEffect(() => {
+    gl.render(scene, camera);
+    releaseModelLoad(gltfFile);
+  }, [gltfFile, gl, scene, camera]);
 
   // One mixer per clone instance: skeleton-cloned GLTFs keep their own skeleton
   // references, so per-instance AnimationMixer + clipAction is correct.
@@ -215,7 +318,7 @@ function PrefetchGlbs({ files }: { files: string[] }) {
   return null;
 }
 
-/** Environment kit: ground + backdrop GLB structures (trees, buildings). */
+/** Environment kit: ground + backdrop structures (trees, buildings). */
 function KitEnv({ kit, specId, entries }: { kit: string; specId: string; entries: CastEntry[] }) {
   const buildings = entries.filter((e) => /city-kit|building/.test(e.asset));
   const nature = entries.filter((e) => /nature-kit|tree|pine/.test(e.asset));
@@ -291,8 +394,27 @@ function BuildingRing({ entries, specId }: { entries: CastEntry[]; specId: strin
 }
 
 function BuildingCluster({ entry, specId, castIndex }: { entry: CastEntry; specId: string; castIndex: number }) {
-  const gltf = useGLTF(staticFile(entry.file ?? entry.asset));
-  const count = Math.min(entry.count, 14);
+  return (
+    <GlbSuspense
+      label={entry.asset}
+      file={entry.file ?? entry.asset}
+      fallback={<BuildingProxy entry={entry} specId={specId} castIndex={castIndex} />}
+    >
+      <BuildingClusterInner gltfFile={entry.file ?? entry.asset} count={entry.count} specId={specId} castIndex={castIndex} />
+    </GlbSuspense>
+  );
+}
+
+function BuildingClusterInner({ gltfFile, count, specId, castIndex }: { gltfFile: string; count: number; specId: string; castIndex: number }) {
+  const gltf = useGLTF(staticFile(gltfFile));
+  const { gl, scene, camera } = useThree();
+
+  // Model resolved: paint the real asset into the current canvas frame, THEN
+  // release the load gate (see CharacterInner for the rationale).
+  useEffect(() => {
+    gl.render(scene, camera);
+    releaseModelLoad(gltfFile);
+  }, [gltfFile, gl, scene, camera]);
   const items = useMemo(() => {
     const out: Array<{ pos: [number, number, number]; rot: number; s: number }> = [];
     for (let i = 0; i < count; i++) {
@@ -322,6 +444,47 @@ function BuildingCluster({ entry, specId, castIndex }: { entry: CastEntry; specI
   );
 }
 
+/** Procedural stand-in city block: same seeded placement as BuildingCluster. */
+function BuildingProxy({ entry, specId, castIndex }: { entry: CastEntry; specId: string; castIndex: number }) {
+  const count = Math.min(entry.count, 14);
+  const items = useMemo(() => {
+    const out: Array<{ pos: [number, number, number]; rot: number; s: number; seed: number }> = [];
+    for (let i = 0; i < count; i++) {
+      const a1 = random(`${specId}-b${castIndex}-${i}-a`);
+      const a2 = random(`${specId}-b${castIndex}-${i}-b`);
+      const s = 1.1 + a1 * 1.5;
+      const side = a2 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (5.5 + a1 * 7), 0, -8 - a1 * 14], rot: a2 * Math.PI / 2 + (side < 0 ? Math.PI : 0), s, seed: i });
+    }
+    for (let i = 0; i < 6; i++) {
+      const a1 = random(`${specId}-b${castIndex}-far-${i}-a`);
+      const a2 = random(`${specId}-b${castIndex}-far-${i}-b`);
+      const s = 1.6 + a1 * 2;
+      out.push({ pos: [-26 + a2 * 52, 0, -34 - a1 * 12], rot: a2 * Math.PI / 2, s, seed: 100 + i });
+    }
+    return out;
+  }, [specId, castIndex, count]);
+  return (
+    <group>
+      {items.map((it, i) => (
+        <BuildingProxyBlock key={i} pos={it.pos} rot={it.rot} s={it.s} seed={it.seed} />
+      ))}
+    </group>
+  );
+}
+
+function BuildingProxyBlock({ pos, rot, s, seed }: { pos: [number, number, number]; rot: number; s: number; seed: number }) {
+  // Pastel hue from a derived seed so nearby towers read as different shades.
+  const hue = 0.55 + random(`bp-hue-${seed}`) * 0.25;
+  const color = new THREE.Color().setHSL(hue, 0.3, 0.62);
+  return (
+    <mesh position={pos} rotation={[0, rot, 0]} scale={[s, 1.0 + s * 0.5, s]} castShadow receiveShadow>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshStandardMaterial color={color} roughness={0.8} />
+    </mesh>
+  );
+}
+
 function TreeScatter({ entries, specId }: { entries: CastEntry[]; specId: string }) {
   if (!entries || entries.length === 0) return null;
   return (
@@ -334,8 +497,27 @@ function TreeScatter({ entries, specId }: { entries: CastEntry[]; specId: string
 }
 
 function TreeRing({ entry, specId, castIndex }: { entry: CastEntry; specId: string; castIndex: number }) {
-  const gltf = useGLTF(staticFile(entry.file ?? entry.asset));
-  const count = Math.min(entry.count, 20);
+  return (
+    <GlbSuspense
+      label={entry.asset}
+      file={entry.file ?? entry.asset}
+      fallback={<TreeProxy entry={entry} specId={specId} castIndex={castIndex} />}
+    >
+      <TreeRingInner gltfFile={entry.file ?? entry.asset} count={entry.count} specId={specId} castIndex={castIndex} />
+    </GlbSuspense>
+  );
+}
+
+function TreeRingInner({ gltfFile, count, specId, castIndex }: { gltfFile: string; count: number; specId: string; castIndex: number }) {
+  const gltf = useGLTF(staticFile(gltfFile));
+  const { gl, scene, camera } = useThree();
+
+  // Model resolved: paint the real asset into the current canvas frame, THEN
+  // release the load gate (see CharacterInner for the rationale).
+  useEffect(() => {
+    gl.render(scene, camera);
+    releaseModelLoad(gltfFile);
+  }, [gltfFile, gl, scene, camera]);
   const items = useMemo(() => {
     const out: Array<{ pos: [number, number, number]; rot: number; s: number }> = [];
     for (let i = 0; i < count; i++) {
@@ -361,6 +543,52 @@ function TreeRing({ entry, specId, castIndex }: { entry: CastEntry; specId: stri
       {items.map((it, i) => (
         <primitive key={i} object={skeletonClone(gltf.scene)} position={it.pos} rotation={[0, it.rot, 0]} scale={[it.s, it.s, it.s]} castShadow receiveShadow />
       ))}
+    </group>
+  );
+}
+
+/** Procedural stand-in pine: same seeded placement as TreeRing. */
+function TreeProxy({ entry, specId, castIndex }: { entry: CastEntry; specId: string; castIndex: number }) {
+  const count = Math.min(entry.count, 20);
+  const items = useMemo(() => {
+    const out: Array<{ pos: [number, number, number]; rot: number; s: number }> = [];
+    for (let i = 0; i < count; i++) {
+      const a1 = random(`${specId}-t${castIndex}-${i}-a`);
+      const a2 = random(`${specId}-t${castIndex}-${i}-b`);
+      const s = 0.9 + a1 * 0.9;
+      const side = a1 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (5 + a2 * 18), 0, -7 - a1 * 19], rot: a1 * 6.28, s });
+    }
+    for (let i = 0; i < 3; i++) {
+      const a1 = random(`${specId}-t${castIndex}-near-${i}-a`);
+      const a2 = random(`${specId}-t${castIndex}-near-${i}-b`);
+      const side = a2 < 0.5 ? -1 : 1;
+      out.push({ pos: [side * (3.5 + a1 * 2.5), 0, -4 - a1 * 3], rot: a1 * 6.28, s: 0.9 + a1 * 0.6 });
+    }
+    return out;
+  }, [specId, castIndex, count]);
+  return (
+    <group>
+      {items.map((it, i) => (
+        <TreeProxyBlock key={i} pos={it.pos} rot={it.rot} s={it.s} />
+      ))}
+    </group>
+  );
+}
+
+function TreeProxyBlock({ pos, rot, s }: { pos: [number, number, number]; rot: number; s: number }) {
+  return (
+    <group position={pos} rotation={[0, rot, 0]}>
+      {/* Trunk center sits high enough that the top half pokes above ground
+          when the lower half is hidden by it. */}
+      <mesh position={[0, -0.35 * s, 0]} scale={[0.15 * s, 2 * s, 0.15 * s]} castShadow receiveShadow>
+        <cylinderGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#5d4037" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 1.05 * s, 0]} scale={[s * 1.1, s * 1.4, s * 1.1]} castShadow receiveShadow>
+        <coneGeometry args={[1, 2, 10]} />
+        <meshStandardMaterial color="#4a9e5e" roughness={0.9} />
+      </mesh>
     </group>
   );
 }
