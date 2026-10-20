@@ -29,6 +29,8 @@ export interface Job {
   /** Set by plan jobs (once the storyboard exists) + storyboard jobs. */
   slug?: string;
   storyboard?: unknown;
+  /** Spec-engine jobs: the <id> of output/<id>-spec.json once written. */
+  specId?: string;
   error?: string;
   createdAt: number;
 }
@@ -102,52 +104,6 @@ export function createStoryJob(slug: string, title: string): Job {
 export function getJob(id: string): Job | undefined { return jobs.get(id); }
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
 
-/** Story-plan job: LLM writes a storyboard from a topic / full story. */
-export function createPlanJob(input: string, provider?: string, model?: string): Job {
-  jobIdCounter += 1;
-  const id = `${Date.now()}-p${jobIdCounter}`;
-  const job: Job = {
-    id,
-    status: "queued",
-    progress: 0,
-    stage: "script",
-    etaSec: null,
-    timeline: [{ stage: "script", startedAt: Date.now() }],
-    logs: [],
-    premise: input,
-    provider,
-    model,
-    engine: "plan",
-    createdAt: Date.now(),
-  };
-  jobs.set(id, job);
-  sseClients.set(id, new Set());
-  evictOldJobs();
-  return job;
-}
-
-/** Storyboard render job: voice → music → bundle → render → encode. */
-export function createStoryboardJob(title: string): Job {
-  jobIdCounter += 1;
-  const id = `${Date.now()}-sb${jobIdCounter}`;
-  const job: Job = {
-    id,
-    status: "queued",
-    progress: 0,
-    stage: "voice",
-    etaSec: null,
-    timeline: [{ stage: "voice", startedAt: Date.now() }],
-    logs: [],
-    premise: title,
-    engine: "storyboard",
-    createdAt: Date.now(),
-  };
-  jobs.set(id, job);
-  sseClients.set(id, new Set());
-  evictOldJobs();
-  return job;
-}
-
 /** Shared premise slug — must match the CLI's slug in generate.ts. */
 export function premiseSlug(premise: string): string {
   return (
@@ -220,12 +176,19 @@ function failedLogError(premise: string): string | undefined {
   return tail || undefined;
 }
 
-export function runJob(job: Job) {
+export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boolean }) {
   job.status = "running";
   broadcast(job.id, { type: "status", status: "running" });
-  const args = ["src/generator/generate.ts", job.premise];
-  if (job.provider) args.push("--provider", job.provider);
-  if (job.model) args.push("--model", job.model);
+  const args = ["src/generator/generate.ts"];
+  if (opts?.extraArgs) {
+    // render-only: an approved spec — no provider/model flags needed
+    args.push(...opts.extraArgs);
+  } else {
+    args.push(job.premise);
+    if (opts?.noRender) args.push("--no-render");
+    if (job.provider) args.push("--provider", job.provider);
+    if (job.model) args.push("--model", job.model);
+  }
   const child = spawn("npx", ["--no-install", "tsx", ...args], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
@@ -304,6 +267,9 @@ export function runJob(job: Job) {
   child.stdout.on("data", (buf) => handleOutput(buf.toString()));
   child.stderr.on("data", (buf) => handleOutput(buf.toString()));
   child.on("close", (code) => {
+    // Spec-engine plan jobs print a machine-readable PLAN_ID marker.
+    const planLine = job.logs.join("").match(/PLAN_ID:\s*(\S+)/);
+    if (planLine) job.specId = planLine[1];
     if (code === 0) {
       job.status = "done";
       job.progress = 100;
@@ -427,208 +393,6 @@ export function runStoryJob(job: Job, slug: string) {
       job.progress = 100;
       job.etaSec = 0;
       setStage(job, "done");
-      const reportPath = join(ROOT, "output", `${slug}-report.json`);
-      try {
-        const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Record<string, unknown>;
-        const mp4 = report.output as string;
-        job.output = {
-          mp4: mp4.split(/[\\/]/).pop() ?? mp4,
-          spec: {},
-          report: `${slug}-report.json`,
-        };
-      } catch {
-        /* report missing — output stays unset */
-      }
-      broadcast(job.id, { type: "done", timeline: job.timeline });
-    } else {
-      job.status = "failed";
-      setStage(job, "failed");
-      const logTail = job.logs
-        .join("")
-        .split(/\r?\n/)
-        .filter((l) => l.trim() && !l.includes("Rendered "))
-        .slice(-5)
-        .join("\n");
-      job.error = logTail || `exit code ${code}`;
-      const hint = actionable(job.error, job.provider);
-      if (hint.fix) job.error += `\n→ Fix: ${hint.fix}`;
-      broadcast(job.id, { type: "failed", error: job.error, timeline: job.timeline });
-    }
-    for (const c of sseClients.get(job.id) ?? []) {
-      try { c.end(); } catch { /* ignore */ }
-    }
-    sseClients.delete(job.id);
-  });
-}
-
-/* ================================================================== */
-/*  Story-plan job — the Story Studio writer                           */
-/* ================================================================== */
-
-export interface PlanJobRequest {
-  mode: "topic" | "story";
-  input: string;
-  seconds: number;
-  feedback?: string;
-  provider?: string;
-  model?: string;
-  /** Set when revising an existing draft. */
-  slug?: string;
-}
-
-/**
- * Run the story-plan job: writes the request to a file (windows-safe argv),
- * spawns scripts/plan-story.ts, and when it finishes reads the storyboard it
- * wrote to public/whatif-data/<slug>/storyboard.json.
- */
-export function runPlanJob(job: Job, req: PlanJobRequest) {
-  job.status = "running";
-  broadcast(job.id, { type: "status", status: "running" });
-  const reqPath = join(ROOT, "output", `.plan-${job.id}.json`);
-  fs.writeFileSync(reqPath, JSON.stringify(req, null, 2));
-  const child = spawn(
-    "npx",
-    ["--no-install", "tsx", "scripts/plan-story.ts", reqPath],
-    {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...loadEnv() },
-    },
-  );
-  const handleOutput = (text: string) => {
-    const clean = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
-    job.logs.push(clean);
-    broadcast(job.id, { type: "log", text: clean });
-    const doneMatch = clean.match(/\[plan\] done (\S+)/);
-    if (doneMatch) {
-      job.slug = doneMatch[1];
-      broadcast(job.id, { type: "progress", progress: 95, stage: "script" });
-    }
-  };
-  child.stdout.on("data", (buf) => handleOutput(buf.toString()));
-  child.stderr.on("data", (buf) => handleOutput(buf.toString()));
-  child.on("close", (code) => {
-    if (code === 0 && job.slug) {
-      try {
-        job.storyboard = JSON.parse(
-          fs.readFileSync(join(ROOT, "public", "whatif-data", job.slug, "storyboard.json"), "utf8"),
-        );
-      } catch {
-        /* storyboard file missing — job still "done" but UI falls back to slug */
-      }
-      job.status = "done";
-      job.progress = 100;
-      setStage(job, "done");
-      broadcast(job.id, { type: "done", timeline: job.timeline });
-    } else {
-      job.status = "failed";
-      setStage(job, "failed");
-      const logTail = job.logs
-        .join("")
-        .split(/\r?\n/)
-        .filter((l) => l.trim())
-        .slice(-5)
-        .join("\n");
-      job.error = logTail || `exit code ${code}`;
-      broadcast(job.id, { type: "failed", error: job.error, timeline: job.timeline });
-    }
-    try { fs.rmSync(reqPath, { force: true }); } catch { /* ignore */ }
-    for (const c of sseClients.get(job.id) ?? []) {
-      try { c.end(); } catch { /* ignore */ }
-    }
-    sseClients.delete(job.id);
-  });
-}
-
-/* ================================================================== */
-/*  Storyboard render job — voice → music → bundle → render → encode   */
-/* ================================================================== */
-
-export function runStoryboardJob(job: Job, slug: string) {
-  job.slug = slug;
-  job.status = "running";
-  broadcast(job.id, { type: "status", status: "running" });
-  const child = spawn(
-    "npx",
-    ["--no-install", "tsx", "scripts/render-storyboard.ts", slug],
-    {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...loadEnv() },
-    },
-  );
-  const handleOutput = (text: string) => {
-    const clean = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
-    job.logs.push(clean);
-    broadcast(job.id, { type: "log", text: clean });
-    let pct: number | undefined;
-    let newStage: string | undefined;
-    let eta: number | undefined;
-
-    const rend = text.match(/Rendered\s+(\d+)\/(\d+)/);
-    if (rend) {
-      newStage = "render";
-      pct = 30 + (parseInt(rend[1], 10) / parseInt(rend[2], 10)) * 62;
-      const em = text.match(/time remaining:\s*(?:(\d+)m\s*([\d.]+)s|([\d.]+)s)/);
-      if (em) {
-        eta = em[1] ? parseInt(em[1], 10) * 60 + parseFloat(em[2]) : parseFloat(em[3]);
-      }
-    } else if (text.includes("[voice]")) {
-      newStage = "voice";
-      pct = 4;
-    } else if (text.includes("[music]")) {
-      newStage = "music";
-      pct = 8;
-    } else if (text.includes("[render]")) {
-      newStage = "bundle";
-      pct = 12;
-    } else {
-      const bund = text.match(/Bundling\s+(\d+)%/);
-      if (bund) {
-        newStage = "bundle";
-        pct = 15 + parseInt(bund[1], 10) * 0.1;
-      } else {
-        const enc = text.match(/Encoded\s+(\d+)\/(\d+)/);
-        if (enc) {
-          newStage = "encode";
-          pct = 92 + (parseInt(enc[1], 10) / parseInt(enc[2], 10)) * 7;
-        }
-      }
-    }
-
-    let dirty = false;
-    if (newStage) {
-      setStage(job, newStage);
-      dirty = true;
-    }
-    if (eta !== undefined) {
-      job.etaSec = eta;
-      dirty = true;
-    }
-    if (pct !== undefined) {
-      const p = Math.min(99, Math.round(pct));
-      if (p !== job.progress) {
-        job.progress = p;
-        dirty = true;
-      }
-    }
-    if (dirty) {
-      broadcast(job.id, { type: "progress", progress: job.progress, stage: job.stage, etaSec: job.etaSec });
-    }
-  };
-  child.stdout.on("data", (buf) => handleOutput(buf.toString()));
-  child.stderr.on("data", (buf) => handleOutput(buf.toString()));
-  child.on("close", (code) => {
-    if (code === 0) {
-      job.status = "done";
-      job.progress = 100;
-      job.etaSec = 0;
-      setStage(job, "done");
-      try {
-        job.storyboard = JSON.parse(
-          fs.readFileSync(join(ROOT, "public", "whatif-data", slug, "storyboard.json"), "utf8"),
-        );
-      } catch { /* ignore */ }
       const reportPath = join(ROOT, "output", `${slug}-report.json`);
       try {
         const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Record<string, unknown>;

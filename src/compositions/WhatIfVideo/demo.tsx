@@ -1,11 +1,11 @@
 /**
  * WhatIfDemo — hardcoded demo composition for Remotion Studio preview
- * using the gravity spec.
+ * using the eyesight template (street-block reference look).
  */
 import { WhatIfVideo } from "./index";
 import { validateSpec } from "../../generator/spec.schema";
-import gravitySpec from "../../generator/spec.example.gravity.json";
+import eyesightSpec from "../../generator/spec.example.eyesight.json";
 
-const spec = validateSpec(gravitySpec);
+const spec = validateSpec(eyesightSpec);
 
 export const WhatIfDemo = () => <WhatIfVideo spec={spec} />;

@@ -16,9 +16,12 @@ export const HELP: HelpEntry[] = [
     title: "Story engine",
     group: "Generate",
     body:
-      "Each story is a finished short film made here. Beats, scenes, music " +
-      "and sounds were all picked in this dashboard. Rendering it always " +
-      "makes the same video every time.",
+      "You write one \"what if\" idea. The AI reads our full real inventory " +
+      "(every free model, sound and camera tool) and authors a complete plan: " +
+      "the city street scene, a subject prop that grows or vanishes with the " +
+      "story, the stat beats, on-screen text and every sound. Every video is a " +
+      "fresh composition, never a recycled one. Nothing renders until you " +
+      "approve the plan.",
   },
   {
     id: "sound-design",

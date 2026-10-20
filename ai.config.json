@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AI Video Factory — Provider Config",
   "description": "Connect any AI provider/model for shot-spec generation. API keys live in .env (never committed).",
-  "defaultProvider": "gateway",
+  "defaultProvider": "ollama",
   "providers": {
     "gateway": {
       "package": "gateway",

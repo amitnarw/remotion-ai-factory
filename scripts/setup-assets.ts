@@ -42,6 +42,21 @@ const PACKS: PackDef[] = [
     tags: ["city", "building", "skyscraper", "downtown", "office", "shops"],
   },
   {
+    slug: "city-kit-roads",
+    category: "city",
+    tags: ["road", "street", "sidewalk", "streetlight", "lamp", "traffic-light", "sign", "crosswalk"],
+  },
+  {
+    slug: "city-kit-suburban",
+    category: "city",
+    tags: ["city", "building", "house", "suburb", "low-rise", "downtown"],
+  },
+  {
+    slug: "car-kit",
+    category: "vehicles",
+    tags: ["car", "vehicle", "truck", "van", "taxi", "bus", "traffic"],
+  },
+  {
     slug: "nature-kit",
     category: "nature",
     tags: ["tree", "pine", "nature", "park", "grass", "rock", "forest", "outdoor"],
@@ -62,6 +77,8 @@ interface PolyBundleDef {
   url: string;      // poly.pizza bundle page
   category: string;
   tags: string[];
+  /** Character bundles: keep only animated models. Props/vehicles skip this gate. */
+  requireAnimated?: boolean;
 }
 
 /** Poly Pizza (CC0/GLB, server-rendered pages, direct static GLB URLs). */
@@ -70,11 +87,45 @@ const POLY_BUNDLES: PolyBundleDef[] = [
     url: "https://poly.pizza/bundle/Animated-Men-Pack-DAC9SDgMQT",
     category: "characters",
     tags: ["character", "person", "man", "people", "crowd", "animated", "rigged", "walk", "idle"],
+    requireAnimated: true,
+  },
+  {
+    url: "https://poly.pizza/bundle/Animated-Women-Pack-HHSKxnk1mY",
+    category: "characters",
+    tags: ["character", "person", "woman", "female", "people", "crowd", "animated", "rigged", "walk", "idle"],
+    requireAnimated: true,
+  },
+  {
+    url: "https://poly.pizza/bundle/Ultimate-Modular-Men-Pack-ZiH8muWqwQ",
+    category: "characters",
+    tags: ["character", "person", "man", "people", "crowd", "animated", "rigged", "walk", "idle"],
+    requireAnimated: true,
   },
   {
     url: "https://poly.pizza/bundle/Animated-Animal-Pack-ILAPXeUYiS",
     category: "characters",
     tags: ["animal", "horse", "cow", "sheep", "animated", "rigged", "walk", "gallop", "idle"],
+    requireAnimated: true,
+  },
+  {
+    url: "https://poly.pizza/bundle/Cars-Bundle-FE5IWe6OMk",
+    category: "vehicles",
+    tags: ["car", "vehicle", "traffic", "sedan", "van", "truck"],
+  },
+  {
+    url: "https://poly.pizza/bundle/Stylized-Nature-MegaKit-T34GZFA0fm",
+    category: "nature",
+    tags: ["tree", "bush", "shrub", "plant", "planter", "nature", "park", "outdoor"],
+  },
+  {
+    url: "https://poly.pizza/bundle/City-Props-oiCnu8AuUP",
+    category: "props",
+    tags: ["street", "lamp", "bench", "trash", "hydrant", "mailbox", "prop", "city"],
+  },
+  {
+    url: "https://poly.pizza/bundle/Urban-Clutter-WS2QYG2YIX",
+    category: "props",
+    tags: ["litter", "bag", "paper", "box", "crate", "clutter", "prop", "city"],
   },
 ];
 
@@ -231,7 +282,7 @@ async function setupPolyBundles(catalog: AssetEntry[]): Promise<void> {
           const licence = lMatch?.[1] ?? "";
           const title = titleMatch?.[1] ?? id;
           if (!r) continue;
-          if (!animated) continue; // only animated models in these bundles
+          if (bundle.requireAnimated && !animated) continue; // character bundles must animate
           if (!/CC0/i.test(licence)) continue; // CC0 only
           const glbUrl = `https://static.poly.pizza/${r}.glb`;
           const gHead = await fetch(glbUrl, { method: "HEAD", signal: AbortSignal.timeout(15000) });
@@ -255,7 +306,7 @@ async function setupPolyBundles(catalog: AssetEntry[]): Promise<void> {
             category: bundle.category,
             tags: [...bundle.tags, ...(licence ? [licence.toLowerCase()] : []), title.toLowerCase()],
             animations: animationsOfGlb(outFile),
-            license: "CC0 (poly.pizza / Quaternius)",
+            license: "CC0 (poly.pizza)",
           });
           console.log(`[assets]   ✓ ${title} (anims: ${animationsOfGlb(outFile).length})`);
         } catch (e) {

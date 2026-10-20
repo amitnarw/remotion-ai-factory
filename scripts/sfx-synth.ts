@@ -45,7 +45,9 @@ export class Buf {
     const limit = Math.min(this.n, from + len);
     for (let i = from; i < limit; i++) {
       const x = src ? src(i) : 0;
-      this.data[i] += f(x, i / SR, i);
+      // NOTE: t is LOCAL seconds since the layer start (envelope windows are
+      // defined per layer), while i stays a buffer-absolute sample index.
+      this.data[i] += f(x, (i - from) / SR, i);
     }
   }
 

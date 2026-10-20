@@ -18,7 +18,7 @@
  * For arbitrary premises, configure a provider in ai.config.json + .env and
  * pass --provider/--model (OpenCode-style provider switching).
  */
-import { writeFileSync, mkdirSync, statSync } from "fs";
+import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { validateSpec, type ShotSpec } from "./spec.schema";
@@ -33,7 +33,12 @@ const FFMPEG = join(
   "compositor-win32-x64-msvc",
   "ffmpeg.exe",
 );
-const ENTRY = join(process.cwd(), "src", "index.ts");
+// Render from an EXPLICIT fresh bundle (out/render-bundle). Passing src/index.ts
+// to `remotion render` triggers the CLI's auto-bundle, which intermittently
+// serves a stale cached bundle on this machine — an explicit bundle step always
+// builds from current code.
+const ENTRY = join(process.cwd(), "out", "render-bundle");
+const BUNDLE_SRC = join(process.cwd(), "src", "index.ts");
 const COMP_ID = "WhatIfVideo";
 const OUTPUT_DIR = join(process.cwd(), "output");
 const FPS = 30;
@@ -48,20 +53,28 @@ function slug(text: string): string {
   );
 }
 
-/** Duration in frames from a spec (last scene end + 2s tail). */
+/** Duration in frames from a spec (last scene end + 2s tail; street-block
+ *  scenes end with the story — only a short breather after the last frame). */
 function durationFrames(spec: ShotSpec): number {
   const last = Math.max(...spec.scenes.map((s) => s.to));
-  return secToFrame(last + 2, spec.fps ?? FPS);
+  const streetOnly = spec.scenes.every(
+    (s) => s.kit === "street-block" || s.scene === "street-block",
+  );
+  return secToFrame(streetOnly ? last + 0.25 : last + 2, spec.fps ?? FPS);
 }
 
-/** Parse argv into { premise, provider, model }. */
+/** Parse argv into { premise, provider, model, noRender, fromSpec }. */
 function parseArgs(argv: string[]): {
   premise: string;
   provider: string | undefined;
   model: string | undefined;
+  noRender: boolean;
+  fromSpec: string | undefined;
 } {
   let provider: string | undefined;
   let model: string | undefined;
+  let noRender = false;
+  let fromSpec: string | undefined;
   const premiseParts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -69,11 +82,15 @@ function parseArgs(argv: string[]): {
       provider = argv[++i];
     } else if (a === "--model" && argv[i + 1]) {
       model = argv[++i];
+    } else if (a === "--no-render") {
+      noRender = true;
+    } else if (a === "--from-spec" && argv[i + 1]) {
+      fromSpec = argv[++i];
     } else if (!a.startsWith("--")) {
       premiseParts.push(a);
     }
   }
-  return { premise: premiseParts.join(" ").trim(), provider, model };
+  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec };
 }
 
 function writeFailedLog(id: string, premise: string, error: unknown): string {
@@ -98,12 +115,35 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec } = parseArgs(process.argv.slice(2));
+  if (fromSpec) {
+    // --- render-only mode: an approved spec (dashboard plan → approve) ---
+    (async () => {
+      const t0 = Date.now();
+      const el = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      try {
+        const abs = fromSpec.startsWith("/") || fromSpec.includes(":")
+          ? fromSpec
+          : join(process.cwd(), fromSpec);
+        if (!statSync(abs)) throw new Error(`spec file not found: ${abs} — fix: run the plan step first`);
+        const id = abs.replace(/\\/g, "/").split("/").pop()!.replace(/-spec\.json$/, "");
+        const valid = validateSpec(JSON.parse(readFileSync(abs, "utf8")));
+        const premise = valid.title;
+        console.log(`[render-only] ${id} — "${premise}" (${valid.scenes.length} scenes)`);
+        await renderOnly(valid, id, el);
+      } catch (error) {
+        console.error("");
+        console.error("═══ FAILED ═══");
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
   if (!premise) {
-    console.error('Usage: npm run generate -- "<premise>" [--provider X] [--model Y]');
-    console.error('Example: npm run generate -- "What if gravity disappeared for just 5 seconds?"');
-    console.error('         npm run generate -- "What if a cat drove a car?" --provider anthropic --model claude-opus-4-6');
-    console.error('         npm run models   (list configured providers + key status)');
+    console.error('Usage: npm run generate -- "<premise>" [--provider X] [--model Y] [--no-render]');
+    console.error('       npm run generate -- "<premise>" --from-spec output/<id>-spec.json  (render approved spec)');
+    console.error('Example: npm run generate -- "What if money doubled every 3 seconds?"');
     process.exit(1);
   }
 
@@ -138,6 +178,42 @@ function main() {
       const specPath = join(OUTPUT_DIR, `${id}-spec.json`);
       writeFileSync(specPath, JSON.stringify(valid, null, 2));
 
+      // Dashboard approval flow: --no-render stops after the spec write.
+      // PLAN_ID is the machine-readable marker server/jobs.ts looks for.
+      if (noRender) {
+        console.log(`PLAN_ID: ${id}`);
+        console.log(`✓ Plan ready for approval in ${el()} total`);
+        return;
+      }
+
+      await renderOnly(valid, id, el, { providerUsed, modelUsed, specPath, premise });
+    } catch (error) {
+      const logPath = writeFailedLog(id, premise, error);
+      console.error("");
+      console.error("═══ FAILED ═══");
+      console.error(`Premise: ${premise}`);
+      console.error(`Id: ${id}`);
+      console.error(`Log: ${logPath}`);
+      console.error(
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
+  })();
+}
+
+/** Render an approved/validated spec: MP4 + report (share [3/5]..[5/5] logs). */
+async function renderOnly(
+  valid: ShotSpec,
+  id: string,
+  el: () => string,
+  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string },
+): Promise<void> {
+  const premise = meta?.premise ?? valid.title;
+  const providerUsed = meta?.providerUsed ?? "approved-spec";
+  const modelUsed = meta?.modelUsed ?? "";
+  const specPath = meta?.specPath ?? join(OUTPUT_DIR, `${id}-spec.json`);
+
       // Duration from spec
       const durFrames = durationFrames(valid);
 
@@ -166,6 +242,14 @@ function main() {
         `[3/5] Bundling + launching render — ${durFrames} frames @${valid.fps ?? FPS}fps (1080×1920) at +${el()}`,
       );
 
+      // Fresh explicit bundle (step 3) so the render never serves stale code.
+      const bundleCmd = join(process.cwd(), "node_modules", ".bin", "remotion.cmd");
+      execFileSync(
+        "cmd",
+        ["/c", bundleCmd, "bundle", BUNDLE_SRC, "--out-dir", ENTRY],
+        { stdio: "inherit", env: { ...process.env, FFMPEG_PATH: FFMPEG } },
+      );
+
       const cmdArgs = [
         "render",
         ENTRY,
@@ -185,6 +269,8 @@ function main() {
         "--overwrite",
         "--codec",
         "h264",
+        "--timeout",
+        "180000",
       ];
 
       const remotionCmd = join(
@@ -226,6 +312,7 @@ function main() {
                 ...(valid.audio?.ambient?.map((a) => a.tag) ?? []),
               ]),
             ),
+            worldEvents: (valid.worldEvents ?? []).map((e) => e.name),
             generatedAt: new Date().toISOString(),
           },
           null,
@@ -245,19 +332,6 @@ function main() {
       }
       console.log(`✓ Done in ${el()} total`);
       console.log(`Upload the MP4 directly to YouTube Shorts.`);
-    } catch (error) {
-      const logPath = writeFailedLog(id, premise, error);
-      console.error("");
-      console.error("═══ FAILED ═══");
-      console.error(`Premise: ${premise}`);
-      console.error(`Id: ${id}`);
-      console.error(`Log: ${logPath}`);
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  })();
 }
 
 main();

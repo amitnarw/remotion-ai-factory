@@ -15,10 +15,18 @@ import * as React from "react";
 import { Hook } from "../hud/Hook";
 import { TimerHUD } from "../hud/TimerHUD";
 import { Captions } from "../hud/Captions";
+import { StatHud, ZoomVignette } from "../hud/StatHud";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
 import { AssetStage } from "../AssetStage";
+import { StreetStage } from "../StreetStage";
+import { SpaceStage } from "../SpaceStage";
+import { OceanStage } from "../OceanStage";
+import { CountrysideStage } from "../CountrysideStage";
+import { ForestStage } from "../ForestStage";
+import { RiverStage } from "../RiverStage";
+import { InteriorStage } from "../InteriorStage";
 import { ThreeCanvas } from "@remotion/three";
 import { CityScene } from "../scenes/CityScene";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
@@ -54,6 +62,72 @@ interface WhatIfVideoProps {
   previewFrame?: number;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Cinematic texture overlays (pure HTML/CSS, zero dependencies)      */
+/* ------------------------------------------------------------------ */
+
+/** Film grain: animated SVG noise (feTurbulence) overlaid at low opacity,
+ *  with a very soft color grade so blacks look crushed and highlights warm. */
+function FilmGrain() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 25,
+        pointerEvents: "none",
+        mixBlendMode: "overlay",
+        opacity: 0.12,
+        filter: `contrast(1.08) saturate(1.04)`,
+      }}
+    >
+      <svg
+        width="100%"
+        height="100%"
+        style={{ display: "block", animation: `spin ${2 / 3}s linear infinite` }}
+      >
+        <defs>
+          <filter id="grain" x="0" y="0" width="100%" height="100%">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="3"
+              stitchTiles="stitch"
+            />
+            <feComponentTransfer>
+              <feFuncR type="linear" slope="0.6" intercept="0.7" />
+              <feFuncG type="linear" slope="0.6" intercept="0.7" />
+              <feFuncB type="linear" slope="0.6" intercept="0.7" />
+            </feComponentTransfer>
+          </filter>
+        </defs>
+        <rect width="100%" height="100%" filter="url(#grain)" />
+      </svg>
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+}
+
+/** Vignette: darkens corners and top/bottom edges so the street stays
+ *  centered and the frame reads like a lens-captured shot. */
+function Vignette() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 26,
+        pointerEvents: "none",
+        background: `radial-gradient(circle at 50% 55%, transparent 30%, rgba(0,0,0,0.35) 75%, rgba(0,0,0,0.55) 100%)`,
+        mixBlendMode: "multiply",
+        opacity: 0.55,
+      }}
+    />
+  );
+}
+
 export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   spec,
   previewFrame,
@@ -80,14 +154,40 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         display: "flex",
       }}
     >
-      {/* 3D world inside ThreeCanvas */}
       <ThreeCanvas
         width={width}
         height={height}
         style={{ width, height }}
       >
-        {activeScene.kit ? (
-          // Asset-driven stage (game-engine style: GLB assets from the catalog)
+        {activeScene.kit === "street-block" ? (
+          // The dense populated street world (time-of-day looks + StatHud
+          // escalation + traffic + crowd + human camera operator)
+          <StreetStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "space" ? (
+          // The cosmic world: procedural planets (earth/moon/mars), stars,
+          // orbiting camera, planet-scale escalation on the beats
+          <SpaceStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "ocean" ? (
+          // The ocean world: waves to the horizon, beach, jetty, canoes —
+          // water level reacts to stat beats + water events
+          <OceanStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "countryside" ? (
+          // The countryside world: rolling fields, houses, barn, windmill,
+          // crop strips, dirt road, mountain ridge backdrop
+          <CountrysideStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "forest" ? (
+          // The forest world: dense tree scatter, ground mist, rocks, logs,
+          // light shafts at golden hour
+          <ForestStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "river" ? (
+          // The river world: flowing water strip with optional waterfall,
+          // mist, rocks, mountain ridge backdrop
+          <RiverStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "interior" ? (
+          // The interior world: room with window light shaft, furniture, lamp
+          <InteriorStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit ? (
+          // Asset-driven stage (GLB kits: park / pier / boardwalk / interior)
           <AssetStage scenes={[activeScene]} spec={spec} />
         ) : SceneComp ? (
           <SceneComp gravityOff={gravityOff} gravityOn={gravityOn} />
@@ -98,6 +198,13 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
           </>
         )}
       </ThreeCanvas>
+
+      {/* Stat-panel escalation HUD + zoom vignette */}
+      <ZoomVignette panel={spec.statPanel} fps={fps} />
+      <StatHud panel={spec.statPanel} fps={fps} />
+      {/* Cinematic texture: subtle film grain + edge vignette (always on). */}
+      <FilmGrain />
+      <Vignette />
 
       {/* Hook card */}
       <Hook
@@ -117,7 +224,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       )}
 
       {/* Captions */}
-      <Captions captions={spec.captions} fps={fps} />
+      <Captions captions={spec.captions ?? []} fps={fps} />
 
       {/* Audio cues */}
       <CompositionAudio spec={spec} fps={fps} />

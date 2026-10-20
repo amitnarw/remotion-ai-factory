@@ -33,6 +33,9 @@ export const CaptionSchema = z.object({
   from: z.number(),
   to: z.number(),
   keyword: z.array(z.string()).optional().default([]),
+  /** Look of the caption plate: "bold" = uppercase sans, "serif-italic" =
+   *  the lowerc-case serif italic narration look (e.g. "Normal eyes. 20/20."). */
+  style: z.enum(["bold", "serif-italic"]).optional(),
 });
 
 export const CameraKeySchema = z.object({
@@ -40,6 +43,55 @@ export const CameraKeySchema = z.object({
   pos: z.string().optional(),
   move: z.string().optional(),
 });
+
+/** One HUD beat of the escalation stat panel (see "your eyesight 1x → 16x").
+ *  value  = the big number before the unit ("16")
+ *  zoom   = camera zoom multiplier while this beat is active
+ *  sub    = the all-caps subline ("LIKE 16X BINOCULARS")
+ *  bpm    = pulse shown on the red EKG line */
+export const StatBeatSchema = z.object({
+  t: z.number(),
+  value: z.string().regex(/^[0-9][0-9.]*$/, "big value like \"16\" — no letters"),
+  zoom: z.number().min(1),
+  sub: z.string(),
+  bpm: z.number().min(40).max(220),
+});
+
+export const StatPanelSchema = z.object({
+  title: z.string(),
+  unit: z.string().default("x").describe("suffix after the big value, e.g. \"x\" renders \"16x\""),
+  beats: z.array(StatBeatSchema).min(1).max(8),
+});
+
+export type StatPanelSpec = z.infer<typeof StatPanelSchema>;
+
+/**
+ * The story's SUBJECT prop built by the street renderer and escalated on the
+ * same numbers the HUD shows (see src/generator/ai/knowledge.ts for the
+ * option menu — only these styles physically exist).
+ */
+export const HeroPropSchema = z.object({
+  style: z
+    .enum(["coin-stacks", "cash-bundles", "gold-bars", "water-puddles", "ice-crystals", "orb-pedestal", "bill-columns", "none"])
+    .describe("exact procedural prop family — pick from the menu in the prompt"),
+  growth: z.enum(["multiply", "vanish"]).optional().describe("multiply = rises every beat; vanish = dries/shrinks every beat"),
+  anchor: z.enum(["sidewalk-left", "sidewalk-right", "plaza-left", "plaza-right"]).optional(),
+});
+export type HeroPropSpec = z.infer<typeof HeroPropSchema>;
+
+/** What the AI controls on the street (variety knobs, exact engine options). */
+const StreetVarySchema = z.object({
+  crowdCount: z.number().int().min(0).max(40).optional(),
+  vehicleCount: z.number().int().min(0).max(12).optional(),
+  accent: z.enum(["classic", "mint", "terracotta", "butter", "lagoon"]).optional(),
+  /** How the human-style camera films the street this story:
+   *  "walk-through" = camera walks the street like a person filming,
+   *  "orbit-drift" = slow circling drift, "steady-push" = locked tripod with
+   *  beat push-ins only. */
+  cameraStyle: z.enum(["walk-through", "orbit-drift", "steady-push", "crane-reveal", "follow-chase", "handheld-urgency", "drone-top"]).optional(),
+});
+export type StreetVarySpec = z.infer<typeof StreetVarySchema>;
+export type StatBeat = z.infer<typeof StatBeatSchema>;
 
 export const SceneSchema = z.object({
   scene: z.string(),
@@ -53,10 +105,42 @@ export const SceneSchema = z.object({
       gravityOn: z.number().nullable().optional(),
     })
     .optional(),
-  /** Asset-driven set: which environment kit + what/who is in it (legacy scenes omit it). */
+  /** Asset-driven set: which environment kit + what/who is in it (legacy
+   *  scenes omit it — only "city"/"first-person" physics demos may omit it).
+   *  Scene library (the WORLD the AI directs in):
+   *    "street-block" = dense city street (time-of-day worlds, crowd, traffic)
+   *    "space"        = planets/stars/orbit — set subject: earth | moon | mars
+   *    "city-street" | "park" | "boardwalk" | "pier" | "interior" = CC0 GLB
+   *                     kits rendered by AssetStage (with scene.cast) */
   kit: z
-    .enum(["city-street", "park", "boardwalk", "pier", "interior"])
+    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river"])
     .optional(),
+  /** For space scenes: which world is in frame (planet built procedurally). */
+  subject: z.enum(["earth", "moon", "mars"]).optional(),
+  /** Per-scene look variation (time of day is the AI's per-shot choice). */
+  look: z
+    .object({
+      timeOfDay: z.enum(["noon", "afternoon", "golden", "overcast", "dawn", "night"]).optional(),
+      /** Optional continuous time-of-day arc within the scene.
+       *  If provided, the scene interpolates from `timeOfDay` to `timeSpan.to`
+       *  over the scene duration (or `timeSpan.duration` if set).
+       *  Example: "dawn" -> "golden" creates a sunrise sequence. */
+      timeSpan: z
+        .object({
+          to: z.enum(["noon", "afternoon", "golden", "overcast", "dawn", "night"]),
+          /** Optional: override duration in seconds. Defaults to scene.to - scene.from. */
+          duration: z.number().positive().optional(),
+        })
+        .optional(),
+      /** Weather overlay: rain / snow / storm particles, "clear" keeps the
+       *  sky clean. Paired with worldEvents rain-start / rain-stop when the
+       *  story is about the weather changing. */
+      weather: z.enum(["none", "clear", "rain", "snow", "storm"]).optional(),
+      fog: z.number().min(0).max(1).optional(),
+    })
+    .optional(),
+  /** Cast entries for AssetStage kits (people/props/animals — asset ids must
+   *  exist in assets.catalog.json, validated at generate time). */
   cast: z
     .array(
       z.object({
@@ -73,11 +157,16 @@ export const SceneSchema = z.object({
       }),
     )
     .optional(),
-  /** Per-scene look variation. */
-  look: z
+  /** Street engine variety knobs — the AI chooses these fresh per story. */
+  street: StreetVarySchema.optional(),
+  /** River engine configuration — for "river" kit scenes. */
+  riverConfig: z
     .object({
-      timeOfDay: z.enum(["noon", "afternoon", "golden", "overcast"]).optional(),
-      fog: z.number().min(0).max(1).optional(),
+      hasWaterfall: z.boolean().optional(),
+      flowDir: z.enum(["x", "z"]).optional(),
+      length: z.number().positive().optional(),
+      width: z.number().positive().optional(),
+      waterfallHeight: z.number().positive().optional(),
     })
     .optional(),
 });
@@ -100,6 +189,12 @@ export const ShotSpecSchema = z.object({
   }),
   events: z.array(EventSchema).default([]),
   captions: z.array(CaptionSchema).default([]),
+  /** Escalation stat HUD ("YOUR EYESIGHT 1x → 16x") — optional. When present,
+   *  the first beats' values also drive the StreetStage camera zoom. */
+  statPanel: StatPanelSchema.optional(),
+  /** The story's literal subject prop (see knowledge.ts menu) — the picture
+   *  must show the premise; escalates on the stat beats / timeline. */
+  heroProp: HeroPropSchema.optional(),
   timer: z
     .object({
       label: z.string(),
@@ -110,6 +205,17 @@ export const ShotSpecSchema = z.object({
     })
     .optional(),
   scenes: z.array(SceneSchema).min(1),
+  /** World-state events — the ENVIRONMENT itself reacts (premise visibility).
+   *  Water events animate the ocean/pier water level; weather + lights
+   *  events are honoured by the stages that support them. */
+  worldEvents: z
+    .array(
+      z.object({
+        t: z.number(),
+        name: z.enum(["water-vanish", "water-return", "water-rise", "rain-start", "rain-stop", "lights-out"]),
+      }),
+    )
+    .default([]),
   audio: z
     .object({
       ambient: z
@@ -119,6 +225,10 @@ export const ShotSpecSchema = z.object({
             from: z.number(),
             to: z.number().nullable().optional(),
             vol: z.number().optional(),
+            /** restart=true: restart the file at bed from-time instead of
+             *  slicing mid-file (keeps heartbeat beats phase-aligned when
+             *  the tempo changes between segments). */
+            restart: z.boolean().optional(),
           }),
         )
         .optional(),
@@ -159,6 +269,13 @@ export function validateSpec(input: unknown): ShotSpec {
       `scenes has ${spec.scenes.length} entries — keep it to ${MAX_SCENES} or fewer scenes`,
     );
   }
+  spec.scenes.forEach((s, i) => {
+    if (!s.kit && !["city", "first-person"].includes(s.scene)) {
+      problems.push(
+        `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street`,
+      );
+    }
+  });
   const duration = t;
   if (duration < MIN_DURATION_S) {
     problems.push(
@@ -199,6 +316,26 @@ export function validateSpec(input: unknown): ShotSpec {
     if (spec.timer.startT < 0 || spec.timer.endT > duration + 2) {
       problems.push(
         `timer.startT/endT (${spec.timer.startT}/${spec.timer.endT}) is outside the video duration (0..${duration}s)`,
+      );
+    }
+  }
+
+  if (spec.statPanel) {
+    spec.statPanel.beats.forEach((b, i) => {
+      if (b.t < 0 || b.t > duration + 1) {
+        problems.push(
+          `statPanel.beats[${i}].t=${b.t} is outside the video duration (0..${duration}s)`,
+        );
+      }
+      if (i > 0 && b.t <= spec.statPanel!.beats[i - 1].t) {
+        problems.push(
+          `statPanel.beats[${i}].t=${b.t} must be greater than the previous beat (${spec.statPanel!.beats[i - 1].t})`,
+        );
+      }
+    });
+    if (spec.statPanel.beats[0].zoom !== 1) {
+      problems.push(
+        `statPanel.beats[0].zoom must be 1 (the video opens un-zoomed) but got ${spec.statPanel.beats[0].zoom}`,
       );
     }
   }

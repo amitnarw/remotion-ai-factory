@@ -1,0 +1,58 @@
+{
+  "id": "eyesight-doubles-15s",
+  "title": "what if your eyesight doubled every 3 seconds?",
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "palette": "pastelDay",
+  "hook": {
+    "text": "What if your eyesight doubled every 3 seconds?",
+    "keywordHighlight": ["eyesight"],
+    "t": 0,
+    "duration": 2.6
+  },
+  "statPanel": {
+    "title": "YOUR EYESIGHT",
+    "unit": "x",
+    "beats": [
+      { "t": 2, "value": "1", "zoom": 1, "sub": "20/20: NORMAL", "bpm": 76 },
+      { "t": 5, "value": "2", "zoom": 2, "sub": "LIKE 2X READING GLASSES", "bpm": 88 },
+      { "t": 8, "value": "4", "zoom": 4, "sub": "LIKE 4X MAGNIFIER", "bpm": 104 },
+      { "t": 11, "value": "8", "zoom": 8, "sub": "LIKE 8X SPYGLASS", "bpm": 128 },
+      { "t": 14, "value": "16", "zoom": 16, "sub": "LIKE 16X BINOCULARS", "bpm": 152 }
+    ]
+  },
+  "events": [
+    { "t": 2, "name": "eyesight_x1", "targets": ["viewer"], "sfx": [{ "tag": "pop_light", "at": 2 }] },
+    { "t": 5.8, "name": "street_car_pass", "targets": ["street"], "sfx": [{ "tag": "car_pass", "at": 5.8 }] },
+    { "t": 8, "name": "eyesight_x4", "targets": ["viewer"], "sfx": [{ "tag": "pop_light", "at": 8 }, { "tag": "horn_distant", "at": 9.0 }] },
+    { "t": 11.6, "name": "bike_pass", "targets": ["street"], "sfx": [{ "tag": "bike_bell", "at": 11.6 }] },
+    { "t": 14, "name": "eyesight_x16", "targets": ["viewer"], "sfx": [{ "tag": "pop_light", "at": 14 }, { "tag": "car_pass", "at": 14.6 }] }
+  ],
+  "captions": [
+    { "text": "Normal eyes. 20/20.", "from": 0.9, "to": 3.6, "style": "serif-italic" },
+    { "text": "Twice the eyes. Street signs sharpen.", "from": 5.2, "to": 7.6, "style": "serif-italic" },
+    { "text": "Fourfold. You can read a menu across the street.", "from": 8.2, "to": 10.6, "style": "serif-italic" },
+    { "text": "Eightfold. This feels like a spyglass.", "from": 11.2, "to": 13.4, "style": "serif-italic" },
+    { "text": "Sixteen-fold. Like holding binoculars to the city.", "from": 14.0, "to": 16.0, "style": "serif-italic" }
+  ],
+  "scenes": [
+    {
+      "scene": "city",
+      "from": 0,
+      "to": 15,
+      "kit": "street-block",
+      "camera": "street"
+    }
+  ],
+  "audio": {
+    "ambient": [
+      { "tag": "street_murmur", "from": 0, "to": 15, "vol": 0.55 },
+      { "tag": "heartbeat_bpm70", "from": 0, "to": 5, "vol": 0.5, "restart": true },
+      { "tag": "heartbeat_bpm90", "from": 5, "to": 8, "vol": 0.5, "restart": true },
+      { "tag": "heartbeat_bpm110", "from": 8, "to": 11, "vol": 0.5, "restart": true },
+      { "tag": "heartbeat_bpm130", "from": 11, "to": 14, "vol": 0.5, "restart": true },
+      { "tag": "heartbeat_bpm150", "from": 14, "to": 15, "vol": 0.5, "restart": true }
+    ]
+  }
+}

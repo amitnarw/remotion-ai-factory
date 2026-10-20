@@ -41,52 +41,22 @@ export interface Job {
   engine?: "template" | "story" | "plan" | "storyboard";
   output?: JobOutput;
   slug?: string;
+  specId?: string;
   storyboard?: unknown;
   error?: string;
   createdAt: number;
 }
 
-export interface StoryInfo {
-  slug: string;
-  title: string;
-  durationSec: number;
-  fps: number;
-  sfxRoles?: string[];
-}
+/* ---------- Spec engine: AI writes the plan → you review → approve → render ---------- */
 
-export async function getStories(): Promise<StoryInfo[]> {
-  const r = await json<{ stories: StoryInfo[] }>(await fetch(`${BASE}/stories`));
-  return r.stories;
-}
-
-/* Story Studio, plan → review → approve → render */
-export interface StoryDraft {
-  slug: string;
-  title: string;
-  seconds: number;
-  createdAt: number;
-  approved: boolean;
-}
-
-export async function getStoryDrafts(): Promise<StoryDraft[]> {
-  const r = await json<{ drafts: StoryDraft[] }>(await fetch(`${BASE}/story/drafts`));
-  return r.drafts;
-}
-
-export interface PlanStartResult {
-  jobId: string;
-}
-
-export async function planStory(body: {
-  mode: "topic" | "story";
-  input: string;
-  seconds: number;
-  feedback?: string;
-  slug?: string;
-  previous?: unknown;
-}): Promise<PlanStartResult> {
+/** Start a plan job: the AI writes the shot spec. Nothing renders yet. */
+export async function planSpec(body: {
+  premise: string;
+  provider?: string;
+  model?: string;
+}): Promise<{ jobId: string }> {
   return json(
-    await fetch(`${BASE}/story/plan`, {
+    await fetch(`${BASE}/plan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -94,30 +64,30 @@ export async function planStory(body: {
   );
 }
 
-export async function getStory(slug: string): Promise<{ slug: string; storyboard: unknown }> {
-  return json(await fetch(`${BASE}/story/${slug}`));
+export interface SpecResponse {
+  ready: boolean;
+  status?: string;
+  stage?: string;
+  progress?: number;
+  specId?: string;
+  spec?: import("../../src/generator/spec.schema").ShotSpec;
+  error?: string;
 }
 
-export async function approveStory(slug: string): Promise<{ jobId: string }> {
+/** Poll a plan job's spec until it is ready. */
+export async function getJobSpec(jobId: string): Promise<SpecResponse> {
+  return json(await fetch(`${BASE}/spec/${jobId}`));
+}
+
+/** Render an approved plan. This is the only way a spec becomes a video. */
+export async function renderSpec(specId: string): Promise<{ jobId: string }> {
   return json(
-    await fetch(`${BASE}/story/approve`, {
+    await fetch(`${BASE}/render-spec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug }),
+      body: JSON.stringify({ specId }),
     }),
   );
-}
-
-export async function setStoryVoiceMode(
-  slug: string,
-  patch: { mode?: string; narratorVoice?: string; characterVoice?: string },
-): Promise<void> {
-  const r = await fetch(`${BASE}/story/voice`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slug, ...patch }),
-  });
-  if (!r.ok) throw new Error(await errorText(r));
 }
 
 /* Voice casting */
@@ -129,76 +99,6 @@ export interface VoiceInfo {
 
 export async function getVoices(): Promise<{ voices: VoiceInfo[] }> {
   return json(await fetch(`${BASE}/voices`));
-}
-
-export async function requestVoiceSample(voice: string): Promise<{ url: string | null; note?: string }> {
-  return json(
-    await fetch(`${BASE}/voices/sample`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ voice }),
-    }),
-  );
-}
-
-export async function generateStory(
-  slug: string,
-  soundDesign?: Record<string, string>,
-): Promise<{ jobId: string }> {
-  return json(
-    await fetch(`${BASE}/generate-story`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug, soundDesign }),
-    }),
-  );
-}
-
-/* Sound design, per-role SFX variant chooser */
-export interface SfxVariantInfo {
-  id: string;
-  file: string;
-  url: string;
-  dur: number;
-  source: string;
-  pack?: string;
-  peakDb: number;
-  rmsDb: number;
-  autoRank: number;
-}
-
-export interface SoundRoleInfo {
-  id: string;
-  label: string;
-  description: string;
-  family: "ambient" | "event";
-  variants: SfxVariantInfo[];
-}
-
-export interface SoundDesignResponse {
-  slug: string;
-  available: boolean;
-  roles: SoundRoleInfo[];
-  selection: Record<string, string>;
-  catalogGeneratedAt?: number;
-  fixHint?: string;
-}
-
-export async function getSoundDesign(slug: string): Promise<SoundDesignResponse> {
-  return json(await fetch(`${BASE}/sound-design/${slug}`));
-}
-
-export async function saveSoundMap(
-  slug: string,
-  map: Record<string, string>,
-): Promise<{ ok: boolean; map: Record<string, string> }> {
-  return json(
-    await fetch(`${BASE}/sound-design/${slug}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ map }),
-    }),
-  );
 }
 
 export interface Video {

@@ -7,13 +7,72 @@
  */
 import { ShotSpec, validateSpec } from "./spec.schema";
 import gravitySpec from "./spec.example.gravity.json";
+import eyesightSpec from "./spec.example.eyesight.json";
 
 const TEMPLATES: Record<string, ShotSpec> = {
   gravity: gravitySpec as unknown as ShotSpec,
+  eyesight: eyesightSpec as unknown as ShotSpec,
 };
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
+}
+
+/**
+ * Build the "doubling escalation" family offline (from the eyesight example):
+ * one street-block scene + a 1x → 16x stat panel with zoom beats + a literal
+ * subject prop from the small offline subject map. Generic text is derived
+ * from the premise so any "doubled every N seconds" premise works without an
+ * AI call.
+ */
+function buildEscalationSpec(premise: string): ShotSpec | null {
+  const spec = clone(TEMPLATES.eyesight);
+  const hook = /what if/i.test(premise) ? premise : `What if ${premise}?`;
+  const p = premise.toLowerCase();
+  const subjects: Array<{ re: RegExp; panel: string; hero: "coin-stacks" | "cash-bundles" | "water-puddles" | "ice-crystals" | "orb-pedestal" }> = [
+    { re: /money|cash|salary|payroll|pay\b|bill/, panel: "YOUR MONEY", hero: "coin-stacks" },
+    { re: /water|rain|river|ocean/, panel: "THE WATER", hero: "water-puddles" },
+    { re: /heat|hot|cold|ice|freez/, panel: "THE COLD", hero: "ice-crystals" },
+    { re: /gold|treasure|rich/, panel: "THE GOLD", hero: "gold-bars" as never },
+  ];
+  const hit = subjects.find((s) => s.re.test(p));
+  const panelTitle = hit?.panel ?? "THE CHANGE";
+  const heroStyle = hit?.hero ?? "orb-pedestal";
+  return {
+    ...spec,
+    id: "escalation-street-15s",
+    title: premise,
+    hook: { ...spec.hook, text: hook, keywordHighlight: ["every"] },
+    heroProp: { style: heroStyle, growth: "multiply", anchor: "plaza-left" },
+    scenes: [
+      {
+        ...spec.scenes[0],
+        scene: "street-block",
+        kit: "street-block" as const,
+        look: { timeOfDay: "afternoon" as const },
+        street: { accent: "classic" as const, cameraStyle: "walk-through" as const },
+      },
+      ...spec.scenes.slice(1),
+    ],
+    statPanel: {
+      title: panelTitle,
+      unit: "x",
+      beats: [
+        { t: 2, value: "1", zoom: 1, sub: "START: BASELINE", bpm: 76 },
+        { t: 5, value: "2", zoom: 2, sub: "DOUBLED ONCE", bpm: 88 },
+        { t: 8, value: "4", zoom: 4, sub: "DOUBLED AGAIN", bpm: 104 },
+        { t: 11, value: "8", zoom: 8, sub: "THIS FEELS HUGE", bpm: 128 },
+        { t: 14, value: "16", zoom: 16, sub: "SIXTEENFOLD MAX", bpm: 152 },
+      ],
+    },
+    captions: [
+      { text: "Baseline. Everything as usual.", from: 0.9, to: 3.6, style: "serif-italic" },
+      { text: "Doubled. The street turns up.", from: 5.2, to: 7.6, style: "serif-italic" },
+      { text: "Fourfold. The pile is growing.", from: 8.2, to: 10.6, style: "serif-italic" },
+      { text: "Eightfold. This feels huge.", from: 11.2, to: 13.4, style: "serif-italic" },
+      { text: "Sixteenfold. Full blast.", from: 14.0, to: 16.0, style: "serif-italic" },
+    ],
+  } as unknown as ShotSpec;
 }
 
 /** Slug a premise into a safe file id. */
@@ -28,10 +87,18 @@ export function slug(text: string): string {
 /**
  * Build a spec for the "for 5 seconds" family offline.
  * Handles: gravity, time-stop, spin-stop, air, water, oxygen, electrons,
- * protons, neutrons, light, sun-set.
+ * protons, neutrons, light, sun-set — plus the "doubled every N seconds"
+ * street-block escalation family.
  */
 export function buildFamilySpec(premise: string): ShotSpec | null {
   const p = premise.toLowerCase();
+
+  // Escalation family first: "doubled every N seconds" style premises get the
+  // street-block stat-panel treatment even with no AI provider configured.
+  if (/doubled?|doubling|multipl|every \d+ seconds?/.test(p)) {
+    const esc = buildEscalationSpec(premise);
+    if (esc) return validateSpec(esc);
+  }
 
   const base: ShotSpec = validateSpec(clone(TEMPLATES.gravity));
 

@@ -12,86 +12,39 @@ import {
   Sparkles,
   Download,
   CircleCheck,
-  ArrowRight,
-  Music4,
-  AudioLines,
-  Clapperboard,
   PenLine,
-  BookText,
-  BookOpen,
   Wand2,
-  Eye,
-  Camera,
-  Megaphone,
   RefreshCw,
-  ThumbsUp,
   ArrowLeft,
-  Play,
-  Mic,
-  Smile,
-  Users,
-  VolumeX,
-  Zap,
-  Star,
   Check,
 } from "lucide-react";
-import { toast } from "sonner";
 import {
-  getStories,
   getJob,
-  getSoundDesign,
-  saveSoundMap,
-  generateStory,
-  getStoryDrafts,
-  planStory,
-  getStory,
-  approveStory,
-  setStoryVoiceMode,
-  getVoices,
-  requestVoiceSample,
+  planSpec,
+  getJobSpec,
+  renderSpec,
   Job,
-  SoundDesignResponse,
-  StoryInfo,
-  StoryDraft,
-  type VoiceInfo,
 } from "../api";
-import type { Storyboard } from "../../../src/whatif/storyboard/schema";
+import type { ShotSpec } from "../../../src/generator/spec.schema";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
-import { Input, Textarea } from "../components/ui/input";
-import { ErrorBanner, SoundPlayer } from "../components/shared";
+import { Input } from "../components/ui/input";
+import { ErrorBanner } from "../components/shared";
 import { InfoTip } from "../components/InfoTip";
 import { useQuery, setQuery } from "../lib/navigation";
 import { cn } from "../lib/utils";
 
-const STEP_LABELS = ["Tell your idea", "Shape the story", "Make the video"];
+const STEP_LABELS = ["Tell your idea", "Check the plan", "Make the video"];
 
 export default function Generate() {
   const query = useQuery();
   const step = query.get("step") ?? "1";
-  const storyParam = query.get("story") ?? undefined;
   const planParam = query.get("plan") ?? undefined;
-  const draftParam = query.get("draft") ?? undefined;
   const jobParam = query.get("job") ?? undefined;
-  const path = query.get("path") ?? undefined;
 
   /* ---------------- data (once) ---------------- */
-  const [stories, setStories] = useState<StoryInfo[]>([]);
-  const [drafts, setDrafts] = useState<StoryDraft[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
-  useEffect(() => {
-    getStories()
-      .then((s) => setStories(s))
-      .catch((e) => setLoadError(String(e)));
-    getStoryDrafts()
-      .then(setDrafts)
-      .catch(() => setDrafts([]));
-  }, []);
-  useEffect(() => {
-    if (step === "1") getStoryDrafts().then(setDrafts).catch(() => {});
-  }, [step]);
 
   /* ---------------- shared job machinery (SSE + polling fallback) ------- */
   const [job, setJob] = useState<Job | null>(null);
@@ -186,48 +139,12 @@ export default function Generate() {
   /* Attach by URL: render job (step 3), plan job (review), deep-link-proof. */
   useEffect(() => {
     if (step === "3" && jobParam) {
-      setStage(jobParam.includes("-t") ? "script" : "voice");
-      openSSE(jobParam);
-    } else if (step === "review" && planParam) {
       setStage("script");
-      openSSE(planParam);
+      openSSE(jobParam);
     }
     return stopPolling;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, jobParam, planParam]);
-
-  /* Ready path: fire the render for a hand-crafted video (server reads the
-     saved sound-design choices itself). */
-  const startReadyRender = useCallback(
-    async (slug: string) => {
-      setGenError(null);
-      try {
-        const { jobId } = await generateStory(slug);
-        setLogs([]);
-        setProgress(0);
-        setStatus("running");
-        setStage("music");
-        setEta(null);
-        setQuery({ step: "3", job: jobId });
-        setJob({
-          id: jobId,
-          status: "queued",
-          progress: 0,
-          stage: "music",
-          premise: stories.find((s) => s.slug === slug)?.title ?? slug,
-          engine: "story",
-          createdAt: Date.now(),
-          logs: [],
-        });
-        openSSE(jobId);
-        toast.success("The video is being made!", { description: "Watch the progress below." });
-      } catch (e) {
-        setGenError(String(e));
-        toast.error("Could not start the render", { description: String(e) });
-      }
-    },
-    [openSSE, stories],
-  );
 
   const running = status === "running";
 
@@ -274,34 +191,16 @@ export default function Generate() {
 
       {step === "1" ? (
         <Step1
-          stories={stories}
-          drafts={drafts}
-          loadError={loadError}
           setError={setGenError}
-          onPickReady={(slug) => setQuery({ story: slug, path: "ready", step: "2", job: undefined })}
-          onResumeDraft={(slug) => setQuery({ draft: slug, step: "review", plan: undefined })}
-        />
-      ) : null}
-
-      {step === "2" && path === "ready" ? (
-        <Step2Ready
-          storySlug={storyParam}
-          stories={stories}
-          onDone={() => setQuery({ step: "3" })}
-          onBack={() => setQuery({ step: "1", path: undefined, story: undefined })}
         />
       ) : null}
 
       {step === "review" ? (
-        <StoryReview
+        <SpecReview
           planJobId={planParam}
-          draftSlug={draftParam}
-          status={status}
-          job={job}
-          logs={logs}
           setError={setGenError}
-          onBack={() => setQuery({ step: "1", plan: undefined, draft: undefined })}
-          onApproved={(jobId) => setQuery({ step: "3", job: jobId, plan: undefined, draft: undefined })}
+          onBack={() => setQuery({ step: "1", plan: undefined })}
+          onApproved={(jobId) => setQuery({ step: "3", job: jobId, plan: undefined })}
         />
       ) : null}
 
@@ -314,15 +213,11 @@ export default function Generate() {
           progress={progress}
           etaSec={etaSec}
           stage={stage}
-          readySlug={path === "ready" ? storyParam : undefined}
-          readyTitle={stories.find((s) => s.slug === storyParam)?.title}
-          onMakeReady={startReadyRender}
           onAgain={() => {
             setGenError(null);
             setJob(null);
             setStatus("idle");
-            getStoryDrafts().then(setDrafts).catch(() => {});
-            setQuery({ step: "1", job: undefined, plan: undefined, draft: undefined, path: undefined, story: undefined });
+            setQuery({ step: "1", job: undefined, plan: undefined });
           }}
         />
       ) : null}
@@ -331,48 +226,24 @@ export default function Generate() {
 }
 
 /* ==================================================================== */
-/*  STEP 1, idea entry / drafts / ready videos                          */
+/*  STEP 1, idea entry                                                  */
 /* ==================================================================== */
-const LENGTHS = [15, 20, 30, 45, 60];
-
-/** A model submission, beginning, flip, escalation, warm smiley payoff. */
-const STORY_SAMPLE = `What if shadows could hold you?
-
-Bruno the blob sat on his bench, sipping cocoa. His shadow stretched across the pavement, long and lazy in the sunset.
-
-At midnight, the shadow grabbed his ankle. He pulled, but it would not let go. He ran down the street, but the shadow skated right behind him, thin as ink.
-
-By morning he gave up, sat back down and said: "Fine. You can hold my cocoa."
-
-The shadow let go of his ankle and steadied the mug instead.`;
 
 function Step1({
-  stories,
-  drafts,
-  loadError,
   setError,
-  onPickReady,
-  onResumeDraft,
 }: {
-  stories: StoryInfo[];
-  drafts: StoryDraft[];
-  loadError: string | null;
   setError: (s: string | null) => void;
-  onPickReady: (slug: string) => void;
-  onResumeDraft: (slug: string) => void;
 }) {
-  const [mode, setMode] = useState<"topic" | "story" | null>(null);
   const [input, setInput] = useState("");
-  const [seconds, setSeconds] = useState(20);
   const [writing, setWriting] = useState(false);
 
   const write = async () => {
-    if (!mode || input.trim().length < 3) return;
+    if (input.trim().length < 6) return;
     setError(null);
     setWriting(true);
     try {
-      const { jobId } = await planStory({ mode, input: input.trim(), seconds });
-      setQuery({ step: "review", plan: jobId, draft: undefined });
+      const { jobId } = await planSpec({ premise: input.trim() });
+      setQuery({ step: "review", plan: jobId });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -382,367 +253,62 @@ function Step1({
 
   return (
     <div className="space-y-4">
-      {/* The big idea cards */}
-      <div className="grid gap-4">
-        {(
-          [
-            {
-              key: "topic" as const,
-              icon: <PenLine className="h-7 w-7" />,
-              title: "I have an idea",
-              sub: "Type what the video is about.",
-            },
-            {
-              key: "story" as const,
-              icon: <BookText className="h-7 w-7" />,
-              title: "I have the whole story",
-              sub: "Paste your story, and we turn it into scenes with sounds.",
-            },
-          ]
-        ).map((c) => (
-          <button
-            key={c.key}
-            onClick={() => setMode(mode === c.key ? null : c.key)}
-            className={cn(
-              "flex items-center gap-5 rounded-3xl p-6 text-left transition-all active:scale-[0.99]",
-              mode === c.key
-                ? "bg-primary text-primary-foreground shadow-xl shadow-primary/30"
-                : "bg-card shadow-xl shadow-black/20 hover:brightness-125",
-            )}
-          >
-            <span
-              className={cn(
-                "grid h-14 w-14 shrink-0 place-items-center rounded-2xl",
-                mode === c.key ? "bg-black/20" : "bg-primary/20 text-primary",
-              )}
-            >
-              {c.icon}
+      <Card className="p-6">
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-primary/20 text-primary">
+              <PenLine className="h-6 w-6" />
             </span>
-            <span>
-              <span className="block text-lg font-extrabold">{c.title}</span>
-              <span
-                className={cn(
-                  "mt-0.5 block text-sm font-medium",
-                  mode === c.key ? "text-white/80" : "text-muted-foreground",
-                )}
-              >
-                {c.sub}
-              </span>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {mode ? (
-        <Card className="p-6">
-          <div className="space-y-4">
-            {mode === "topic" ? (
-              <>
-                <Input
-                  autoFocus
-                  placeholder="What if the moon was twice as close?"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  className="text-lg"
-                />
-                <p className="text-xs font-medium text-muted-foreground">
-                  One sentence is enough. If we need anything else we will ask while writing.
-                </p>
-              </>
-            ) : (
-              <>
-                <Textarea
-                  autoFocus
-                  placeholder="Paste your whole story here…"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  className="min-h-40"
-                />
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button variant="secondary" size="sm" onClick={() => { setInput(STORY_SAMPLE); toast.info("This is an example, keep it, edit it, or paste your own."); }}>
-                    <BookOpen className="h-4 w-4" /> Show me an example
-                  </Button>
-                  <p className="max-w-sm text-xs font-medium text-muted-foreground">
-                    Write it any way you like, bullet points, dialogue, plain paragraphs. Tell us how
-                    it starts, what goes wrong, and how it ends.
-                  </p>
-                </div>
-              </>
-            )}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="mr-1 text-sm font-bold text-muted-foreground">
-                {mode === "topic" ? "How long?" : "About how long?"}
-              </span>
-              {LENGTHS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSeconds(s)}
-                  className={cn(
-                    "h-11 rounded-2xl px-4 text-sm font-extrabold transition-all active:scale-95",
-                    seconds === s
-                      ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
-                      : "bg-input text-muted-foreground hover:brightness-125",
-                  )}
-                >
-                  {s}s
-                </button>
-              ))}
+            <div>
+              <div className="text-lg font-extrabold">Tell your idea</div>
+              <div className="text-sm text-muted-foreground">One "what if" question is enough.</div>
             </div>
-            <div className="flex items-center gap-3">
-              <Button variant="amber" size="lg" className="flex-1" disabled={writing || input.trim().length < 3} onClick={write}>
-                <Wand2 className={cn("h-5 w-5", writing && "animate-pulse")} />
-                {writing ? "Writing…" : "Write the story"}
-              </Button>
-              <InfoTip helpId="story-engine" />
-            </div>
-            <p className="text-xs font-medium text-muted-foreground">
-              We show you the complete story first. Nothing renders until you say yes.
-            </p>
           </div>
-        </Card>
-      ) : null}
-
-      {/* Unfinished stories */}
-      {drafts.filter((d) => !d.approved).length > 0 ? (
-        <div className="pt-4">
-          <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-            Unfinished stories
-          </h3>
-          <div className="space-y-3">
-            {drafts
-              .filter((d) => !d.approved)
-              .slice(0, 4)
-              .map((d) => (
-                <button
-                  key={d.slug}
-                  onClick={() => onResumeDraft(d.slug)}
-                  className="flex w-full items-center gap-4 rounded-2xl bg-card p-4 text-left shadow-lg shadow-black/20 transition-all hover:brightness-125"
-                >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/25 text-accent">
-                    <PenLine className="h-5 w-5" />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-bold">{d.title}</span>
-                  <Badge variant="muted">{d.seconds}s</Badge>
-                  <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-                </button>
-              ))}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Ready-made (hand-crafted) videos */}
-      <div className="pt-4">
-        <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-          Ready-made videos
-        </h3>
-        {loadError ? (
-          <ErrorBanner
-            error="The video list could not load."
-            fix='Start the app server with "npm run server", then reload this page'
+          <Input
+            autoFocus
+            placeholder="What if money doubled every 3 seconds?"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="text-lg"
           />
-        ) : stories.length === 0 ? (
-          <div className="rounded-2xl bg-card px-6 py-8 text-center text-sm font-semibold text-muted-foreground shadow-lg">
-            None yet.
+          <div className="flex items-center gap-3">
+            <Button variant="amber" size="lg" className="flex-1" disabled={writing || input.trim().length < 6} onClick={write}>
+              <Wand2 className={cn("h-5 w-5", writing && "animate-pulse")} />
+              {writing ? "Writing the plan…" : "Write the plan"}
+            </Button>
+            <InfoTip helpId="story-engine" />
           </div>
-        ) : (
-          <div className="space-y-3">
-            {stories.map((s) => (
-              <button
-                key={s.slug}
-                onClick={() => onPickReady(s.slug)}
-                className="flex w-full items-center gap-4 rounded-2xl bg-card p-4 text-left shadow-lg shadow-black/20 transition-all hover:brightness-125"
-              >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/20 text-primary">
-                  <Clapperboard className="h-5 w-5" />
-                </span>
-                <span className="min-w-0 flex-1 truncate font-bold">{s.title}</span>
-                <Badge variant="muted">{Math.round(s.durationSec)}s</Badge>
-                <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ==================================================================== */
-/*  STEP 2 (ready path), sound design                                   */
-/* ==================================================================== */
-function Step2Ready({
-  storySlug,
-  stories,
-  onDone,
-  onBack,
-}: {
-  storySlug?: string;
-  stories: StoryInfo[];
-  onDone: () => void;
-  onBack: () => void;
-}) {
-  const story = stories.find((s) => s.slug === storySlug);
-  const [design, setDesign] = useState<SoundDesignResponse | null>(null);
-  useEffect(() => {
-    if (!story) return;
-    setDesign(null);
-    getSoundDesign(story.slug)
-      .then((d) => setDesign(d.available ? d : null))
-      .catch(() => setDesign(null));
-  }, [story?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
-  const choices = design?.selection ?? {};
-  const setChoice = (role: string, variant: string) => {
-    const next = { ...choices, [role]: variant };
-    setDesign((d) => (d ? { ...d, selection: next } : d));
-    saveSoundMap(design?.slug ?? story!.slug, next)
-      .then(() => toast.success("Sound picked!", { duration: 1400 }))
-      .catch((e) => toast.error("Could not save that sound", { description: String(e) }));
-  };
-
-  return (
-    <div className="space-y-4">
-      {story ? <h3 className="text-center text-lg font-extrabold">{story.title}</h3> : null}
-      {!story ? (
-        <ErrorBanner error="Pick a video first" fix="Go back to step 1" />
-      ) : !design ? (
-        <div className="rounded-3xl bg-card px-8 py-14 text-center shadow-xl">
-          <Music4 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-          <p className="text-[15px] font-semibold">Sounds are picked automatically for this video.</p>
+          <p className="text-xs font-medium text-muted-foreground">
+            The AI builds the whole plan from our real model and sound libraries. Every video is a fresh
+            composition. Nothing renders until you say yes.
+          </p>
         </div>
-      ) : (
-        design.roles.map((role) => (
-          <Card key={role.id} className="p-6">
-            <div className="mb-1 flex items-center gap-2.5">
-              {role.family === "ambient" ? (
-                <AudioLines className="h-5 w-5 text-primary" />
-              ) : (
-                <Music4 className="h-5 w-5 text-primary" />
-              )}
-              <span className="text-lg font-extrabold">{role.label}</span>
-            </div>
-            <p className="mb-4 text-sm font-medium text-muted-foreground">{role.description}</p>
-            <div className="flex flex-wrap gap-2.5">
-              <VariantChip
-                icon={<Star className="h-3.5 w-3.5" />}
-                active={(choices[role.id] ?? "auto") === "auto"}
-                label="Auto"
-                sub="the best sound"
-                onClick={() => setChoice(role.id, "auto")}
-              />
-              {role.variants.map((v) => (
-                <VariantChip
-                  key={v.id}
-                  url={v.url}
-                  active={choices[role.id] === v.id}
-                  label={
-                    v.id === "synth"
-                      ? "Crafted sound"
-                      : v.file.split("--")[1]?.replace(/\.wav$/, "").replace(/-/g, " ") ?? v.id
-                  }
-                  sub={`${v.dur}s · ${v.id === "synth" ? "studio-made" : "real recording"}`}
-                  onClick={() => setChoice(role.id, v.id)}
-                />
-              ))}
-            </div>
-          </Card>
-        ))
-      )}
-      <div className="flex justify-between">
-        <Button variant="secondary" size="lg" onClick={onBack}>
-          <ArrowLeft className="h-5 w-5" />Step 1
-        </Button>
-        <Button variant="amber" size="lg" disabled={!story} onClick={onDone}>
-          Next <ArrowRight className="h-5 w-5" />
-        </Button>
-      </div>
+      </Card>
     </div>
   );
 }
 
-function VariantChip({
-  active,
-  label,
-  sub,
-  onClick,
-  url,
-  icon,
-}: {
-  active: boolean;
-  label: string;
-  sub: string;
-  onClick: () => void;
-  url?: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-3 rounded-2xl px-4 py-3 text-left transition-all active:scale-[0.98]",
-        active
-          ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
-          : "bg-input hover:brightness-125",
-      )}
-    >
-      {icon ? (
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-black/20">{icon}</span>
-      ) : null}
-      {url ? <SoundPlayer url={url} title={`Play ${label}`} /> : null}
-      <span>
-        <span className="block text-sm font-extrabold leading-tight">{label}</span>
-        <span
-          className={cn(
-            "block text-[11px] font-semibold",
-            active ? "opacity-75" : "text-muted-foreground",
-          )}
-        >
-          {sub}
-        </span>
-      </span>
-    </button>
-  );
-}
-
 /* ==================================================================== */
-/*  STEP 2 (new path), story review                                     */
+/*  Job stage pills + labels                                            */
 /* ==================================================================== */
-const VOICE_MODES_UI = [
-  { key: "both", label: "Narrator + blob", icon: <Users className="h-4 w-4" /> },
-  { key: "narrator", label: "Narrator only", icon: <Mic className="h-4 w-4" /> },
-  { key: "character", label: "Blob only", icon: <Smile className="h-4 w-4" /> },
-  { key: "silent", label: "No voices", icon: <VolumeX className="h-4 w-4" /> },
-];
 
-const CAMERA_LABEL: Record<string, string> = {
-  static: "still",
-  "push-in": "zoom in",
-  "pull-back": "zoom out",
-  "pan-left": "pan left",
-  "pan-right": "pan right",
-  "truck-left": "slide left",
-  "truck-right": "slide right",
-  "tilt-up": "tilt up",
-  "tilt-down": "tilt down",
-  "crane-up": "fly up",
-  "crane-down": "fly down",
-  orbit: "orbit",
-  dutch: "tilted",
-  "crash-zoom": "CRASH zoom",
-  "whip-pan": "whip pan",
-  handheld: "handheld shake",
-  "rack-focus": "focus pull",
+const ENGINE_STAGES: Record<string, string[]> = {
+  plan: ["script", "done"],
+  template: ["script", "bundle", "render", "encode"],
+  story: ["music", "bundle", "render", "encode"],
+  storyboard: ["music", "bundle", "render", "encode"],
 };
-const SCENE_LABEL: Record<string, string> = {
-  "tech-void": "dark void",
-  room: "cozy room",
-  "city-night": "night city",
-  sky: "open sky",
+
+const STAGE_LABELS: Record<string, string> = {
+  script: "writing the plan",
+  music: "picking sounds",
+  voice: "voices",
+  bundle: "building the 3D world",
+  render: "filming every frame",
+  encode: "saving the video",
+  done: "done",
 };
-const AMBIENCE_LABEL: Record<string, string> = {
-  wind_city: "city wind",
-  ambient_tense: "tense air",
-  none: "quiet",
-};
+
 const SFX_LABEL: Record<string, string> = {
   whoosh_dissolve: "whoosh",
   rumble_deep: "rumble",
@@ -753,443 +319,299 @@ const SFX_LABEL: Record<string, string> = {
   rise_short: "riser",
 };
 
-function StoryReview({
+/** Poll the plan job, then show the written plan for approval. */
+function SpecReview({
   planJobId,
-  draftSlug,
-  status,
-  job,
-  logs,
   setError,
   onBack,
   onApproved,
 }: {
   planJobId?: string;
-  draftSlug?: string;
-  status: string;
-  job: Job | null;
-  logs: string[];
   setError: (s: string | null) => void;
   onBack: () => void;
   onApproved: (jobId: string) => void;
 }) {
-  const [sb, setSb] = useState<Storyboard | null>(null);
-  const [slug, setSlug] = useState<string | null>(draftSlug ?? null);
-  const [loadFailed, setLoadFailed] = useState<string | null>(null);
-  const [rewriteOpen, setRewriteOpen] = useState(false);
-  const [feedback, setFeedback] = useState("");
-  const [rewriting, setRewriting] = useState(false);
+  const [spec, setSpec] = useState<ShotSpec | null>(null);
+  const [specId, setSpecId] = useState<string | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planStage, setPlanStage] = useState<string>("script");
+  const [planProgress, setPlanProgress] = useState(0);
   const [approving, setApproving] = useState(false);
-  const [approveError, setApproveError] = useState<string | null>(null);
-  const [fetched, setFetched] = useState(false);
-  const [voices, setVoices] = useState<VoiceInfo[]>([]);
 
-  /* Voice catalog + lazy sample warming. */
   useEffect(() => {
+    if (!planJobId) return;
     let alive = true;
-    const load = () =>
-      getVoices()
-        .then((d) => alive && setVoices(d.voices))
-        .catch(() => {});
-    load();
-    // While samples are still being recorded in the background, refresh.
-    const iv = window.setInterval(() => {
-      getVoices()
-        .then((d) => {
-          if (!alive) return;
-          if (d.voices.every((v) => v.sample)) window.clearInterval(iv);
-          else setVoices(d.voices);
-        })
-        .catch(() => {});
-    }, 20000);
+    const tick = async () => {
+      try {
+        const r = await getJobSpec(planJobId);
+        if (!alive) return;
+        if (r.ready && r.spec) {
+          setSpec(r.spec);
+          setSpecId(r.specId ?? null);
+          return; // done polling
+        }
+        if (r.error) {
+          setPlanError(r.error);
+          return;
+        }
+        setPlanStage(r.stage ?? "script");
+        setPlanProgress(r.progress ?? 0);
+        setTimeout(tick, 2500);
+      } catch (e) {
+        if (alive) setPlanError(String(e));
+      }
+    };
+    void tick();
     return () => {
       alive = false;
-      window.clearInterval(iv);
     };
-  }, []);
-
-  /* Job just finished (fresh plan) → adopt its storyboard. */
-  useEffect(() => {
-    if (status === "done" && job?.slug) {
-      setSlug(job.slug);
-      const maybe = job.storyboard as Storyboard | undefined;
-      if (maybe?.beats) setSb(maybe);
-      else {
-        setFetched(true);
-        getStory(job.slug)
-          .then((d) => setSb(d.storyboard as Storyboard))
-          .catch(() => setLoadFailed("The story got lost, please write it again."));
-      }
-    }
-    if (status === "failed" && job?.error) {
-      setError(job.error);
-    }
-  }, [status, job?.slug, job?.storyboard, job?.error, setError]);
-
-  /* Deep-link to a draft with no plan job → fetch directly (once). */
-  useEffect(() => {
-    if (planJobId || fetched || !draftSlug) return;
-    setFetched(true);
-    getStory(draftSlug)
-      .then((d) => {
-        setSlug(draftSlug);
-        setSb(d.storyboard as Storyboard);
-      })
-      .catch(() => setLoadFailed("That story doesn't exist anymore."));
-  }, [planJobId, draftSlug, fetched]);
-
-  const rewrite = async () => {
-    if (!sb || !slug || !feedback.trim()) return;
-    setRewriting(true);
-    try {
-      const mode = (sb.topic && sb.topic.length > 0 ? "topic" : "story") as "topic" | "story";
-      const { jobId } = await planStory({
-        mode,
-        input: sb.topic || sb.sourceStory || sb.title,
-        seconds: sb.targetSeconds,
-        feedback: feedback.trim(),
-        slug,
-        previous: sb,
-      });
-      // New plan job, swap the plan id in the URL; the writer panel shows.
-      setSb(null);
-      setQuery({ plan: jobId, draft: undefined });
-      toast.success("Rewriting your story…");
-    } catch (e) {
-      toast.error("Rewrite failed", { description: String(e) });
-    } finally {
-      setRewriting(false);
-      setRewriteOpen(false);
-      setFeedback("");
-    }
-  };
+  }, [planJobId]);
 
   const approve = async () => {
-    if (!slug) return;
+    if (!specId) return;
     setApproving(true);
-    setApproveError(null);
+    setError(null);
     try {
-      const { jobId } = await approveStory(slug);
-      toast.success("Approved! Making the video…");
+      const { jobId } = await renderSpec(specId);
       onApproved(jobId);
     } catch (e) {
-      setApproveError(String(e));
-      toast.error("Could not start the render");
-    } finally {
+      setError(String(e));
       setApproving(false);
     }
   };
 
-  const flipVoice = async (patch: { mode?: string; narratorVoice?: string; characterVoice?: string }) => {
-    if (!slug || !sb) return;
-    try {
-      await setStoryVoiceMode(slug, patch);
-      setSb({ ...sb, voice: { ...sb.voice, ...patch } as Storyboard["voice"] });
-      if (patch.mode) toast.success(`Voice changed: ${patch.mode}`, { duration: 1500 });
-      if (patch.narratorVoice) toast.success(`Narrator: ${patch.narratorVoice}`, { duration: 1500 });
-      if (patch.characterVoice) toast.success(`The blob now speaks as ${patch.characterVoice}`, { duration: 1500 });
-    } catch (e) {
-      toast.error("Could not change the voice", { description: String(e) });
-    }
-  };
-
-  const audition = (v: VoiceInfo) => {
-    if (v.sample) return; // SoundPlayer handles cached samples
-    void requestVoiceSample(v.id).then((r) =>
-      toast.info(r.url ? `${v.id} is ready, press play again` : `${v.id}: ${r.note ?? "recording…"}`, { duration: 3000 }),
-    );
-  };
-
-  const stillWriting = !sb || (planJobId != null && status !== "done");
-
-  if (stillWriting || loadFailed) {
+  if (!planJobId) {
     return (
       <div className="space-y-4">
-        <Card className="p-10 text-center">
-          <RefreshCw
-            className={cn(
-              "mx-auto mb-4 h-12 w-12 text-primary",
-              status === "running" && "animate-spin",
-            )}
-          />
-          <h3 className="text-xl font-extrabold">
-            {loadFailed ? "Uh oh" : status === "failed" ? "The writer hit a problem" : "Writing your story…"}
-          </h3>
-          <p className="mx-auto mt-2 max-w-sm text-sm font-medium text-muted-foreground">
-            {loadFailed
-              ? loadFailed
-              : status === "failed"
-                ? "One retry usually fixes it, see the note below."
-                : "Making your story, usually a minute or two."}
-          </p>
-          {status === "running" && !loadFailed ? (
-            <div className="mx-auto mt-5 h-4 w-56 overflow-hidden rounded-full bg-input">
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
-            </div>
-          ) : null}
-        </Card>
-        {status === "failed" ? (
-          <ErrorBanner
-            error={job?.error ?? "Writing failed"}
-            fix="Go back and press “Write the story” again"
-          />
-        ) : null}
-        <LogConsole logs={logs} />
-        <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>
-          <ArrowLeft className="h-5 w-5" />Back
+        <ErrorBanner error="No plan is running yet." fix='Write your idea in Step 1 first' />
+        <Button variant="secondary" onClick={onBack}>Back</Button>
+      </div>
+    );
+  }
+
+  if (planError) {
+    return (
+      <div className="space-y-4">
+        <ErrorBanner
+          error={planError}
+          fix="Check the provider settings or try another idea, then write the plan again"
+        />
+        <Button variant="secondary" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" /> Write it again
         </Button>
       </div>
     );
   }
 
-  /* Review */
+  if (!spec) {
+    return (
+      <Card className="p-8 text-center">
+        <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        <div className="font-extrabold">The AI is writing your plan…</div>
+        <div className="mt-1 text-sm text-muted-foreground">
+          {planStage} {planProgress > 0 ? Math.round(planProgress) + "%" : ""}
+        </div>
+      </Card>
+    );
+  }
+
+  const beats = spec.statPanel?.beats ?? [];
+  const sounds = Array.from(
+    new Set([
+      ...(spec.events ?? []).flatMap((e) => (e.sfx ?? []).map((s) => s.tag)),
+      ...(spec.audio?.ambient ?? []).map((a) => a.tag),
+    ]),
+  );
+  const heroLabels: Record<string, string> = {
+    "coin-stacks": "coin stacks",
+    "cash-bundles": "cash bundles",
+    "gold-bars": "gold bars",
+    "water-puddles": "water puddles",
+    "ice-crystals": "ice crystals",
+    "orb-pedestal": "glowing orb",
+    "bill-columns": "columns of bills",
+    none: "no prop (the camera tells it)",
+  };
+  const kitLabels: Record<string, string> = {
+    "street-block": "Dense city block",
+    "city-street": "Downtown street",
+    park: "City park",
+    boardwalk: "Beach boardwalk",
+    pier: "Ocean pier",
+    interior: "Indoor room",
+    space: "Outer space",
+    ocean: "Open ocean",
+    countryside: "Rolling countryside",
+    forest: "Deep forest",
+    river: "Winding river",
+  };
+  const eventLabels: Record<string, string> = {
+    "water-vanish": "the water drains away",
+    "water-return": "the water comes back",
+    "water-rise": "the water rises",
+    "rain-start": "rain begins",
+    "rain-stop": "the rain stops",
+    "lights-out": "the lights go out",
+  };
+  const todLabels: Record<string, string> = {
+    noon: "bright noon",
+    afternoon: "calm afternoon",
+    golden: "golden hour",
+    overcast: "overcast skies",
+    dawn: "early dawn",
+    night: "at night",
+  };
+  const weatherLabels: Record<string, string> = {
+    rain: "rain",
+    snow: "snow",
+    storm: "storm",
+  };
+  const cameraLabels: Record<string, string> = {
+    "walk-through": "walking camera",
+    "orbit-drift": "slow orbiting camera",
+    "steady-push": "steady push-in camera",
+    "crane-reveal": "crane rising camera",
+    "follow-chase": "chase follow camera",
+    "handheld-urgency": "urgent handheld camera",
+    "drone-top": "drone top-down camera",
+  };
+  const subjectLabels: Record<string, string> = {
+    earth: "Earth",
+    moon: "the Moon",
+    mars: "Mars",
+  };
+  const spaceScene = spec.scenes.find((s) => s.kit === "space");
+
   return (
     <div className="space-y-4">
       <Card className="p-6">
-        <div className="text-center">
-          <p className="text-xs font-extrabold uppercase tracking-widest text-muted-foreground">
-            Your story
-          </p>
-          <h2 className="mt-1 text-2xl font-extrabold leading-tight">{sb.title}</h2>
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-            <Badge variant="muted">{sb.targetSeconds}s</Badge>
-            <Badge variant="violet">{sb.beats.length} scenes</Badge>
-            <Badge variant="muted">music: {sb.music.mood}</Badge>
+        <div className="space-y-4">
+          <div>
+            <div className="text-sm font-extrabold uppercase tracking-wider text-primary">The plan</div>
+            <div className="mt-1 text-xl font-black leading-snug">{spec.hook.text}</div>
           </div>
-        </div>
-      </Card>
 
-      {sb.beats.map((beat, i) => (
-        <Card key={i} className="p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary text-sm font-extrabold text-primary-foreground">
-              {i + 1}
-            </span>
-            <span className="flex flex-wrap gap-2">
-              <Badge variant="secondary" className="gap-1">
-                <Camera className="h-3 w-3" />
-                {CAMERA_LABEL[beat.shot.move] ?? beat.shot.move}
-              </Badge>
-              <Badge variant="muted">{beat.seconds.toFixed(1)}s</Badge>
-              <Badge variant="muted">{SCENE_LABEL[beat.scene] ?? beat.scene}</Badge>
-            </span>
-          </div>
-          {beat.see ? (
-            <p className="mb-2 flex items-start gap-2 text-sm font-semibold text-muted-foreground">
-              <Eye className="mt-0.5 h-4 w-4 shrink-0" /> {beat.see}
-            </p>
-          ) : null}
-          {beat.text ? <p className="mb-2 text-lg font-extrabold tracking-tight">“{beat.text.lines.join(" / ")}”</p> : null}
-          {beat.narration || beat.dialogue ? (
-            <p className="mb-2 flex items-start gap-2 text-[15px] font-semibold">
-              <Megaphone className="mt-1 h-4 w-4 shrink-0 text-primary" />
-              <span>
-                {beat.dialogue && !beat.narration ? (
-                  <>
-                    The blob says: <em>“{beat.dialogue}”</em>
-                  </>
-                ) : (
-                  beat.narration
-                )}
-              </span>
-            </p>
-          ) : null}
-          {beat.sfx.length > 0 || sb.ambience !== "none" ? (
-            <p className="flex items-start gap-2 text-xs font-bold text-muted-foreground">
-              <AudioLines className="mt-0.5 h-4 w-4 shrink-0" />
-              sounds:{" "}
-              {[
-                ...(beat.sfx ?? []).map((s) => SFX_LABEL[s.role] ?? s.role),
-                sb.ambience !== "none" ? AMBIENCE_LABEL[sb.ambience] : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          ) : null}
-        </Card>
-      ))}
-
-      {/* Voice choice, mode + casting */}
-      <Card className="p-5">
-        <p className="mb-3 flex items-center gap-2 text-sm font-extrabold">
-          <Megaphone className="h-4 w-4 text-primary" /> Who tells the story?
-        </p>
-        <div className="mb-4 flex flex-wrap gap-2.5">
-          {VOICE_MODES_UI.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => flipVoice({ mode: m.key })}
-              className={cn(
-                "h-11 rounded-2xl px-4 text-sm font-extrabold transition-all active:scale-95",
-                (sb.voice?.mode ?? "narrator") === m.key
-                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
-                  : "bg-input text-muted-foreground hover:brightness-125",
-              )}
-            >
-              {m.icon}
-              {m.label}
-            </button>
-          ))}
-        </div>
-        {(sb.voice?.mode ?? "narrator") !== "silent" && voices.length > 0 ? (
-          <div className="space-y-4">
-            {(sb.voice?.mode ?? "narrator") !== "character" ? (
-              <VoiceCastRow
-                icon={<Mic className="h-3.5 w-3.5" />}
-                title="The narrator's voice"
-                current={sb.voice?.narratorVoice ?? "Bruno"}
-                voices={voices}
-                onPick={(id) => flipVoice({ narratorVoice: id })}
-                onAudition={audition}
-              />
-            ) : null}
-            {(sb.voice?.mode ?? "narrator") !== "narrator" ? (
-              <VoiceCastRow
-                icon={<Smile className="h-3.5 w-3.5" />}
-                title="The blob's voice"
-                current={sb.voice?.characterVoice ?? "Rosie"}
-                voices={voices}
-                onPick={(id) => flipVoice({ characterVoice: id })}
-                onAudition={audition}
-              />
-            ) : null}
-          </div>
-        ) : null}
-      </Card>
-
-      {approveError ? (
-        <ErrorBanner error={approveError} fix="Wait for the current render to finish, then approve again" />
-      ) : null}
-
-      <Card className="p-5">
-        {rewriteOpen ? (
-          <div className="space-y-3">
-            <Textarea
-              autoFocus
-              placeholder="What should change? e.g. “make the ending funnier” or “the moon should win this time”"
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              className="min-h-24"
-            />
-            <div className="flex gap-3">
-              <Button size="lg" className="flex-1" disabled={rewriting || !feedback.trim()} onClick={rewrite}>
-                <Wand2 className="h-5 w-5" /> {rewriting ? "Rewriting…" : "Rewrite the story"}
-              </Button>
-              <Button variant="secondary" size="lg" onClick={() => setRewriteOpen(false)}>
-                Cancel
-              </Button>
+          <div className="rounded-2xl bg-input/40 p-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">The world</div>
+              <div className="text-xs font-bold text-muted-foreground">
+                {Math.round(spec.scenes.reduce((a, s) => Math.max(a, s.to), 0))}s total
+              </div>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {spec.scenes.map((s, i) => (
+                <div key={i} className="flex items-center gap-3 text-sm">
+                  <Badge variant="muted">Scene {i + 1}</Badge>
+                  <div className="min-w-0">
+                    <div className="truncate font-extrabold">
+                      {kitLabels[s.kit ?? "street-block"] ?? s.kit}
+                      {s.look?.timeOfDay ? " " + (todLabels[s.look.timeOfDay] ?? s.look.timeOfDay) : ""}
+                      {s.look?.weather && s.look.weather !== "none" && s.look.weather !== "clear"
+                        ? " · " + (weatherLabels[s.look.weather] ?? s.look.weather)
+                        : ""}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {s.kit === "space" && s.subject
+                        ? subjectLabels[s.subject] + " fills the frame"
+                        : s.street?.cameraStyle
+                          ? cameraLabels[s.street.cameraStyle] ?? s.street.cameraStyle
+                          : "the camera keeps moving"}{" "}
+                      · {Math.round(s.from)}-{Math.round(s.to)}s
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ) : (
-          <div className="flex flex-wrap gap-3">
-            <Button variant="success" size="lg" className="flex-1" disabled={approving} onClick={approve}>
-              <ThumbsUp className="h-5 w-5" /> {approving ? "Starting…" : "Approve, make the video!"}
-            </Button>
-            <Button variant="secondary" size="lg" onClick={() => setRewriteOpen(true)}>
-              <Wand2 className="h-5 w-5" /> Rewrite…
-            </Button>
+          <div className="rounded-2xl bg-input/40 p-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Showing the subject</div>
+            <div className="mt-1 font-extrabold">
+              {spaceScene?.subject
+                ? subjectLabels[spaceScene.subject]
+                : heroLabels[spec.heroProp?.style ?? "none"]}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {spaceScene?.subject
+                ? "the planet grows with every stat beat"
+                : spec.heroProp?.growth === "vanish"
+                  ? "shrinks as the story goes"
+                  : "grows as the story goes"}
+            </div>
           </div>
-        )}
-        <p className="mt-3 text-center text-xs font-semibold text-muted-foreground">
-          Every detail above is exactly what gets rendered, nothing surprises you.
-        </p>
+
+          {(spec.worldEvents ?? []).length > 0 ? (
+            <div className="rounded-2xl bg-input/40 p-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">The world reacts</div>
+              <div className="mt-2 space-y-1.5">
+                {(spec.worldEvents ?? []).map((e, i) => (
+                  <div key={i} className="flex items-center gap-3 text-sm">
+                    <Badge variant="muted">{e.t}s</Badge>
+                    <span className="min-w-0 flex-1 truncate font-semibold">
+                      {eventLabels[e.name] ?? e.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {beats.length > 0 ? (
+            <div className="rounded-2xl bg-input/40 p-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                {spec.statPanel?.title}: the beats
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {beats.map((b, i) => (
+                  <div key={i} className="flex items-center gap-3 text-sm">
+                    <Badge variant="muted">{b.t}s</Badge>
+                    <span className="w-12 shrink-0 text-right font-black">{b.value}{spec.statPanel?.unit ?? "x"}</span>
+                    <span className="min-w-0 flex-1 truncate font-semibold">{b.sub}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {spec.captions.length > 0 ? (
+            <div className="rounded-2xl bg-input/40 p-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">On-screen text</div>
+              <div className="mt-2 space-y-1 text-sm">
+                {spec.captions.map((c, i) => (
+                  <div key={i} className="truncate opacity-90">
+                    <span className="mr-2 text-xs text-muted-foreground">{c.from}s</span>
+                    {c.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="rounded-2xl bg-input/40 p-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Sounds</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {sounds.map((s) => (
+                <Badge key={s} variant="muted">{SFX_LABEL[s] ?? s}</Badge>
+              ))}
+            </div>
+          </div>
+        </div>
       </Card>
 
-      <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>
-        <ArrowLeft className="h-5 w-5" />Start a new story
-      </Button>
-    </div>
-  );
-}
-
-/* ==================================================================== */
-/*  Voice casting row, audition + pick per role                        */
-/* ==================================================================== */
-const PACE_LABEL: Record<VoiceInfo["pace"], string> = {
-  fast: "fast talker",
-  steady: "steady",
-  slow: "slow & deep",
-};
-
-function VoiceCastRow({
-  icon,
-  title,
-  current,
-  voices,
-  onPick,
-  onAudition,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  current: string;
-  voices: VoiceInfo[];
-  onPick: (id: string) => void;
-  onAudition: (v: VoiceInfo) => void;
-}) {
-  return (
-    <div>
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-        {icon} {title}
-      </p>
-      <div className="flex flex-wrap gap-2.5">
-        {voices.map((v) => (
-          <div
-            key={v.id}
-            onClick={(e) => {
-              if ((e.target as HTMLElement).closest("button")) return;
-              onPick(v.id);
-            }}
-            className={cn(
-              "flex cursor-pointer items-center gap-2 rounded-2xl px-3 py-2 transition-all",
-              current === v.id
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
-                : "bg-input hover:brightness-125",
-            )}
-          >
-            {v.sample ? (
-              <SoundPlayer url={v.sample} title={`Hear ${v.id}`} className="!h-7 !w-7" />
-            ) : (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAudition(v);
-                }}
-                title="Record a sample of this voice (takes half a minute once)"
-                className="grid h-7 w-7 place-items-center rounded-full bg-secondary"
-              >
-                <Play className="h-3.5 w-3.5" />
-              </button>
-            )}
-            <span>
-              <span className="block text-sm font-extrabold leading-tight">{v.id}</span>
-              <span className={cn("block text-[10px] font-semibold", current === v.id ? "opacity-70" : "text-muted-foreground")}>
-                {PACE_LABEL[v.pace]}
-              </span>
-            </span>
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="secondary" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" /> Not quite, write again
+        </Button>
+        <Button variant="amber" size="lg" className="flex-1" disabled={approving} onClick={approve}>
+          <Check className={cn("h-5 w-5", approving && "animate-pulse")} />
+          {approving ? "Making the video…" : "Looks good, make the video"}
+        </Button>
       </div>
+      <p className="text-xs font-medium text-muted-foreground">
+        Nothing has rendered yet. Only when you press the amber button do we make the video.
+      </p>
     </div>
   );
 }
-
-/* ==================================================================== */
-/*  STEP 3, render / result                                             */
-/* ==================================================================== */
-const ENGINE_STAGES: Record<string, string[]> = {
-  storyboard: ["voice", "music", "bundle", "render", "encode"],
-  story: ["music", "bundle", "render", "encode"],
-  template: ["script", "bundle", "render", "encode"],
-};
-const STAGE_LABELS: Record<string, string> = {
-  voice: "Recording voices",
-  music: "Making music",
-  script: "Preparing",
-  bundle: "Preparing",
-  render: "Drawing frames",
-  encode: "Saving the video",
-  done: "Done",
-  failed: "Failed",
-};
 
 function Step3OrJob({
   running,
@@ -1199,9 +621,6 @@ function Step3OrJob({
   progress,
   etaSec,
   stage,
-  readySlug,
-  readyTitle,
-  onMakeReady,
   onAgain,
 }: {
   running: boolean;
@@ -1211,9 +630,6 @@ function Step3OrJob({
   progress: number;
   etaSec: number | null;
   stage: string;
-  readySlug?: string;
-  readyTitle?: string;
-  onMakeReady: (slug: string) => void;
   onAgain: () => void;
 }) {
   if (status === "done" && job?.output?.mp4) {
@@ -1248,30 +664,6 @@ function Step3OrJob({
     return <JobPanel job={job} status={status} logs={logs} progress={progress} etaSec={etaSec} stage={stage} />;
   }
 
-  if (readySlug && !running) {
-    return (
-      <div className="space-y-4">
-        <Card className="p-8 text-center">
-          <div className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-3xl bg-accent text-accent-foreground shadow-xl shadow-accent/25">
-            <Sparkles className="h-10 w-10" />
-          </div>
-          <h3 className="text-2xl font-extrabold">Everything is set!</h3>
-          <p className="mx-auto mt-2 max-w-sm text-[15px] font-medium text-muted-foreground">
-            {readyTitle ?? "This video"} is ready to be made, one more button.
-          </p>
-          <div className="mt-6">
-            <Button variant="amber" size="xl" className="w-full" onClick={() => onMakeReady(readySlug)}>
-              <Zap className="h-6 w-6" /> Make the video!
-            </Button>
-          </div>
-        </Card>
-        <Button variant="secondary" size="lg" onClick={() => setQuery({ step: "2", path: "ready", story: readySlug })}>
-          <ArrowLeft className="h-5 w-5" /> Change the sounds
-        </Button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <Card className="p-8 text-center">
@@ -1280,7 +672,7 @@ function Step3OrJob({
         </div>
         <h3 className="text-2xl font-extrabold">Pick a story to make</h3>
         <p className="mx-auto mt-2 max-w-sm text-[15px] font-medium text-muted-foreground">
-          Start a new story on step 1, or pick a ready-made video there.
+          Start a new story on step 1.
         </p>
       </Card>
       <Button variant="secondary" size="lg" className="w-full" onClick={() => setQuery({ step: "1" })}>

@@ -23,6 +23,16 @@ function sfxPath(tag: string): string {
   return staticFile(`sfx/${tag}.wav`);
 }
 
+/** Master warm-up: mutes the very first frame (33ms) of every audio mount.
+ *  The renderer's 44.1k→48k resampler emits a short impulse train at the
+ *  stream start (first ~26 samples); muting frame 0 removes it audibly. */
+function warmUp(volume: number | ((f: number) => number)): (f: number) => number {
+  return (f: number) => {
+    if (f < 1) return 0;
+    return typeof volume === "function" ? volume(f) : volume;
+  };
+}
+
 export const CompositionAudio: React.FC<CompositionAudioProps> = ({
   spec,
   fps,
@@ -47,7 +57,7 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({
             >
               <Audio
                 src={sfxPath(cue.tag)}
-                volume={(f: number) => {
+                volume={warmUp((f: number) => {
                   if (!seqDuration) return cue.volume === "ramp-down" ? 1 : 1;
                   if (cue.volume === "ramp-up") {
                     return interpolate(f, [0, seqDuration], [0.05, 1]);
@@ -56,18 +66,28 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({
                     return interpolate(f, [0, seqDuration], [1, 0.02]);
                   }
                   return 1;
-                }}
+                })}
               />
             </Sequence>
           );
         }),
       )}
 
-      {/* Ambient beds — these SLICE the source (trim semantics intended). */}
+      {/* Ambient beds — restart=true REPLAYS the file from its start at the
+          bed's from-time (Sequence delay semantics); the default SLICES the
+          source (trim semantics intended). */}
       {ambient.map((bed, i) => {
         const fromFrame = secToFrame(bed.from, fps);
         const toFrame = bed.to ? secToFrame(bed.to, fps) : undefined;
-        const vol = bed.vol ?? 0.3;
+        const vol = warmUp(bed.vol ?? 0.3);
+        if (bed.restart) {
+          const dur = toFrame ? Math.max(2, toFrame - fromFrame) : undefined;
+          return (
+            <Sequence key={`ambient-${i}`} from={fromFrame} durationInFrames={dur}>
+              <Audio src={sfxPath(bed.tag)} volume={vol} />
+            </Sequence>
+          );
+        }
         return (
           <Audio
             key={`ambient-${i}`}

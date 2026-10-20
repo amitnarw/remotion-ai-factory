@@ -19,7 +19,6 @@ import { validateSpec, type ShotSpec } from "../src/generator/spec.schema";
 import { secToFrame } from "../src/generator/timing";
 
 const OUTPUT_DIR = join(process.cwd(), "output");
-const ENTRY = join(process.cwd(), "src", "index.ts");
 const COMP_ID = "WhatIfVideo";
 const FFMPEG = join(
   process.cwd(),
@@ -61,11 +60,11 @@ function findSpec(idOrPremise: string): { id: string; spec: ShotSpec } | null {
   return null;
 }
 
-function renderStill(frame: number, spec: ShotSpec, out: string): void {
+function renderStill(frame: number, spec: ShotSpec, out: string, sourceDir: string): void {
   const inputProps = JSON.stringify({ spec });
   const cmdArgs = [
     "still",
-    ENTRY,
+    sourceDir,
     COMP_ID,
     "--frame",
     String(frame),
@@ -124,12 +123,22 @@ function main() {
   const reviewDir = join(OUTPUT_DIR, `${id}-review`);
   mkdirSync(reviewDir, { recursive: true });
 
+  // Fresh explicit bundle first: the CLI's auto-bundle intermittently serves
+  // a stale cache on this machine, so stills must not come from src/ directly.
+  const bundleSrc = join(process.cwd(), "src", "index.ts");
+  const stillSource = join(process.cwd(), "out", "render-bundle");
+  execFileSync(
+    "cmd",
+    ["/c", join(process.cwd(), "node_modules", ".bin", "remotion.cmd"), "bundle", bundleSrc, "--out-dir", stillSource],
+    { stdio: "pipe", env: { ...process.env, FFMPEG_PATH: FFMPEG } },
+  );
+
   console.log(`Reviewing "${spec.title}" (${id})`);
   console.log(`Extracting ${frames.length} still frames to ${reviewDir}\n`);
 
   for (const frame of frames) {
     const out = join(reviewDir, `frame-${String(frame).padStart(4, "0")}.png`);
-    renderStill(frame, spec, out);
+    renderStill(frame, spec, out, stillSource);
     const sec = (frame / fps).toFixed(2);
     console.log(`  frame ${frame} (${sec}s) -> frame-${String(frame).padStart(4, "0")}.png`);
   }
