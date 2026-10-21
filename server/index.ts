@@ -8,6 +8,7 @@ import { fetchProviderModels } from "./fetch-models";
 import { createJob, getJob, getAllJobs, premiseSlug, runJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
+import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES } from "../src/generator/voices";
 
 const app = express();
 app.use(cors());
@@ -191,7 +192,7 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
 
 // ---------- Plan Studio: spec engine (AI writes the plan, you approve) ----------
 app.post("/api/plan", async (req, res) => {
-  const body = req.body as { input?: string; premise?: string; provider?: string; model?: string };
+  const body = req.body as { input?: string; premise?: string; provider?: string; model?: string; audio?: unknown };
   const premise = (body.input ?? body.premise ?? "").trim();
   if (premise.length < 6) {
     return res.status(400).json({
@@ -266,6 +267,7 @@ app.post("/api/plan", async (req, res) => {
   }
   const job = createJob(premise, provName, model);
   job.engine = "plan";
+  if (body.audio) (job as any).audio = body.audio;
   runJob(job, { noRender: true });
   res.json({ jobId: job.id });
 });
@@ -301,7 +303,7 @@ app.get("/api/spec/:jobId", (req, res) => {
 
 /** Render an approved plan's spec (never renders without this call). */
 app.post("/api/render-spec", (req, res) => {
-  const { specId } = req.body as { specId?: string };
+  const { specId, audio } = req.body as { specId?: string; audio?: unknown };
   if (!specId || !/^[a-z0-9-]+$/.test(specId)) {
     return res.status(400).json({ error: "specId required", fix: "Approve from the review screen" });
   }
@@ -331,6 +333,7 @@ app.post("/api/render-spec", (req, res) => {
   }
   const job = createJob(title);
   job.specId = specId;
+  if (audio) (job as any).audio = audio;
   runJob(job, { extraArgs: ["--from-spec", specPathRel.replace(/\\/g, "/")] });
   res.json({ jobId: job.id });
 });
@@ -471,6 +474,35 @@ app.get("/api/videos", (_req, res) => {
   });
   videos.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
   res.json(videos);
+});
+
+// ---------- TTS voices / engines ----------
+app.get("/api/voices", (req, res) => {
+  const engine = (req.query.engine as string) || "kitten2";
+  const kittenPython = process.env.TTS_KITTEN_PYTHON || "C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe";
+  const voxcpmPython = process.env.TTS_VOXCPM_PYTHON || "";
+  const kittenAvailable = fs.existsSync(kittenPython);
+  const voxcpmAvailable = voxcpmPython !== "" && fs.existsSync(voxcpmPython);
+  if (engine === "voxcpm2") {
+    return res.json({
+      engine,
+      available: voxcpmAvailable,
+      voices: VOXCPM_VOICE_DESCRIPTIONS.map((v) => ({ id: v.id, pace: "steady" as const, sample: null })),
+      descriptions: VOXCPM_VOICE_DESCRIPTIONS,
+      defaultNarrator: VOXCPM_VOICE_DESCRIPTIONS[0].id,
+      defaultCharacter: VOXCPM_VOICE_DESCRIPTIONS[2].id,
+      venvPath: voxcpmPython || null,
+    });
+  }
+  res.json({
+    engine: "kitten2",
+    available: kittenAvailable,
+    voices: KNOWN_VOICES,
+    defaultNarrator: "Bruno",
+    defaultCharacter: "Rosie",
+    venvPath: kittenPython,
+    engines: TTS_ENGINES,
+  });
 });
 
 // ---------- Delete a video (all artifacts for one premise id) ----------

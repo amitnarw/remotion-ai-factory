@@ -54,6 +54,7 @@ export async function planSpec(body: {
   premise: string;
   provider?: string;
   model?: string;
+  audio?: unknown;
 }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/plan`, {
@@ -80,12 +81,12 @@ export async function getJobSpec(jobId: string): Promise<SpecResponse> {
 }
 
 /** Render an approved plan. This is the only way a spec becomes a video. */
-export async function renderSpec(specId: string): Promise<{ jobId: string }> {
+export async function renderSpec(specId: string, audio?: unknown): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/render-spec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specId }),
+      body: JSON.stringify({ specId, audio }),
     }),
   );
 }
@@ -97,8 +98,9 @@ export interface VoiceInfo {
   sample: string | null;
 }
 
-export async function getVoices(): Promise<{ voices: VoiceInfo[] }> {
-  return json(await fetch(`${BASE}/voices`));
+export async function getVoices(engine?: string): Promise<{ voices: VoiceInfo[]; available?: boolean; engines?: { id: string; label: string; note: string }[] }> {
+  const q = engine ? `?engine=${encodeURIComponent(engine)}` : "";
+  return json(await fetch(`${BASE}/voices${q}`));
 }
 
 export interface Video {

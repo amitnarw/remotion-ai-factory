@@ -29,6 +29,8 @@ export interface Job {
   /** Set by plan jobs (once the storyboard exists) + storyboard jobs. */
   slug?: string;
   storyboard?: unknown;
+  /** Audio/TTS selection from the UI (narration/dialogs engine + voices). */
+  audio?: unknown;
   /** Spec-engine jobs: the <id> of output/<id>-spec.json once written. */
   specId?: string;
   error?: string;

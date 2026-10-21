@@ -233,6 +233,24 @@ export const ShotSpecSchema = z.object({
         )
         .optional(),
       music: z.any().optional(),
+      /** Optional TTS narration track. */
+      narration: z
+        .object({
+          enabled: z.boolean().default(true),
+          engine: z.enum(["kitten2", "voxcpm2"]).default("voxcpm2"),
+          voice: z.string().optional(),
+          voiceDesc: z.string().optional(),
+        })
+        .optional(),
+      /** Optional per-character dialog tracks. */
+      dialogs: z
+        .object({
+          enabled: z.boolean().default(false),
+          engine: z.enum(["kitten2", "voxcpm2"]).default("kitten2"),
+          /** map character name -> voice id / description */
+          voices: z.record(z.string(), z.string()).optional(),
+        })
+        .optional(),
     })
     .optional(),
 });

@@ -23,6 +23,7 @@ import {
   planSpec,
   getJobSpec,
   renderSpec,
+  getVoices,
   Job,
 } from "../api";
 import type { ShotSpec } from "../../../src/generator/spec.schema";
@@ -31,6 +32,7 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { ErrorBanner } from "../components/shared";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { InfoTip } from "../components/InfoTip";
 import { useQuery, setQuery } from "../lib/navigation";
 import { cn } from "../lib/utils";
@@ -229,6 +231,114 @@ export default function Generate() {
 /*  STEP 1, idea entry                                                  */
 /* ==================================================================== */
 
+const VOICE_LS_KEY = "vf:voiceConfig";
+
+interface VoiceConfig {
+  mode: "none" | "narration" | "dialogs" | "both";
+  narrationEngine: "kitten2" | "voxcpm2";
+  narrationVoice: string;
+  narrationVoiceDesc: string;
+  dialogsEngine: "kitten2" | "voxcpm2";
+}
+
+function defaultVoiceConfig(): VoiceConfig {
+  return {
+    mode: "none",
+    narrationEngine: "voxcpm2",
+    narrationVoice: "narrator-calm",
+    narrationVoiceDesc: "Calm male narrator, mid-30s, steady pace, documentary tone",
+    dialogsEngine: "kitten2",
+  };
+}
+
+function loadVoiceConfig(): VoiceConfig {
+  try {
+    const raw = localStorage.getItem(VOICE_LS_KEY);
+    if (raw) return { ...defaultVoiceConfig(), ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return defaultVoiceConfig();
+}
+
+function voiceConfigToAudio(cfg: VoiceConfig): unknown {
+  if (cfg.mode === "none") return { narration: { enabled: false }, dialogs: { enabled: false } };
+  const narrationOn = cfg.mode === "narration" || cfg.mode === "both";
+  const dialogsOn = cfg.mode === "dialogs" || cfg.mode === "both";
+  return {
+    narration: narrationOn
+      ? { enabled: true, engine: cfg.narrationEngine, voice: cfg.narrationVoice, voiceDesc: cfg.narrationVoiceDesc }
+      : { enabled: false },
+    dialogs: dialogsOn ? { enabled: true, engine: cfg.dialogsEngine } : { enabled: false },
+  };
+}
+
+function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: VoiceConfig) => void }) {
+  const [kittenVoices, setKittenVoices] = useState<{ id: string }[]>([]);
+  const [voxVoices, setVoxVoices] = useState<{ id: string }[]>([]);
+  useEffect(() => {
+    getVoices("kitten2").then((r) => setKittenVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
+    getVoices("voxcpm2").then((r) => setVoxVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
+  }, []);
+  const update = (patch: Partial<VoiceConfig>) => {
+    const next = { ...value, ...patch };
+    onChange(next);
+    try { localStorage.setItem(VOICE_LS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+  const narrationVoices = value.narrationEngine === "kitten2" ? kittenVoices : voxVoices;
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Voice mode</span>
+        <Select value={value.mode} onValueChange={(v) => update({ mode: v as VoiceConfig["mode"] })}>
+          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No voices</SelectItem>
+            <SelectItem value="narration">Narration only</SelectItem>
+            <SelectItem value="dialogs">Character dialogs</SelectItem>
+            <SelectItem value="both">Narration + dialogs</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {(value.mode === "narration" || value.mode === "both") && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Narration engine</label>
+            <Select value={value.narrationEngine} onValueChange={(v) => update({ narrationEngine: v as any })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="kitten2">KittenTTS 2 (fast, presets)</SelectItem>
+                <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Narrator voice</label>
+            <Select value={value.narrationVoice} onValueChange={(v) => update({ narrationVoice: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {narrationVoices.map((v) => (
+                  <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+      {(value.mode === "dialogs" || value.mode === "both") && (
+        <div>
+          <label className="text-xs text-muted-foreground">Dialog engine</label>
+          <Select value={value.dialogsEngine} onValueChange={(v) => update({ dialogsEngine: v as any })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="kitten2">KittenTTS 2 (fast, 23 voices)</SelectItem>
+              <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Step1({
   setError,
 }: {
@@ -236,13 +346,14 @@ function Step1({
 }) {
   const [input, setInput] = useState("");
   const [writing, setWriting] = useState(false);
+  const [voiceConfig, setVoiceConfig] = useState<VoiceConfig>(loadVoiceConfig());
 
   const write = async () => {
     if (input.trim().length < 6) return;
     setError(null);
     setWriting(true);
     try {
-      const { jobId } = await planSpec({ premise: input.trim() });
+      const { jobId } = await planSpec({ premise: input.trim(), audio: voiceConfigToAudio(voiceConfig) });
       setQuery({ step: "review", plan: jobId });
     } catch (e) {
       setError(String(e));
@@ -282,6 +393,7 @@ function Step1({
             The AI builds the whole plan from our real model and sound libraries. Every video is a fresh
             composition. Nothing renders until you say yes.
           </p>
+          <VoiceSettings value={voiceConfig} onChange={setVoiceConfig} />
         </div>
       </Card>
     </div>
@@ -372,7 +484,9 @@ function SpecReview({
     setApproving(true);
     setError(null);
     try {
-      const { jobId } = await renderSpec(specId);
+      let audio: unknown;
+      try { audio = voiceConfigToAudio(loadVoiceConfig()); } catch { /* ignore */ }
+      const { jobId } = await renderSpec(specId, audio);
       onApproved(jobId);
     } catch (e) {
       setError(String(e));
