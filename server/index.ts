@@ -587,6 +587,8 @@ app.get("/api/tts/job/:id", (req, res) => {
     message: job.message,
     error: job.error,
     logTail: job.log.slice(-20),
+    startedAt: job.startedAt,
+    lastActivityAt: job.lastActivityAt,
   });
 });
 

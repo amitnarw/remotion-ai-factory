@@ -42,13 +42,33 @@ function EngineCard({ engine, status, onInstall }: {
       </div>
       {status.python && <div className="text-xs text-muted-foreground">python: {status.python}</div>}
       {running && (
-        <div className="space-y-1">
+        <div className="space-y-2">
+          <div className="flex gap-1">
+            {(["venv", "pip", "weights", "verify"] as const).map((s) => {
+              const active = job!.stage === s;
+              const done = (s === "venv" && job!.progress >= 8) || (s === "pip" && job!.progress >= 40) || (s === "weights" && job!.progress >= 95) || (s === "verify" && job!.progress >= 100);
+              return (
+                <div key={s} className={`flex-1 rounded-full px-2 py-1 text-center text-[10px] font-bold ${active ? "bg-accent text-accent-foreground" : done ? "bg-success text-success-foreground" : "bg-input text-muted-foreground"}`}>
+                  {s === "venv" ? "venv" : s === "pip" ? "packages" : s === "weights" ? "model" : "verify"}
+                </div>
+              );
+            })}
+          </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-input">
             <div className="h-full bg-primary transition-all" style={{ width: `${job!.progress}%` }} />
           </div>
           <div className="text-xs text-muted-foreground">{job!.message}</div>
+          {job!.stage === "pip" && (
+            <div className="text-[10px] text-muted-foreground/80">
+              Python packages report no overall percent — this step installs ~2–3 GB on first run. Watch the log below for activity.
+            </div>
+          )}
+          <div className="flex justify-between text-[10px] text-muted-foreground/70">
+            <span>Elapsed: {Math.round((Date.now() - (job!.startedAt ?? Date.now())) / 1000)}s</span>
+            <span>Last activity: {Math.round((Date.now() - (job!.lastActivityAt ?? Date.now())) / 1000)}s ago</span>
+          </div>
           {job!.logTail && job!.logTail.length > 0 && (
-            <div className="max-h-24 overflow-y-auto rounded bg-black/40 p-2 font-mono text-[10px] text-foreground/80">
+            <div className="max-h-32 overflow-y-auto rounded bg-black/40 p-2 font-mono text-[10px] text-foreground/80">
               {job!.logTail.map((l, i) => <div key={i} className="whitespace-pre-wrap">{l}</div>)}
             </div>
           )}

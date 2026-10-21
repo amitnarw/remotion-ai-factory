@@ -90,6 +90,7 @@ export interface TtsInstallJob {
   log: string[];
   error?: string;
   startedAt: number;
+  lastActivityAt?: number;
 }
 
 const jobs = new Map<string, TtsInstallJob>();
@@ -103,6 +104,7 @@ function setProgress(job: TtsInstallJob, stage: string, progress: number, messag
   job.stage = stage;
   job.progress = Math.min(100, Math.max(0, Math.round(progress)));
   job.message = message;
+  job.lastActivityAt = Date.now();
 }
 
 function runCommand(cmd: string, args: string[], onLine: (line: string) => void): Promise<number> {
@@ -111,7 +113,9 @@ function runCommand(cmd: string, args: string[], onLine: (line: string) => void)
     let buf = "";
     const flush = (chunk: string) => {
       buf += chunk;
-      const parts = buf.split(/\r?\n/);
+      // pip and `hf download` draw their progress bars with carriage returns
+      // (no newline), so split on \\r as well — otherwise live % never parses.
+      const parts = buf.split(/[\r\n]+/);
       buf = parts.pop() ?? "";
       for (const p of parts) if (p.trim()) onLine(p);
     };
@@ -126,7 +130,7 @@ export function startInstall(engine: TtsEngineId): string {
   const id = `tts-${Date.now()}-${++counter}`;
   const job: TtsInstallJob = {
     id, engine, status: "queued", stage: "queued", progress: 0,
-    message: "Queued", log: [], startedAt: Date.now(),
+    message: "Queued", log: [], startedAt: Date.now(), lastActivityAt: Date.now(),
   };
   jobs.set(id, job);
 
@@ -140,7 +144,7 @@ export function startInstall(engine: TtsEngineId): string {
       setProgress(job, "venv", 2, "Creating virtual environment…");
       if (!fs.existsSync(py)) {
         const sysPy = process.platform === "win32" ? "python" : "python3";
-        const code = await runCommand(sysPy, ["-m", "venv", venv], (l) => { job.log.push(l); });
+        const code = await runCommand(sysPy, ["-m", "venv", venv], (l) => { job.log.push(l); job.lastActivityAt = Date.now(); });
         if (code !== 0) throw new Error("venv creation failed — is Python 3.10+ on PATH?");
       }
       // 2. pip install
@@ -150,8 +154,11 @@ export function startInstall(engine: TtsEngineId): string {
       let pct = 8;
       const code2 = await runCommand(pipCmd, ["install", "--upgrade", eng.pip], (l) => {
         job.log.push(l);
+        job.lastActivityAt = Date.now();
         const m = l.match(/(\d{1,3})%/);
         if (m) { pct = Math.max(pct, Math.min(40, parseInt(m[1], 10) * 0.4 + 8)); setProgress(job, "pip", pct, `Installing ${eng.pip}… ${m[1]}%`); }
+        else if (/Downloading/i.test(l)) setProgress(job, "pip", pct, l.slice(0, 90));
+        else if (/Installing collected/i.test(l)) setProgress(job, "pip", pct, "Installing collected packages…");
       });
       if (code2 !== 0) throw new Error(`${eng.pip} install failed — see log`);
       setProgress(job, "pip", 40, "Packages installed");
@@ -163,15 +170,25 @@ export function startInstall(engine: TtsEngineId): string {
       let wPct = 42;
       const code3 = await runCommand(hfCmd, ["download", eng.repo], (l) => {
         job.log.push(l);
+        job.lastActivityAt = Date.now();
         const m = l.match(/(\d{1,3})%/);
-        if (m) { wPct = Math.max(wPct, Math.min(95, 42 + parseInt(m[1], 10) * 0.53)); setProgress(job, "weights", wPct, `Downloading ${eng.repo}… ${m[1]}%`); }
-        else if (/download/i.test(l)) setProgress(job, "weights", wPct, l.slice(0, 80));
+        if (m) {
+          const raw = parseInt(m[1], 10);
+          wPct = Math.max(wPct, Math.min(95, 42 + raw * 0.53));
+          // Try to surface downloaded/total size from tqdm-style bars.
+          const sizeM = l.match(/([\d.]+)\s*([GMK]i?B)\s*\/\s*([\d.]+)\s*([GMK]i?B)/i);
+          const msg = sizeM
+            ? `Downloading ${eng.repo}… ${raw}% · ${sizeM[1]} ${sizeM[2]} / ${sizeM[3]} ${sizeM[4]}`
+            : `Downloading ${eng.repo}… ${raw}%`;
+          setProgress(job, "weights", wPct, msg);
+        }
+        else if (/download/i.test(l)) setProgress(job, "weights", wPct, l.slice(0, 90));
       });
       if (code3 !== 0) throw new Error(`weight download failed — see log`);
 
       // 4. verify
       setProgress(job, "verify", 97, "Verifying install…");
-      const code4 = await runCommand(py, ["-c", `import ${eng.pip}; print("OK")`], (l) => { job.log.push(l); });
+      const code4 = await runCommand(py, ["-c", `import ${eng.pip}; print("OK")`], (l) => { job.log.push(l); job.lastActivityAt = Date.now(); });
       if (code4 !== 0) throw new Error("verification import failed");
 
       setProgress(job, "done", 100, `${ENGINES[engine].label} is ready`);

@@ -131,6 +131,8 @@ export interface TtsInstallJob {
   message: string;
   error?: string;
   logTail?: string[];
+  startedAt?: number;
+  lastActivityAt?: number;
 }
 export async function getTtsStatus(): Promise<TtsStatus> {
   return json(await fetch(`${BASE}/tts/status`));
