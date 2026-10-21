@@ -67,7 +67,7 @@ export default function Generate() {
       setJob(fresh);
       setProgress(fresh.progress);
       if (fresh.stage) setStage(fresh.stage);
-      setLogs(fresh.logs.slice(-300));
+      setLogs(fresh.logs.slice(-2000));
       setStatus(fresh.status === "done" || fresh.status === "failed" ? fresh.status : "running");
       return fresh.status;
     },
@@ -380,6 +380,7 @@ function Step1({
             placeholder="What if money doubled every 3 seconds?"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && input.trim().length >= 6 && !writing) write(); }}
             className="text-lg"
           />
           <div className="flex items-center gap-3">
@@ -449,6 +450,7 @@ function SpecReview({
   const [planStage, setPlanStage] = useState<string>("script");
   const [planProgress, setPlanProgress] = useState(0);
   const [approving, setApproving] = useState(false);
+const [modelInfo, setModelInfo] = useState<string | null>(null);
 
   useEffect(() => {
     if (!planJobId) return;
@@ -460,6 +462,7 @@ function SpecReview({
         if (r.ready && r.spec) {
           setSpec(r.spec);
           setSpecId(r.specId ?? null);
+          if (r.provider || r.model) setModelInfo(`${r.provider ?? ""}${r.model ? " / " + r.model : ""}`.trim());
           return; // done polling
         }
         if (r.error) {
@@ -602,6 +605,7 @@ function SpecReview({
         <div className="space-y-4">
           <div>
             <div className="text-sm font-extrabold uppercase tracking-wider text-primary">The plan</div>
+            {modelInfo && <div className="mt-1 text-xs font-semibold text-muted-foreground">Written by {modelInfo}</div>}
             <div className="mt-1 text-xl font-black leading-snug">{spec.hook.text}</div>
           </div>
 
@@ -701,6 +705,19 @@ function SpecReview({
           ) : null}
 
           <div className="rounded-2xl bg-input/40 p-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Voice</div>
+            {(() => {
+              const vc = loadVoiceConfig();
+              if (vc.mode === "none") return <div className="mt-1 text-sm text-muted-foreground">No voices — silent video.</div>;
+              const parts: string[] = [];
+              if (vc.mode === "narration" || vc.mode === "both") parts.push(`Narration: ${vc.narrationEngine} (${vc.narrationVoice})`);
+              if (vc.mode === "dialogs" || vc.mode === "both") parts.push(`Dialogs: ${vc.dialogsEngine}`);
+              return <div className="mt-1 text-sm font-semibold">{parts.join(" · ")}</div>;
+            })()}
+            <div className="mt-2 text-xs text-muted-foreground">Change in Step 1 before approving.</div>
+          </div>
+
+          <div className="rounded-2xl bg-input/40 p-4">
             <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Sounds</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {sounds.map((s) => (
@@ -768,6 +785,9 @@ function Step3OrJob({
           </Button>
           <Button variant="secondary" size="lg" onClick={onAgain}>
             Make another one
+          </Button>
+          <Button variant="secondary" size="lg" onClick={() => setQuery({ tab: "videos" })}>
+            View in Videos
           </Button>
         </div>
       </div>
@@ -888,7 +908,7 @@ function JobPanel({
 /** Autoscrolling live log (soft dark console). */
 function LogConsole({ logs }: { logs: string[] }) {
   if (!logs.length) return null;
-  const lines = logs.join("").split(/\r?\n/).filter((l) => l.trim()).slice(-24);
+  const lines = logs.join("").split(/\r?\n/).filter((l) => l.trim()).slice(-200);
   return (
     <div className="mx-auto max-h-36 max-w-xl overflow-y-auto rounded-2xl bg-black/50 p-4 font-mono text-[11px] leading-relaxed">
       {lines.map((l, i) => (

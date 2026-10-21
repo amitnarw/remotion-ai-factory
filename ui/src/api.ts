@@ -72,6 +72,8 @@ export interface SpecResponse {
   progress?: number;
   specId?: string;
   spec?: import("../../src/generator/spec.schema").ShotSpec;
+  provider?: string;
+  model?: string;
   error?: string;
 }
 
@@ -101,6 +103,37 @@ export interface VoiceInfo {
 export async function getVoices(engine?: string): Promise<{ voices: VoiceInfo[]; available?: boolean; engines?: { id: string; label: string; note: string }[] }> {
   const q = engine ? `?engine=${encodeURIComponent(engine)}` : "";
   return json(await fetch(`${BASE}/voices${q}`));
+}
+export interface TtsEngineStatus {
+  id: string;
+  label: string;
+  sizeMB: number;
+  python: string | null;
+  installed: boolean;
+  legacyPython?: string | null;
+}
+export interface TtsStatus {
+  kitten2: TtsEngineStatus;
+  voxcpm2: TtsEngineStatus;
+}
+export interface TtsInstallJob {
+  id: string;
+  engine: string;
+  status: "queued" | "running" | "done" | "failed";
+  stage: string;
+  progress: number;
+  message: string;
+  error?: string;
+  logTail?: string[];
+}
+export async function getTtsStatus(): Promise<TtsStatus> {
+  return json(await fetch(`${BASE}/tts/status`));
+}
+export async function startTtsInstall(engine: string): Promise<{ jobId: string }> {
+  return json(await fetch(`${BASE}/tts/install/${engine}`, { method: "POST" }));
+}
+export async function getTtsInstallJob(id: string): Promise<TtsInstallJob> {
+  return json(await fetch(`${BASE}/tts/job/${id}`));
 }
 
 export interface Video {

@@ -3,7 +3,7 @@
  * Dark-first: index.html sets `class="dark"`; tokens live in index.css.
  */
 import * as React from "react";
-import { Clapperboard, Sparkles, Film, Plug } from "lucide-react";
+import { Clapperboard, Sparkles, Film, Plug, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { HelpDialog } from "./components/InfoTip";
@@ -11,19 +11,21 @@ import { useQuery, setQuery } from "./lib/navigation";
 import Generate from "./pages/Generate";
 import Providers from "./pages/Providers";
 import Videos from "./pages/Videos";
+import Setup from "./pages/Setup";
 import { cn } from "./lib/utils";
 
-export type TabKey = "generate" | "providers" | "videos";
+export type TabKey = "generate" | "videos" | "providers" | "setup";
 
 const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
   { key: "generate", label: "Generate", icon: <Sparkles className="h-4 w-4" /> },
   { key: "videos", label: "Videos", icon: <Film className="h-4 w-4" /> },
   { key: "providers", label: "Providers", icon: <Plug className="h-4 w-4" /> },
+  { key: "setup", label: "Setup", icon: <Settings className="h-4 w-4" /> },
 ];
 
 /** Coerce arbitrary ?tab= values onto a known tab. */
 function safeTab(raw: string | undefined): TabKey {
-  return raw === "videos" || raw === "providers" ? raw : "generate";
+  return raw === "videos" || raw === "providers" || raw === "setup" ? raw : "generate";
 }
 
 export default function App() {
@@ -74,6 +76,7 @@ export default function App() {
           {tab === "generate" && <Generate />}
           {tab === "videos" && <Videos />}
           {tab === "providers" && <Providers />}
+{tab === "setup" && <Setup />}
         </main>
 
         <footer className="pb-8 pt-2 text-center text-sm font-medium text-muted-foreground">

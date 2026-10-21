@@ -25,6 +25,9 @@ assets.catalog.json
 # TTS scratch jobs
 **/.tts-job.json
 
+# Local TTS runtimes (created by the Setup tab; machine-specific)
+.tts/
+
 # Render output
 out/
 

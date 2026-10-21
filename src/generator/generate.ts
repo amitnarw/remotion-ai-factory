@@ -22,6 +22,7 @@ import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { validateSpec, type ShotSpec } from "./spec.schema";
+import { runTtsStage } from "./tts";
 import { secToFrame } from "./timing";
 import { generateSpec } from "./ai/generate-spec";
 import { validateAssets } from "./asset-catalog";
@@ -70,11 +71,13 @@ function parseArgs(argv: string[]): {
   model: string | undefined;
   noRender: boolean;
   fromSpec: string | undefined;
+  audioFile: string | undefined;
 } {
   let provider: string | undefined;
   let model: string | undefined;
   let noRender = false;
   let fromSpec: string | undefined;
+  let audioFile: string | undefined;
   const premiseParts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -86,11 +89,13 @@ function parseArgs(argv: string[]): {
       noRender = true;
     } else if (a === "--from-spec" && argv[i + 1]) {
       fromSpec = argv[++i];
+    } else if (a === "--audio-file" && argv[i + 1]) {
+      audioFile = argv[++i];
     } else if (!a.startsWith("--")) {
       premiseParts.push(a);
     }
   }
-  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec };
+  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile };
 }
 
 function writeFailedLog(id: string, premise: string, error: unknown): string {
@@ -115,7 +120,7 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model, noRender, fromSpec } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec, audioFile } = parseArgs(process.argv.slice(2));
   if (fromSpec) {
     // --- render-only mode: an approved spec (dashboard plan → approve) ---
     (async () => {
@@ -130,7 +135,7 @@ function main() {
         const valid = validateSpec(JSON.parse(readFileSync(abs, "utf8")));
         const premise = valid.title;
         console.log(`[render-only] ${id} — "${premise}" (${valid.scenes.length} scenes)`);
-        await renderOnly(valid, id, el);
+        await renderOnly(valid, id, el, { audioFile });
       } catch (error) {
         console.error("");
         console.error("═══ FAILED ═══");
@@ -207,7 +212,7 @@ async function renderOnly(
   valid: ShotSpec,
   id: string,
   el: () => string,
-  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string },
+  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string; audioFile?: string },
 ): Promise<void> {
   const premise = meta?.premise ?? valid.title;
   const providerUsed = meta?.providerUsed ?? "approved-spec";
@@ -238,9 +243,39 @@ async function renderOnly(
       console.log(`Duration: ${durFrames} frames (${(durFrames / FPS).toFixed(1)}s)`);
       console.log("");
 
-      console.log(
-        `[3/5] Bundling + launching render — ${durFrames} frames @${valid.fps ?? FPS}fps (1080×1920) at +${el()}`,
-      );
+// TTS voice stage (narration/dialogs) — runs before bundling so the
+// generated WAVs are in public/ before the render reads them.
+const audioFile = meta?.audioFile;
+let audioConfig: any = null;
+if (audioFile) {
+  try {
+    const absAudio = audioFile.startsWith("/") || audioFile.includes(":")
+      ? audioFile
+      : join(process.cwd(), audioFile);
+    audioConfig = JSON.parse(readFileSync(absAudio, "utf8"));
+  } catch (e) {
+    console.warn(`[voice] could not read audio config: ${e}`);
+  }
+}
+// Also fall back to spec.audio for narration/dialogs config (UI-injected).
+const specAudio = (valid as any).audio ?? {};
+const mergedAudio = {
+  narration: audioConfig?.narration ?? specAudio.narration,
+  dialogs: audioConfig?.dialogs ?? specAudio.dialogs,
+};
+if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
+  console.log(`[voice] generating voices (${mergedAudio.narration?.engine ?? mergedAudio.dialogs?.engine})`);
+  try {
+    const manifest = await runTtsStage(valid, mergedAudio, id);
+    if (manifest) {
+      (valid as any).audio = { ...(valid as any).audio, voiceFiles: manifest.lines };
+      console.log(`[voice] done — ${manifest.lines.length} lines`);
+    }
+  } catch (e) {
+    console.error(`[voice] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+    throw e;
+  }
+}
 
       // Fresh explicit bundle (step 3) so the render never serves stale code.
       const bundleCmd = join(process.cwd(), "node_modules", ".bin", "remotion.cmd");

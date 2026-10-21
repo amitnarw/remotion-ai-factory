@@ -33,6 +33,8 @@ export const CaptionSchema = z.object({
   from: z.number(),
   to: z.number(),
   keyword: z.array(z.string()).optional().default([]),
+  /** Optional speaker for character dialog lines. */
+  speaker: z.string().optional(),
   /** Look of the caption plate: "bold" = uppercase sans, "serif-italic" =
    *  the lowerc-case serif italic narration look (e.g. "Normal eyes. 20/20."). */
   style: z.enum(["bold", "serif-italic"]).optional(),
@@ -233,6 +235,19 @@ export const ShotSpecSchema = z.object({
         )
         .optional(),
       music: z.any().optional(),
+      /** Generated voice tracks (narration/dialogs). Written by the render
+       *  pipeline's TTS stage; consumed by CompositionAudio. */
+      voiceFiles: z
+        .array(
+          z.object({
+            id: z.string(),
+            file: z.string(),
+            at: z.number(),
+            dur: z.number().optional(),
+            kind: z.enum(["narration", "dialog"]).default("narration"),
+          }),
+        )
+        .optional(),
       /** Optional TTS narration track. */
       narration: z
         .object({

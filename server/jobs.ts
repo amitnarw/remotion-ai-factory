@@ -219,6 +219,9 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       }
     } else if (text.includes("[1/5]")) {
       newStage = "script";
+    } else if (text.includes("[voice]")) {
+      newStage = "voice";
+      pct = 12;
     } else if (text.includes("[3/5]")) {
       // The CLI's own trace line marks the true bundle start — Remotion's
       // "Bundling N%" lines only appear after esbuild's silent work.

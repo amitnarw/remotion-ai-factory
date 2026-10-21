@@ -8,6 +8,7 @@ import { fetchProviderModels } from "./fetch-models";
 import { createJob, getJob, getAllJobs, premiseSlug, runJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
+import { ttsStatus, startInstall, getTtsJob } from "./tts";
 import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES } from "../src/generator/voices";
 
 const app = express();
@@ -292,7 +293,7 @@ app.get("/api/spec/:jobId", (req, res) => {
   const p = join(ROOT, "output", `${job.specId}-spec.json`);
   try {
     const spec = JSON.parse(fs.readFileSync(p, "utf8"));
-    res.json({ ready: true, specId: job.specId, spec });
+    res.json({ ready: true, specId: job.specId, spec, provider: job.provider, model: job.model });
   } catch {
     res.status(500).json({
       error: `the plan file for "${job.specId}" is missing on disk`,
@@ -334,7 +335,15 @@ app.post("/api/render-spec", (req, res) => {
   const job = createJob(title);
   job.specId = specId;
   if (audio) (job as any).audio = audio;
-  runJob(job, { extraArgs: ["--from-spec", specPathRel.replace(/\\/g, "/")] });
+  if (audio) {
+    try {
+      const sidecar = join(ROOT, "output", `${specId}-audio.json`);
+      fs.writeFileSync(sidecar, JSON.stringify(audio, null, 2));
+    } catch { /* ignore */ }
+  }
+  const extra = ["--from-spec", specPathRel.replace(/\\/g, "/")];
+  if (audio) extra.push("--audio-file", `output/${specId}-audio.json`);
+  runJob(job, { extraArgs: extra });
   res.json({ jobId: job.id });
 });
 
@@ -474,6 +483,35 @@ app.get("/api/videos", (_req, res) => {
   });
   videos.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
   res.json(videos);
+});
+
+// ---------- TTS model status / install ----------
+app.get("/api/tts/status", (_req, res) => {
+  res.json(ttsStatus());
+});
+
+app.post("/api/tts/install/:engine", (req, res) => {
+  const engine = req.params.engine as "kitten2" | "voxcpm2";
+  if (engine !== "kitten2" && engine !== "voxcpm2") {
+    return res.status(400).json({ error: "unknown engine" });
+  }
+  const id = startInstall(engine);
+  res.json({ jobId: id });
+});
+
+app.get("/api/tts/job/:id", (req, res) => {
+  const job = getTtsJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "unknown install job" });
+  res.json({
+    id: job.id,
+    engine: job.engine,
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    message: job.message,
+    error: job.error,
+    logTail: job.log.slice(-20),
+  });
 });
 
 // ---------- TTS voices / engines ----------
