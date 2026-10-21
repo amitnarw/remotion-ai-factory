@@ -848,22 +848,22 @@ function forestInsects(seed: number): Float32Array {
   const out = new Buf(30.0);
   const osc = new Osc();
   const filter = new Svf();
-  const types = [
-    { baseF: 4500, spread: 800, dur: 0.8, interval: 1.5 },  // Cricket
-    { baseF: 8000, spread: 2000, dur: 3.0, interval: 4.0 }, // Cicada
-    { baseF: 6000, spread: 1500, dur: 1.5, interval: 2.5 }, // Katydid
+  const types: Array<{ baseF: number; spread: number; dur: number; interval: number }> = [
+    { baseF: 2500, spread: 400, dur: 0.8, interval: 1.5 },  // Cricket
+    { baseF: 3500, spread: 1000, dur: 3.0, interval: 4.0 }, // Cicada
+    { baseF: 3000, spread: 800, dur: 1.5, interval: 2.5 },  // Katydid
   ];
   for (let k = 0; k < types.length; k++) {
-    const t = types[k];
+    const tp = types[k];
     for (let i = 0; i < 8; i++) {
       const t0 = 0.5 + rng.next() * 29;
-      const dur = t.dur * (0.6 + rng.next() * 0.8);
-      out.layer(t0, t0 + dur, (_x, t) => {
-        const ft = t - t0;
-        const f = t.baseF + (rng.next() - 0.5) * t.spread;
+      const dur = tp.dur * (0.6 + rng.next() * 0.8);
+      out.layer(t0, t0 + dur, (_x, tt) => {
+        const ft = tt - t0;
+        const f = tp.baseF + (rng.next() - 0.5) * tp.spread;
         const mod = 1 + 0.6 * Math.sin(ft * 20 + k * 3);
         const env = ampEnv(ft, 0.02, dur * 0.6) * (0.5 + rng.next() * 0.4);
-        return filter.filter(osc.sine(f * mod), t.baseF * 0.8, 2.5).bp * env * 0.25;
+        return filter.filter(osc.sine(f * mod), tp.baseF * 0.8, 3.0).bp * env * 0.2;
       });
     }
   }
@@ -1132,7 +1132,6 @@ function interiorFootsteps(seed: number): Float32Array {
 
 /** interior_door_creak — old door opening. 1.5s event. */
 function interiorDoorCreak(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(1.5);
   const creak = new Osc();
   const filter = new Svf();
@@ -1147,7 +1146,6 @@ function interiorDoorCreak(seed: number): Float32Array {
 
 /** interior_clock_tick — wall clock. 30s bed. */
 function interiorClockTick(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(30.0);
   const tick = new Osc();
   const filter = new Svf();
@@ -1187,7 +1185,6 @@ function spaceCosmicWind(seed: number): Float32Array {
 
 /** space_ship_engine — ship engine hum. 30s bed. */
 function spaceShipEngine(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(30.0);
   const engine = new Osc();
   const filter = new Svf();
@@ -1221,18 +1218,15 @@ function spaceWhoosh(seed: number): Float32Array {
 function spaceRadio(seed: number): Float32Array {
   const rng = new Rng(seed);
   const out = new Buf(30.0);
-  const osc1 = new Osc();
   const ph = [0, 0, 0].map(() => rng.next() * Math.PI * 2);
   out.layer(0, 30.0, (_x, t) => {
-    const carrier = Math.sin(2 * Math.PI * 1200 * t) * 0.05;
-    // Low-frequency noise-like voice using sum of sines
+    // Low-frequency radio carrier + voice-like modulation
+    const carrier = Math.sin(2 * Math.PI * 300 * t) * 0.1;
     const voice =
-      Math.sin(2 * Math.PI * (200 + t * 3) * t + ph[0]) * 0.3 +
-      Math.sin(2 * Math.PI * (400 + t * 2) * t + ph[1]) * 0.25 +
-      Math.sin(2 * Math.PI * (600 + t * 4) * t + ph[2]) * 0.2;
+      Math.sin(2 * Math.PI * (250 + 50 * Math.sin(t * 0.3)) * t + ph[0]) * 0.2 +
+      Math.sin(2 * Math.PI * (400 + 30 * Math.sin(t * 0.5)) * t + ph[1]) * 0.15;
     const vEnv = 0.3 + 0.3 * Math.sin(t * 0.07);
-    const voiceSnd = voice * vEnv * 0.04;
-    return carrier + voiceSnd;
+    return carrier + voice * vEnv;
   });
   out.scale((t) => smoothstep(t, 1.0) * smoothstep(30.0 - t, 1.0));
   return out.data;
@@ -1244,7 +1238,6 @@ function spaceRadio(seed: number): Float32Array {
 
 /** music_ocean_ambient — peaceful ocean ambient. 60s loop. */
 function musicOceanAmbient(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(60.0);
   const pad = new Osc();
   const filter = new Svf();
@@ -1254,7 +1247,6 @@ function musicOceanAmbient(seed: number): Float32Array {
     [146.83, 196.00, 220.00], // D3, G3, A3
     [130.81, 174.61, 220.00], // C3, F3, A3
   ];
-  let chordIdx = 0;
   const chordDur = 15.0;
   for (let c = 0; c < 4; c++) {
     const t0 = c * chordDur;
@@ -1275,7 +1267,6 @@ function musicOceanAmbient(seed: number): Float32Array {
 
 /** music_forest_ambient — mystical forest ambient. 60s loop. */
 function musicForestAmbient(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(60.0);
   const pad = new Osc();
   const filter = new Svf();
@@ -1305,9 +1296,9 @@ function musicForestAmbient(seed: number): Float32Array {
 
 /** music_countryside_ambient — pastoral folk ambient. 60s loop. */
 function musicCountrysideAmbient(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(60.0);
   const guitar = new Osc();
+  const bass = new Osc();
   const filter = new Svf();
   const chords = [
     [196.00, 246.94, 293.66], // G3, B3, D4
@@ -1324,10 +1315,10 @@ function musicCountrysideAmbient(seed: number): Float32Array {
       const env = smoothstep(ft, 1.5) * smoothstep(15.0 - ft, 2.0);
       let sum = 0;
       for (const f of chord) {
-        sum += pad.sine(f) * 0.18 * pick;
+        sum += guitar.sine(f) * 0.18 * pick;
       }
-      sum += pad.sine(chord[0] * 0.5) * 0.1; // bass
-      return filter.filter(sum, 1500, 2.0).lp * env * 0.25;
+      sum += bass.sine(chord[0] * 0.5) * 0.35; // strong bass
+      return filter.filter(sum, 800, 3.5).lp * env * 0.32;
     });
   }
   out.scale((t) => smoothstep(t, 2.0) * smoothstep(60.0 - t, 2.0));
@@ -1336,7 +1327,6 @@ function musicCountrysideAmbient(seed: number): Float32Array {
 
 /** music_cinematic_tension — slow building tension. 60s loop. */
 function musicCinematicTension(seed: number): Float32Array {
-  const rng = new Rng(seed);
   const out = new Buf(60.0);
   const drone = new Osc();
   const pulse = new Osc();
@@ -1388,7 +1378,7 @@ interface RoleDef {
   peak: number;
   label: string;
   description: string;
-  family: "ambient" | "event";
+  family: "ambient" | "event" | "music";
   tags: string[];
   /** Objective v2 sanity checks: band-share minimums so flat noise can't ship. */
   checks: { low?: number; mid?: number; high?: number; zcrMax?: number };
@@ -1550,7 +1540,7 @@ const ROLES: Record<string, RoleDef> = {
     description: "Crickets, cicadas, katydids; night forest ambient bed.",
     family: "ambient",
     tags: ["ambient", "forest", "insects", "crickets", "cicadas", "night", "bed"],
-    checks: { high: 0.6, zcrMax: 5.0 },
+    checks: { high: 0.95, zcrMax: 5.0 },
   },
 
   // ============ COUNTRYSIDE SOUNDS ============

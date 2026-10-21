@@ -1,7 +1,756 @@
 {
   "version": 2,
-  "generatedAt": 1792499001833,
+  "generatedAt": 1792599313343,
   "roles": {
+    "ocean_waves": {
+      "label": "Ocean waves",
+      "description": "Rolling wave breaks with foam hiss; ambient bed for ocean scenes.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "ocean",
+        "waves",
+        "water",
+        "bed",
+        "waves"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/ocean_waves.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -18,
+          "rmsDb": -33.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "ocean_gulls": {
+      "label": "Seagulls",
+      "description": "Distant seagull calls over the ocean; sparse calls with ocean bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "ocean",
+        "birds",
+        "gulls",
+        "bed",
+        "coastal"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/ocean_gulls.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -14,
+          "rmsDb": -33.1,
+          "autoRank": 50
+        }
+      ]
+    },
+    "ocean_ship_horn": {
+      "label": "Ship horn",
+      "description": "Deep foghorn blast with echo; maritime event.",
+      "family": "event",
+      "tags": [
+        "ship",
+        "horn",
+        "foghorn",
+        "maritime",
+        "event"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/ocean_ship_horn.wav",
+          "dur": 8,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -4,
+          "rmsDb": -17.8,
+          "autoRank": 50
+        }
+      ]
+    },
+    "ocean_splash": {
+      "label": "Ocean splash",
+      "description": "Water splash impact with droplets; wave impact event.",
+      "family": "event",
+      "tags": [
+        "splash",
+        "water",
+        "ocean",
+        "impact",
+        "event"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/ocean_splash.wav",
+          "dur": 1.5,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -3,
+          "rmsDb": -19.2,
+          "autoRank": 50
+        }
+      ]
+    },
+    "underwater_bubbles": {
+      "label": "Underwater bubbles",
+      "description": "Gentle bubble stream; underwater ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "underwater",
+        "bubbles",
+        "water",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/underwater_bubbles.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -28,
+          "rmsDb": -50.7,
+          "autoRank": 50
+        }
+      ]
+    },
+    "forest_birds": {
+      "label": "Forest birds",
+      "description": "Diverse bird chorus with warblers, thrushes, finches; forest ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "forest",
+        "birds",
+        "birds",
+        "bed",
+        "nature"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/forest_birds.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -12,
+          "rmsDb": -34.2,
+          "autoRank": 50
+        }
+      ]
+    },
+    "forest_wind_leaves": {
+      "label": "Forest wind",
+      "description": "Wind through canopy with leaf rustle; forest ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "forest",
+        "wind",
+        "leaves",
+        "bed",
+        "nature"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/forest_wind_leaves.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -10,
+          "rmsDb": -28.1,
+          "autoRank": 50
+        }
+      ]
+    },
+    "forest_stream": {
+      "label": "Forest stream",
+      "description": "Babbling brook with gentle water flow; forest water bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "forest",
+        "stream",
+        "water",
+        "brook",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/forest_stream.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -20,
+          "rmsDb": -34.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "forest_insects": {
+      "label": "Forest insects",
+      "description": "Crickets, cicadas, katydids; night forest ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "forest",
+        "insects",
+        "crickets",
+        "cicadas",
+        "night",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/forest_insects.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -16,
+          "rmsDb": -37.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "countryside_wind": {
+      "label": "Countryside wind",
+      "description": "Open field wind with grass rustle; pastoral ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "countryside",
+        "wind",
+        "fields",
+        "bed",
+        "pastoral"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/countryside_wind.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -8,
+          "rmsDb": -25.8,
+          "autoRank": 50
+        }
+      ]
+    },
+    "countryside_crickets": {
+      "label": "Countryside crickets",
+      "description": "Evening crickets in open fields; pastoral night bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "countryside",
+        "crickets",
+        "night",
+        "bed",
+        "evening"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/countryside_crickets.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -14,
+          "rmsDb": -35.3,
+          "autoRank": 50
+        }
+      ]
+    },
+    "countryside_rooster": {
+      "label": "Rooster crow",
+      "description": "Morning rooster crow with echo; farm event.",
+      "family": "event",
+      "tags": [
+        "rooster",
+        "farm",
+        "morning",
+        "event",
+        "crow"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/countryside_rooster.wav",
+          "dur": 3,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -2,
+          "rmsDb": -12.9,
+          "autoRank": 50
+        }
+      ]
+    },
+    "farm_animals": {
+      "label": "Farm animals",
+      "description": "Cows, sheep, pigs; farm ambient bed with animal calls.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "farm",
+        "animals",
+        "cow",
+        "sheep",
+        "pig",
+        "bed"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/farm_animals.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -12,
+          "rmsDb": -32.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_traffic_dense": {
+      "label": "City traffic",
+      "description": "Heavy traffic with engines and tires; dense city bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "city",
+        "traffic",
+        "cars",
+        "bed",
+        "urban"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_traffic_dense.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -8,
+          "rmsDb": -13.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_crowd": {
+      "label": "City crowd",
+      "description": "Pedestrian crowd murmur with distant voices; urban bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "city",
+        "crowd",
+        "people",
+        "bed",
+        "urban",
+        "murmur"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_crowd.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -16,
+          "rmsDb": -31,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_siren": {
+      "label": "Emergency siren",
+      "description": "Emergency vehicle siren wail; urban event.",
+      "family": "event",
+      "tags": [
+        "siren",
+        "emergency",
+        "police",
+        "ambulance",
+        "event",
+        "urban"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_siren.wav",
+          "dur": 4,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -4,
+          "rmsDb": -13.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_construction": {
+      "label": "Construction site",
+      "description": "Jackhammer and drill impacts; construction bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "construction",
+        "jackhammer",
+        "drill",
+        "bed",
+        "urban"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_construction.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -5,
+          "rmsDb": -23.3,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_metro": {
+      "label": "Metro subway",
+      "description": "Subway rumble with brake screeches; underground transit bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "metro",
+        "subway",
+        "train",
+        "rumble",
+        "bed",
+        "underground"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_metro.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -10,
+          "rmsDb": -22.8,
+          "autoRank": 50
+        }
+      ]
+    },
+    "city_horn": {
+      "label": "Car horn",
+      "description": "Two-tone car horn blast; traffic event.",
+      "family": "event",
+      "tags": [
+        "horn",
+        "car",
+        "traffic",
+        "event",
+        "urban"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/city_horn.wav",
+          "dur": 2,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -3,
+          "rmsDb": -15.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "interior_room_tone": {
+      "label": "Room tone",
+      "description": "HVAC hum with subtle duct rattle; quiet room bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "interior",
+        "room",
+        "hvac",
+        "bed",
+        "quiet",
+        "room"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/interior_room_tone.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -30,
+          "rmsDb": -37.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "interior_footsteps": {
+      "label": "Footsteps",
+      "description": "Footsteps on wood or tile floor; interior event.",
+      "family": "event",
+      "tags": [
+        "footsteps",
+        "interior",
+        "wood",
+        "tile",
+        "event",
+        "movement"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/interior_footsteps.wav",
+          "dur": 2,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -6,
+          "rmsDb": -29.9,
+          "autoRank": 50
+        }
+      ]
+    },
+    "interior_door_creak": {
+      "label": "Door creak",
+      "description": "Old door opening creak; interior event.",
+      "family": "event",
+      "tags": [
+        "door",
+        "creak",
+        "interior",
+        "event",
+        "door"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/interior_door_creak.wav",
+          "dur": 1.5,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -4,
+          "rmsDb": -16.9,
+          "autoRank": 50
+        }
+      ]
+    },
+    "interior_clock_tick": {
+      "label": "Clock tick",
+      "description": "Wall clock ticking; quiet interior bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "interior",
+        "clock",
+        "tick",
+        "bed",
+        "quiet",
+        "time"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/interior_clock_tick.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -22,
+          "rmsDb": -43.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "space_cosmic_wind": {
+      "label": "Cosmic wind",
+      "description": "Solar wind with solar flares; deep space ambient bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "space",
+        "cosmic",
+        "solar",
+        "wind",
+        "bed",
+        "deep space"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/space_cosmic_wind.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -12,
+          "rmsDb": -28.7,
+          "autoRank": 50
+        }
+      ]
+    },
+    "space_ship_engine": {
+      "label": "Ship engine",
+      "description": "Spaceship engine hum with harmonics; sci-fi bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "space",
+        "ship",
+        "engine",
+        "sci-fi",
+        "bed",
+        "vehicle"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/space_ship_engine.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -10,
+          "rmsDb": -21.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "space_whoosh": {
+      "label": "Ship flyby",
+      "description": "Spaceship flyby whoosh; sci-fi event.",
+      "family": "event",
+      "tags": [
+        "whoosh",
+        "space",
+        "ship",
+        "flyby",
+        "event",
+        "sci-fi"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/space_whoosh.wav",
+          "dur": 3,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -4,
+          "rmsDb": -22.1,
+          "autoRank": 50
+        }
+      ]
+    },
+    "space_radio": {
+      "label": "Space radio",
+      "description": "Radio chatter with static; comms bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "space",
+        "radio",
+        "comms",
+        "static",
+        "bed",
+        "sci-fi"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/space_radio.wav",
+          "dur": 30,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -18,
+          "rmsDb": -26.7,
+          "autoRank": 50
+        }
+      ]
+    },
+    "music_ocean_ambient": {
+      "label": "Ocean ambient music",
+      "description": "Peaceful ocean ambient music with slow chord progression; 60s loop.",
+      "family": "music",
+      "tags": [
+        "music",
+        "ocean",
+        "ambient",
+        "peaceful",
+        "loop",
+        "background"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/music_ocean_ambient.wav",
+          "dur": 60,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -14,
+          "rmsDb": -21.2,
+          "autoRank": 50
+        }
+      ]
+    },
+    "music_forest_ambient": {
+      "label": "Forest ambient music",
+      "description": "Mystical forest ambient music with slow chord progression; 60s loop.",
+      "family": "music",
+      "tags": [
+        "music",
+        "forest",
+        "ambient",
+        "mystical",
+        "loop",
+        "background"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/music_forest_ambient.wav",
+          "dur": 60,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -14,
+          "rmsDb": -21.5,
+          "autoRank": 50
+        }
+      ]
+    },
+    "music_countryside_ambient": {
+      "label": "Countryside ambient music",
+      "description": "Pastoral folk ambient music with guitar picks; 60s loop.",
+      "family": "music",
+      "tags": [
+        "music",
+        "countryside",
+        "ambient",
+        "pastoral",
+        "folk",
+        "loop",
+        "background"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/music_countryside_ambient.wav",
+          "dur": 60,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -14,
+          "rmsDb": -27.6,
+          "autoRank": 50
+        }
+      ]
+    },
+    "music_cinematic_tension": {
+      "label": "Cinematic tension music",
+      "description": "Slow building cinematic tension with drone and pulse; 60s loop.",
+      "family": "music",
+      "tags": [
+        "music",
+        "cinematic",
+        "tension",
+        "drone",
+        "pulse",
+        "loop",
+        "background"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/music_cinematic_tension.wav",
+          "dur": 60,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -10,
+          "rmsDb": -17.1,
+          "autoRank": 50
+        }
+      ]
+    },
     "street_murmur": {
       "label": "Street-life bed — crowd chatter",
       "description": "Babbling voices + distant traffic bed with two far horn chirps. No white hiss.",
