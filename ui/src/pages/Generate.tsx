@@ -24,6 +24,8 @@ import {
   getJobSpec,
   renderSpec,
   getVoices,
+  voiceSample,
+  cancelJob,
   Job,
 } from "../api";
 import type { ShotSpec } from "../../../src/generator/spec.schema";
@@ -170,12 +172,13 @@ export default function Generate() {
                 className={cn(
                   "flex h-14 items-center gap-2.5 rounded-2xl px-4 font-bold shadow-xl shadow-black/20 transition-all",
                   isCurrent && "scale-105 bg-accent text-accent-foreground shadow-accent/25",
-                  !isCurrent && reached && "bg-primary text-primary-foreground",
+                  !isCurrent && reached && "bg-primary text-primary-foreground cursor-pointer hover:brightness-110",
                   !isCurrent && !reached && "bg-secondary text-secondary-foreground",
                 )}
               >
                 <span
-                  className={cn(
+
+                 className={cn(
                     "grid h-8 w-8 shrink-0 place-items-center rounded-full text-base",
                     isCurrent ? "bg-accent-foreground text-accent" : "bg-black/20",
                   )}
@@ -312,14 +315,26 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Narrator voice</label>
-            <Select value={value.narrationVoice} onValueChange={(v) => update({ narrationVoice: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {narrationVoices.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex gap-2">
+              <Select value={value.narrationVoice} onValueChange={(v) => update({ narrationVoice: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {narrationVoices.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="secondary" size="sm" onClick={async () => {
+                try {
+                  const blob = await voiceSample({ engine: value.narrationEngine, voice: value.narrationVoice, voiceDesc: value.narrationVoiceDesc });
+                  const url = URL.createObjectURL(blob);
+                  const a = new Audio(url);
+                  a.play();
+                } catch (e) { /* ignore */ }
+              }} aria-label="Audition voice">
+                ▶
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -728,14 +743,16 @@ const [modelInfo, setModelInfo] = useState<string | null>(null);
         </div>
       </Card>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="secondary" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" /> Not quite, write again
-        </Button>
-        <Button variant="amber" size="lg" className="flex-1" disabled={approving} onClick={approve}>
-          <Check className={cn("h-5 w-5", approving && "animate-pulse")} />
-          {approving ? "Making the video…" : "Looks good, make the video"}
-        </Button>
+      <div className="sticky bottom-0 -mx-4 bg-background/85 px-4 py-3 backdrop-blur-md">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4" /> Not quite, write again
+          </Button>
+          <Button variant="amber" size="lg" className="flex-1" disabled={approving} onClick={approve}>
+            <Check className={cn("h-5 w-5", approving && "animate-pulse")} />
+            {approving ? "Making the video…" : "Looks good, make the video"}
+          </Button>
+        </div>
       </div>
       <p className="text-xs font-medium text-muted-foreground">
         Nothing has rendered yet. Only when you press the amber button do we make the video.
@@ -892,6 +909,17 @@ function JobPanel({
           })}
         </div>
       </Card>
+
+      {status === "running" ? (
+        <div className="flex justify-center">
+          <Button variant="destructive" size="sm" onClick={async () => {
+            try { await cancelJob(job.id); } catch { /* ignore */ }
+            window.location.reload();
+          }}>
+            Stop this render
+          </Button>
+        </div>
+      ) : null}
 
       {status === "failed" ? (
         <ErrorBanner

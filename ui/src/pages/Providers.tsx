@@ -11,6 +11,8 @@ import {
   addProvider,
   testProvider,
   fetchProviderModels,
+  setDefaultProvider as setDefaultProviderApi,
+  deleteProvider,
   ProviderInfo,
   ProvidersResponse,
 } from "../api";
@@ -29,6 +31,7 @@ export default function Providers() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [defaultProvider, setDefaultProvider] = useState<string | undefined>();
   const [keys, setKeys] = useState<Record<string, string>>({});
+const [reveal, setReveal] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -205,21 +208,24 @@ export default function Providers() {
                   <Badge variant={selected === p.name ? "default" : "muted"}>{p.models.length} models</Badge>
                 ) : null}
                 <span className="ml-auto flex flex-wrap gap-2.5">
-                  <Button
-                    variant={selected === p.name ? "amber" : "secondary"}
-                    size="sm"
-                    onClick={() => test(p)}
-                    disabled={busy === p.name}
-                  >
+                  {p.name !== defaultProvider && (
+                    <Button variant={selected === p.name ? "amber" : "secondary"} size="sm" onClick={async () => { await setDefaultProviderApi(p.name); load(); toast.success(`${p.name} is now default`); }} disabled={busy === p.name}>
+                      Set default
+                    </Button>
+                  )}
+                  <Button variant={selected === p.name ? "amber" : "secondary"} size="sm" onClick={() => test(p)} disabled={busy === p.name}>
                     {busy === p.name ? "…" : "Check it"}
                   </Button>
-                  <Button
-                    variant={selected === p.name ? "amber" : "secondary"}
-                    size="sm"
-                    onClick={() => refreshModels(p.name)}
-                    disabled={busy === p.name}
-                  >
+                  <Button variant={selected === p.name ? "amber" : "secondary"} size="sm" onClick={() => refreshModels(p.name)} disabled={busy === p.name}>
                     {busy === p.name ? "…" : "Get models"}
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={async () => {
+                    if (!confirm(`Remove provider ${p.name}?`)) return;
+                    await deleteProvider(p.name);
+                    toast.success(`${p.name} removed`);
+                    load();
+                  }} disabled={busy === p.name} aria-label={`Remove ${p.name}`}>
+                    Remove
                   </Button>
                 </span>
               </div>
@@ -237,12 +243,15 @@ export default function Providers() {
               {p.apiKeyEnv ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <Input
-                    type="password"
+                    type={reveal[p.name] ? "text" : "password"}
                     className={cn("max-w-sm", selected === p.name && "bg-black/25")}
                     placeholder={p.apiKeyEnv}
                     value={keys[p.name] || ""}
                     onChange={(e) => setKeys({ ...keys, [p.name]: e.target.value })}
                   />
+                  <Button variant="secondary" size="sm" onClick={() => setReveal({ ...reveal, [p.name]: !reveal[p.name] })} aria-label="Toggle key visibility">
+                    {reveal[p.name] ? "Hide" : "Show"}
+                  </Button>
                   <Button
                     variant={selected === p.name ? "amber" : "default"}
                     size="lg"

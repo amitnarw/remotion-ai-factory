@@ -1,8 +1,9 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import { type ServerResponse } from "http";
 import { join, basename, isAbsolute } from "path";
-import { loadEnv, ROOT } from "./providers";
+import { ROOT } from "./providers";
+const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { actionable } from "./error-hints";
 
 export interface StageSpan {
@@ -13,7 +14,7 @@ export interface StageSpan {
 
 export interface Job {
   id: string;
-  status: "queued" | "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   progress: number;
   stage: string;
   etaSec: number | null;
@@ -31,6 +32,8 @@ export interface Job {
   storyboard?: unknown;
   /** Audio/TTS selection from the UI (narration/dialogs engine + voices). */
   audio?: unknown;
+  /** @internal handle to the spawned child process (for cancellation). */
+  child?: import("child_process").ChildProcess;
   /** Spec-engine jobs: the <id> of output/<id>-spec.json once written. */
   specId?: string;
   error?: string;
@@ -105,6 +108,15 @@ export function createStoryJob(slug: string, title: string): Job {
 
 export function getJob(id: string): Job | undefined { return jobs.get(id); }
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
+export function cancelJob(id: string): boolean {
+  const job = jobs.get(id);
+  if (!job || (job.status !== "running" && job.status !== "queued")) return false;
+  try { job.child?.kill("SIGTERM"); } catch { /* ignore */ }
+  job.status = "cancelled";
+  job.error = "Cancelled by user";
+  broadcast(job.id, { type: "failed", error: job.error });
+  return true;
+}
 
 /** Shared premise slug — must match the CLI's slug in generate.ts. */
 export function premiseSlug(premise: string): string {
@@ -196,8 +208,8 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     stdio: ["ignore", "pipe", "pipe"],
     // Inject keys saved to .env via the dashboard — the CLI has no dotenv
     // loader and reads process.env directly.
-    env: { ...process.env, ...loadEnv() },
   });
+  job.child = child;
   const handleOutput = (text: string) => {
     // Strip ANSI color escapes (Remotion prints colored output) so the
     // dashboard log console doesn't show raw escape garbage.
@@ -282,6 +294,15 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       setStage(job, "done");
       const out = latestReportFor(job.premise);
       if (out) job.output = out;
+      // Extract a poster thumbnail for the Videos tab (best-effort).
+      if (out?.mp4) {
+        const vid = (out as any).id || job.specId || job.premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+        const mp4Abs = join(ROOT, "output", basename(out.mp4));
+        const thumbAbs = join(ROOT, "output", `${vid}-thumb.jpg`);
+        try {
+          spawnSync(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbAbs], { stdio: "ignore" });
+        } catch { /* ignore */ }
+      }
       broadcast(job.id, { type: "done", timeline: job.timeline });
     } else {
       job.status = "failed";

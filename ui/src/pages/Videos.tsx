@@ -40,7 +40,11 @@ export default function Videos() {
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
   const [openReview, setOpenReview] = useState<{ id: string; reviewFolder?: string } | null>(null);
   const [openVideo, setOpenVideo] = useState<Video | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+const [deleteError, setDeleteError] = useState<string | null>(null);
+const [queryText, setQueryText] = useState("");
+const [filter, setFilter] = useState<"all" | "story" | "legacy">("all");
+const [sortDesc, setSortDesc] = useState(true);
+  const load = () => listVideos().then(setVideos).catch(() => setVideos([]));
 
   useEffect(() => {
     listVideos()
@@ -48,7 +52,12 @@ export default function Videos() {
       .catch(() => setVideos([]));
   }, []);
 
-  // Deep-link scroll: once the list landed, scroll the selected card into view.
+  // Refetch when the window regains focus (e.g. after a render finishes).
+useEffect(() => {
+  const onFocus = () => load();
+  window.addEventListener("focus", onFocus);
+  return () => window.removeEventListener("focus", onFocus);
+}, []);
   const selectedRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (selected && videos && selectedRef.current) {
@@ -70,24 +79,59 @@ export default function Videos() {
     setDeleteTarget(null);
   };
 
+const visible = (videos ?? [])
+    .filter((v) => (filter === "all" ? true : filter === "story" ? v.engine === "story" : v.engine !== "story"))
+    .filter((v) => !queryText || (v.premise ?? "").toLowerCase().includes(queryText.toLowerCase()))
+    .sort((a, b) => {
+      const ta = a.generatedAt ?? 0;
+      const tb = b.generatedAt ?? 0;
+      return sortDesc ? tb - ta : ta - tb;
+    });
+
+  const totalSec = (videos ?? []).reduce((s, v) => s + (Number(v.durationSec) || 0), 0);
+  const storyCount = (videos ?? []).filter((v) => v.engine === "story").length;
+
   return (
     <div>
-      <PageHeader title="Your videos" hintId="videos-review" />
+      <PageHeader title="Your videos" hintId="videos-review">
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder="Search premises…" className="h-9 rounded-xl bg-input px-3 text-sm" />
+          <div className="flex gap-1">
+            {(["all", "story", "legacy"] as const).map((f) => (
+              <button key={f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-xs font-bold ${filter === f ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"}`}>
+                {f === "all" ? "All" : f === "story" ? "Story" : "Legacy"}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setSortDesc((d) => !d)} className="rounded-full bg-secondary px-3 py-1 text-xs font-bold">
+            {sortDesc ? "Newest first" : "Oldest first"}
+          </button>
+        </div>
+      </PageHeader>
+
+      {videos && videos.length > 0 && (
+        <div className="mb-4 grid grid-cols-3 gap-2">
+          <div className="rounded-2xl bg-card p-3 text-center"><div className="text-lg font-extrabold">{videos.length}</div><div className="text-xs text-muted-foreground">videos</div></div>
+          <div className="rounded-2xl bg-card p-3 text-center"><div className="text-lg font-extrabold">{Math.round(totalSec)}s</div><div className="text-xs text-muted-foreground">total length</div></div>
+          <div className="rounded-2xl bg-card p-3 text-center"><div className="text-lg font-extrabold">{storyCount}</div><div className="text-xs text-muted-foreground">story pipeline</div></div>
+        </div>
+      )}
+
       {deleteError ? (
         <ErrorBanner error={deleteError} fix="Try again, if the app was restarted, refresh the page first" />
       ) : null}
 
       {videos === null ? (
         <div className="text-[15px] font-semibold text-muted-foreground">Loading…</div>
-      ) : videos.length === 0 ? (
-        <EmptyState
-          icon={<Film />}
-          title="No videos yet"
-          body="Go to Generate, pick a video and press the big yellow button, it will show up here."
-        />
+      ) : visible.length === 0 ? (
+        queryText || filter !== "all" ? (
+          <EmptyState title="No matches" body="Try a different search or filter." />
+        ) : (
+          <EmptyState icon={<Film />} title="No videos yet" body="Go to Generate, pick a video and press the big yellow button, it will show up here." />
+        )
       ) : (
         <div className="space-y-5">
-          {videos.map((v) => (
+          {visible.map((v) => (
             <div
               key={v.id}
               ref={selected === v.id ? selectedRef : undefined}
@@ -99,12 +143,17 @@ export default function Videos() {
               <button
                 onClick={() => setOpenVideo(v)}
                 title="Watch this video"
+                aria-label="Watch this video"
                 className={cn(
-                  "grid h-24 w-24 shrink-0 place-items-center rounded-2xl transition-transform active:scale-[0.97]",
+                  "grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-2xl transition-transform active:scale-[0.97]",
                   selected === v.id ? "bg-black/25" : "bg-primary/20 text-primary",
                 )}
               >
-                <Play className="h-9 w-9" />
+                {v.thumbnail ? (
+                  <img src={`/media/${v.thumbnail}`} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <Play className="h-9 w-9" />
+                )}
               </button>
               <div className="min-w-0 flex-1">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -137,10 +186,17 @@ export default function Videos() {
                   asChild
                   disabled={!v.output}
                 >
-                  <a href={`/media/${v.output}`} target="_blank" rel="noreferrer" download>
+                  <a href={`/media/${v.output}`} target="_blank" rel="noreferrer" download aria-label="Download video">
                     <Download className="h-4 w-4" /> Download
                   </a>
                 </Button>
+                {v.spec ? (
+                  <Button variant={selected === v.id ? "amber" : "secondary"} size="sm" asChild>
+                    <a href={`/media/${v.spec}`} target="_blank" rel="noreferrer" download aria-label="Download spec JSON">
+                      <Download className="h-4 w-4" /> Spec
+                    </a>
+                  </Button>
+                ) : null}
                 <Button
                   variant={selected === v.id ? "amber" : "secondary"}
                   size="sm"
@@ -159,6 +215,7 @@ export default function Videos() {
                   size="iconSm"
                   onClick={() => setDeleteTarget(v)}
                   title="Delete this video"
+                  aria-label="Delete this video"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

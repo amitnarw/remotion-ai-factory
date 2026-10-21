@@ -2,10 +2,12 @@ import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import { join, basename } from "path";
 import fs from "fs";
+import { spawnSync } from "child_process";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
+const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, getJob, getAllJobs, premiseSlug, runJob, subscribeSSE } from "./jobs";
+import { createJob, getJob, getAllJobs, premiseSlug, runJob, cancelJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
@@ -75,6 +77,24 @@ app.post("/api/providers/:name/config", (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/providers/:name/default", (req, res) => {
+  const { name } = req.params;
+  const cfg = loadConfig();
+  if (!cfg.providers[name]) return res.status(400).json({ error: "unknown provider" });
+  cfg.defaultProvider = name;
+  saveConfig(cfg);
+  res.json({ ok: true });
+});
+
+app.delete("/api/providers/:name", (req, res) => {
+  const { name } = req.params;
+  const cfg = loadConfig();
+  if (!cfg.providers[name]) return res.status(404).json({ error: "unknown provider" });
+  if (cfg.defaultProvider === name) cfg.defaultProvider = undefined;
+  delete cfg.providers[name];
+  saveConfig(cfg);
+  res.json({ ok: true });
+});
 app.post("/api/providers", (req, res) => {
   const { name, package: pkg, baseUrl, apiKeyEnv } = req.body as {
     name?: string; package?: string; baseUrl?: string; apiKeyEnv?: string;
@@ -347,7 +367,16 @@ app.post("/api/render-spec", (req, res) => {
   res.json({ jobId: job.id });
 });
 
-// ---------- Jobs ----------
+app.get("/api/jobs", (_req, res) => {
+  res.json(
+    getAllJobs().map((j) => ({
+      id: j.id,
+      status: j.status,
+      premise: j.premise,
+      createdAt: j.createdAt,
+    })),
+  );
+});
 app.post("/api/generate", async (req, res) => {
   const { premise, provider, model } = req.body as { premise?: string; provider?: string; model?: string };
   if (!premise) {
@@ -463,7 +492,43 @@ app.get("/api/jobs/:id/events", (req, res) => {
   subscribeSSE(req.params.id, res);
 });
 
-// ---------- Videos ----------
+// ---------- Voice sample (audition) ----------
+app.post("/api/voice-sample", (req, res) => {
+  const body = req.body as { engine?: string; voice?: string; voiceDesc?: string; text?: string };
+  const engine = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
+  const text = body.text || "Hey there! This is my real voice. Let's make something amazing together.";
+  const tmpDir = join(ROOT, "output", "_voice-samples");
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const id = `sample-${Date.now()}`;
+  const outDir = join(tmpDir, id);
+  fs.mkdirSync(outDir, { recursive: true });
+  const job = {
+    engine,
+    outDir,
+    lines: [{ id: "s", text, voice: body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm"), voiceDesc: body.voiceDesc }],
+  };
+  const jobPath = join(outDir, "job.json");
+  fs.writeFileSync(jobPath, JSON.stringify(job, null, 2));
+  const python = engine === "kitten2"
+    ? (process.env.TTS_KITTEN_PYTHON || "C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe")
+    : (process.env.TTS_VOXCPM_PYTHON || "");
+  if (!python || !fs.existsSync(python)) {
+    return res.status(400).json({ error: "engine not installed", fix: "Install it from the Setup tab first" });
+  }
+  const r = spawnSync(python, [join(ROOT, "scripts", "story-tts.py"), jobPath, "--engine", engine], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+    timeout: 120000,
+  });
+  const wavPath = join(outDir, "s.wav");
+  if (r.status !== 0 || !fs.existsSync(wavPath)) {
+    return res.status(500).json({ error: "sample generation failed", detail: (r.stderr || r.stdout || "").slice(-500) });
+  }
+  res.setHeader("Content-Type", "audio/wav");
+  res.sendFile(wavPath);
+});
 app.get("/api/videos", (_req, res) => {
   const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return res.json([]);
@@ -473,12 +538,23 @@ app.get("/api/videos", (_req, res) => {
     const report = JSON.parse(fs.readFileSync(join(dir, f), "utf8"));
     const reviewDir = (report.id || id) + "-review";
     const reviewExists = fs.existsSync(join(dir, reviewDir));
+    const thumbPath = join(dir, `${id}-thumb.jpg`);
+    if (!fs.existsSync(thumbPath) && report.output) {
+      const mp4Abs = join(dir, basename(report.output));
+      if (fs.existsSync(mp4Abs) && fs.existsSync(FFMPEG)) {
+        try {
+          const { spawn: sp } = require("child_process");
+          sp(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbPath], { stdio: "ignore", detached: true }).unref();
+        } catch { /* ignore */ }
+      }
+    }
     return {
       id,
       ...report,
       output: report.output ? basename(report.output) : undefined,
       spec: report.spec ? basename(report.spec) : undefined,
       reviewFolder: reviewExists ? reviewDir : undefined,
+      thumbnail: fs.existsSync(thumbPath) ? `${id}-thumb.jpg` : undefined,
     };
   });
   videos.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
@@ -543,7 +619,11 @@ app.get("/api/voices", (req, res) => {
   });
 });
 
-// ---------- Delete a video (all artifacts for one premise id) ----------
+app.delete("/api/jobs/:id", (req, res) => {
+  const ok = cancelJob(req.params.id);
+  if (!ok) return res.status(404).json({ error: "job not running or unknown" });
+  res.json({ cancelled: true });
+});
 app.delete("/api/videos/:id", (req, res) => {
   const { id } = req.params;
   // Strict id format blocks path traversal (e.g. "..") before any fs call.

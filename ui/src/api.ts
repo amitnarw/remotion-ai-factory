@@ -100,6 +100,12 @@ export interface VoiceInfo {
   sample: string | null;
 }
 
+export async function setDefaultProvider(name: string): Promise<{ ok: boolean }> {
+  return json(await fetch(`${BASE}/providers/${encodeURIComponent(name)}/default`, { method: "POST" }));
+}
+export async function deleteProvider(name: string): Promise<{ ok: boolean }> {
+  return json(await fetch(`${BASE}/providers/${encodeURIComponent(name)}`, { method: "DELETE" }));
+}
 export async function getVoices(engine?: string): Promise<{ voices: VoiceInfo[]; available?: boolean; engines?: { id: string; label: string; note: string }[] }> {
   const q = engine ? `?engine=${encodeURIComponent(engine)}` : "";
   return json(await fetch(`${BASE}/voices${q}`));
@@ -135,6 +141,14 @@ export async function startTtsInstall(engine: string): Promise<{ jobId: string }
 export async function getTtsInstallJob(id: string): Promise<TtsInstallJob> {
   return json(await fetch(`${BASE}/tts/job/${id}`));
 }
+export async function cancelJob(id: string): Promise<{ cancelled: boolean }> {
+  return json(await fetch(`${BASE}/jobs/${id}`, { method: "DELETE" }));
+}
+export async function voiceSample(body: { engine: string; voice?: string; voiceDesc?: string; text?: string }): Promise<Blob> {
+  const r = await fetch(`${BASE}/voice-sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.blob();
+}
 
 export interface Video {
   id: string;
@@ -147,6 +161,7 @@ export interface Video {
   events?: number;
   durationSec?: number | string;
   output?: string;
+  thumbnail?: string;
   spec?: string;
   generatedAt?: number;
   reviewFolder?: string;

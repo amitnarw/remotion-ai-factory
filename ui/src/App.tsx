@@ -5,6 +5,7 @@
 import * as React from "react";
 import { Clapperboard, Sparkles, Film, Plug, Settings } from "lucide-react";
 import { Toaster } from "sonner";
+import { toast } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { HelpDialog } from "./components/InfoTip";
 import { useQuery, setQuery } from "./lib/navigation";
@@ -31,6 +32,27 @@ function safeTab(raw: string | undefined): TabKey {
 export default function App() {
   const query = useQuery();
   const tab = safeTab(query.get("tab") ?? undefined);
+  const seenDone = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/jobs");
+        if (!r.ok) return;
+        const jobs = (await r.json()) as { id: string; status: string; premise: string }[];
+        for (const j of jobs) {
+          if (j.status === "done" && !seenDone.current.has(j.id)) {
+            seenDone.current.add(j.id);
+            // Only toast if not currently on the generate tab viewing that job.
+            toast.success("Your video is ready!", { description: j.premise });
+          }
+        }
+      } catch { /* ignore */ }
+    };
+    const t = window.setInterval(poll, 6000);
+    poll();
+    return () => window.clearInterval(t);
+  }, []);
 
   // Default the URL to the primary tab on first paint (no history spam).
   React.useEffect(() => {

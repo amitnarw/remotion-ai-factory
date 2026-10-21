@@ -57,7 +57,7 @@ function EngineCard({ engine, status, onInstall }: {
       {job?.status === "failed" && <div className="text-xs text-destructive">Failed: {job.error}</div>}
       {!status.installed && !running && (
         <Button variant="amber" size="lg" className="w-full" onClick={() => {
-          startTtsInstall(engine).then((r) => setJob({ id: r.jobId, engine, status: "queued", stage: "queued", progress: 0, message: "Queued" }));
+          startTtsInstall(engine).then((r: { jobId: string }) => setJob({ id: r.jobId, engine, status: "queued", stage: "queued", progress: 0, message: "Queued" }));
         }}>
           <Download className="h-5 w-5" /> Download {status.label} (~{status.sizeMB} MB)
         </Button>
