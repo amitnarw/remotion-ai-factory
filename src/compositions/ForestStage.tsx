@@ -23,6 +23,7 @@ import { WeatherLayer, lightsOutAt } from "./weather";
 import { GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
 import { Birds } from "./Birds";
+import { keepMistBase, driftMist } from "./mist";
 
 /** Per-TOD look for forest. */
 const FOREST_TOD: Record<
@@ -275,6 +276,7 @@ function ForestMist({ active, night }: { active: boolean; night: boolean }) {
     }
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
+    keepMistBase(g);
     return g;
   }, []);
   const mat = useMemo(() => new THREE.PointsMaterial({
@@ -287,17 +289,7 @@ function ForestMist({ active, night }: { active: boolean; night: boolean }) {
     depthWrite: false,
   }), [night]);
   useFrame(() => {
-    const pos = geo.attributes.position;
-    const alphaAttr = geo.attributes.alpha;
-    for (let i = 0; i < 80; i++) {
-      const driftX = Math.sin(t * 0.1 + i) * 0.3;
-      const driftZ = Math.cos(t * 0.08 + i) * 0.2;
-      pos.setXYZ(i, pos.getX(i) + driftX, pos.getY(i), pos.getZ(i) + driftZ);
-      const pulse = 0.5 + 0.5 * Math.sin(t * 0.3 + i);
-      alphaAttr.setX(i, alphaAttr.getX(i) * 0.99 + (0.06 + 0.03 * pulse) * 0.01);
-    }
-    pos.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
+    driftMist(geo, t, { ampX: 0.3, ampZ: 0.2, wx: 0.1, wz: 0.08, pulse: 0.3 });
   });
 
   if (!active) return null;

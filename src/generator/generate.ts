@@ -21,7 +21,7 @@
 import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
-import { validateSpec, type ShotSpec } from "./spec.schema";
+import { validateSpec, SettingsSchema, type ShotSpec, type VideoSettings } from "./spec.schema";
 import { runTtsStage } from "./tts";
 import { secToFrame } from "./timing";
 import { generateSpec } from "./ai/generate-spec";
@@ -43,8 +43,6 @@ const BUNDLE_SRC = join(process.cwd(), "src", "index.ts");
 const COMP_ID = "WhatIfVideo";
 const OUTPUT_DIR = join(process.cwd(), "output");
 const FPS = 30;
-const WIDTH = 1080;
-const HEIGHT = 1920;
 
 /** Slug a premise into a safe file id (shared logic with server/jobs.ts). */
 function slug(text: string): string {
@@ -72,7 +70,9 @@ function parseArgs(argv: string[]): {
   noRender: boolean;
   fromSpec: string | undefined;
   audioFile: string | undefined;
+  settings: Partial<VideoSettings>;
 } {
+  const settings: Partial<VideoSettings> = {};
   let provider: string | undefined;
   let model: string | undefined;
   let noRender = false;
@@ -91,11 +91,21 @@ function parseArgs(argv: string[]): {
       fromSpec = argv[++i];
     } else if (a === "--audio-file" && argv[i + 1]) {
       audioFile = argv[++i];
+    } else if (a === "--format" && argv[i + 1]) {
+      settings.format = argv[++i] as VideoSettings["format"];
+    } else if (a === "--duration" && argv[i + 1]) {
+      settings.targetDuration = Number(argv[++i]);
+    } else if (a === "--scenes" && argv[i + 1]) {
+      settings.sceneCount = Number(argv[++i]);
+    } else if (a === "--quality" && argv[i + 1]) {
+      settings.quality = argv[++i] as VideoSettings["quality"];
+    } else if (a === "--settings-json" && argv[i + 1]) {
+      Object.assign(settings, JSON.parse(argv[++i]));
     } else if (!a.startsWith("--")) {
       premiseParts.push(a);
     }
   }
-  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile };
+  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile, settings };
 }
 
 function writeFailedLog(id: string, premise: string, error: unknown): string {
@@ -120,7 +130,7 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model, noRender, fromSpec, audioFile } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec, audioFile, settings } = parseArgs(process.argv.slice(2));
   if (fromSpec) {
     // --- render-only mode: an approved spec (dashboard plan → approve) ---
     (async () => {
@@ -166,7 +176,7 @@ function main() {
             : "offline template families"
         }`,
       );
-      const result = await generateSpec(premise, provider, model);
+      const result = await generateSpec(premise, provider, model, settings);
       const spec = result.spec;
       const providerUsed = result.provider;
       const modelUsed = result.model;
@@ -296,9 +306,11 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
         "--framerate",
         String(valid.fps ?? FPS),
         "--width",
-        String(WIDTH),
+        String(valid.width ?? 1080),
         "--height",
-        String(HEIGHT),
+        String(valid.height ?? 1920),
+        // Draft quality renders at half size for fast previews.
+        ...(valid.settings?.quality === "draft" ? ["--scale", "0.5"] : []),
         "--output",
         out,
         "--overwrite",

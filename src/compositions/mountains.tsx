@@ -24,6 +24,18 @@ function seeded(specId: string, family: string, i: number): number {
   return random(`${specId}-${family}-${i}`);
 }
 
+
+/** Two triangles per quad. Each quad is four vertices stored in order
+ *  (base-left, top-left, top-right, base-right), so the quad is 0-1-2 + 0-2-3. */
+function quadIndex(quads: number): number[] {
+  const out: number[] = [];
+  for (let q = 0; q < quads; q++) {
+    const b = q * 4;
+    out.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  }
+  return out;
+}
+
 export function MountainRidge({ bounds, specId, night, baseY = 0 }: MountainRidgeProps) {
   const ridges = useMemo(() => {
     const arr: Array<{
@@ -53,6 +65,8 @@ export function MountainRidge({ bounds, specId, night, baseY = 0 }: MountainRidg
         ridgePos.push(x0, 0, 0, x0, h0, 0, x1, h1, 0, x1, 0, 0);
       }
       ridgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(ridgePos, 3));
+      ridgeGeo.setIndex(quadIndex(ridgePos.length / 12));
+      ridgeGeo.computeVertexNormals(); // lit material needs normals or it renders black
       // snow cap geometry
       let snowGeo: THREE.BufferGeometry | null = null;
       const snow = !night && layer >= 2;
@@ -70,6 +84,8 @@ export function MountainRidge({ bounds, specId, night, baseY = 0 }: MountainRidg
         if (snowPos.length > 0) {
           snowGeo = new THREE.BufferGeometry();
           snowGeo.setAttribute("position", new THREE.Float32BufferAttribute(snowPos, 3));
+          snowGeo.setIndex(quadIndex(snowPos.length / 12));
+          snowGeo.computeVertexNormals();
         }
       }
       const col = night
@@ -84,24 +100,13 @@ export function MountainRidge({ bounds, specId, night, baseY = 0 }: MountainRidg
     <group position={[0, baseY, 0]}>
       {ridges.map((r, i) => (
         <group key={i} position={[0, r.baseY, r.z]}>
-          <primitive object={r.ridgeGeo} />
-          <meshStandardMaterial
-            attach="material"
-            color={r.col}
-            roughness={1}
-            metalness={0}
-            side={THREE.DoubleSide}
-          />
+          <mesh geometry={r.ridgeGeo}>
+            <meshStandardMaterial color={r.col} roughness={1} metalness={0} side={THREE.DoubleSide} />
+          </mesh>
           {r.snow && r.snowGeo && (
-            <>
-              <primitive object={r.snowGeo} />
-              <meshStandardMaterial
-                attach="material"
-                color="#ffffff"
-                roughness={0.8}
-                metalness={0}
-              />
-            </>
+            <mesh geometry={r.snowGeo}>
+              <meshStandardMaterial color="#ffffff" roughness={0.8} metalness={0} />
+            </mesh>
           )}
         </group>
       ))}

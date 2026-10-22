@@ -238,7 +238,9 @@ function CharacterInstance({
     );
   }
 
-  mixer.update(1 / 30);
+  // Absolute clip time from the frame number. mixer.update() here would
+  // advance the animation once per React render instead of once per frame.
+  mixer.setTime(frame / 30 + phase);
 
   // Feet on ground: lift by the model's bounding-box bottom, scaled by the
   // instance scale; the squash compresses toward the feet so contact holds.

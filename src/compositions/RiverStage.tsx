@@ -22,6 +22,7 @@ import { statValueAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { WaterSurface, GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
+import { keepMistBase, driftMist } from "./mist";
 
 interface RiverConfig {
   hasWaterfall: boolean;
@@ -189,6 +190,7 @@ function RiverMist({ active, night }: { active: boolean; night: boolean }) {
     }
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
+    keepMistBase(g);
     return g;
   }, []);
   const mat = useMemo(() => new THREE.PointsMaterial({
@@ -201,17 +203,7 @@ function RiverMist({ active, night }: { active: boolean; night: boolean }) {
     depthWrite: false,
   }), [night]);
   useFrame(() => {
-    const pos = geo.attributes.position;
-    const alphaAttr = geo.attributes.alpha;
-    for (let i = 0; i < 40; i++) {
-      const driftX = Math.sin(t * 0.15 + i) * 0.2;
-      const driftZ = Math.cos(t * 0.1 + i) * 0.15;
-      pos.setXYZ(i, pos.getX(i) + driftX, pos.getY(i), pos.getZ(i) + driftZ);
-      const pulse = 0.5 + 0.5 * Math.sin(t * 0.4 + i);
-      alphaAttr.setX(i, alphaAttr.getX(i) * 0.99 + (0.08 + 0.04 * pulse) * 0.01);
-    }
-    pos.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
+    driftMist(geo, t, { ampX: 0.2, ampZ: 0.15, wx: 0.15, wz: 0.1, pulse: 0.4 });
   });
 
   if (!active) return null;
@@ -220,6 +212,8 @@ function RiverMist({ active, night }: { active: boolean; night: boolean }) {
 }
 
 function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: number; z: number; height: number; night: boolean }) {
+  const frame = useCurrentFrame();
+  const t = frame / 30;
   const geo = useMemo(() => {
     const positions: number[] = [];
     const alphas: number[] = [];
@@ -244,6 +238,7 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
     g.userData = { fallSpeeds, driftXs, driftZs, height };
+    keepMistBase(g);
     return g;
   }, [height]);
   const mat = useMemo(() => new THREE.PointsMaterial({
@@ -259,11 +254,17 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
     const pos = geo.attributes.position;
     const alphaAttr = geo.attributes.alpha;
     const { fallSpeeds, driftXs, driftZs, height } = geo.userData;
+    // Closed form of the old per-tick fall: each drop wraps from the bottom
+    // back to the top, so its height is a pure function of the frame number.
+    const base = geo.userData.base as Float32Array;
+    const baseAlpha = geo.userData.baseAlpha as Float32Array;
+    const range = height - 0.2;
     for (let i = 0; i < 60; i++) {
-      let y = pos.getY(i) - fallSpeeds[i] / 30;
-      if (y < 0.2) y = height;
-      pos.setXYZ(i, pos.getX(i) + driftXs[i], y, pos.getZ(i) + driftZs[i]);
-      alphaAttr.setX(i, Math.min(1, alphaAttr.getX(i) + 0.01));
+      const fallen = fallSpeeds[i] * t;
+      const start = base[3 * i + 1] - 0.2;
+      const y = 0.2 + (((start - fallen) % range) + range) % range;
+      pos.setXYZ(i, base[3 * i] + driftXs[i] * frame, y, base[3 * i + 2] + driftZs[i] * frame);
+      alphaAttr.setX(i, Math.min(1, baseAlpha[i] + 0.01 * frame));
     }
     pos.needsUpdate = true;
     alphaAttr.needsUpdate = true;

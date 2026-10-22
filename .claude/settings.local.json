@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk -F: '$1>344')",
+      "Bash(python3 -)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Phase 1 step 1 \\(part 2\\): mountain ridge, remove dead story jobs *)",
+      "Bash(git bundle *)"
+    ]
+  }
+}

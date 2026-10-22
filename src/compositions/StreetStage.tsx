@@ -564,7 +564,16 @@ function BuildingSlots(specId: string, accentName: string): BuildingSlotLayout {
   return { variants, near: group(nearSlots), far: group(farSlots), awnings };
 }
 
-function TintedClone({ gltfFile, placement, tintStrength = 0.7 }: { gltfFile: string; placement: Placement; tintStrength?: number }) {
+/** Boundary owner: a missing model renders nothing instead of crashing the scene. */
+function TintedClone(props: Parameters<typeof TintedCloneModel>[0]) {
+  return (
+    <GlbSuspense label={props.gltfFile} file={props.gltfFile} fallback={null}>
+      <TintedCloneModel {...props} />
+    </GlbSuspense>
+  );
+}
+
+function TintedCloneModel({ gltfFile, placement, tintStrength = 0.7 }: { gltfFile: string; placement: Placement; tintStrength?: number }) {
   const gltf = useGltfPaint(gltfFile);
   const prep = useMemo(() => {
     if (!gltf) return null;
@@ -590,7 +599,16 @@ function TintedClone({ gltfFile, placement, tintStrength = 0.7 }: { gltfFile: st
 /*  A single GLB normalized to a height and placed at [x, y, z]         */
 /* ------------------------------------------------------------------ */
 
-function GlbSingle({
+/** Boundary owner: a missing model renders nothing instead of crashing the scene. */
+function GlbSingle(props: Parameters<typeof GlbSingleModel>[0]) {
+  return (
+    <GlbSuspense label={props.file} file={props.file} fallback={null}>
+      <GlbSingleModel {...props} />
+    </GlbSuspense>
+  );
+}
+
+function GlbSingleModel({
   file, x, z = 0, y = 0, rotY = 0, h = 1, tint = "#ffffff", tintStrength = 0.5, rough = 0.9, leafTint,
 }: {
   file: string;
@@ -866,7 +884,16 @@ function ParkedCar({ def, specId }: { def: CarDef; specId: string; index: number
 }
 
 /** Car body normalized to ~1.9 m width; glass excluded from tint. */
-function CarBody({ def, specId }: { def: CarDef; specId: string }) {
+/** Boundary owner: a missing car model renders nothing instead of crashing. */
+function CarBody(props: { def: CarDef; specId: string }) {
+  return (
+    <GlbSuspense label={props.def.file} file={props.def.file} fallback={null}>
+      <CarBodyModel {...props} />
+    </GlbSuspense>
+  );
+}
+
+function CarBodyModel({ def, specId }: { def: CarDef; specId: string }) {
   void specId;
   const gltf = useGltfPaint(def.file);
   const prep = useMemo(() => {

@@ -18,7 +18,7 @@ function lerpColor(a: string, b: string, t: number): string {
   const cr = lerpNum(ca.r, cb.r, t);
   const cg = lerpNum(ca.g, cb.g, t);
   const cb_ = lerpNum(ca.b, cb.b, t);
-  return new THREE.Color(cr, cg, cb_).getHexString();
+  return `#${new THREE.Color(cr, cg, cb_).getHexString()}`;
 }
 
 /** Interpolate a THREE.Vector3-like tuple. */

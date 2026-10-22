@@ -69,6 +69,10 @@ interface WhatIfVideoProps {
 /** Film grain: animated SVG noise (feTurbulence) overlaid at low opacity,
  *  with a very soft color grade so blacks look crushed and highlights warm. */
 function FilmGrain() {
+  // The noise pattern is re-seeded from the frame number, so every frame gets
+  // a different grain that is still identical on every re-render. (The old
+  // CSS spin animation ran on wall-clock time and was not frame-accurate.)
+  const frame = useCurrentFrame();
   return (
     <div
       style={{
@@ -81,11 +85,7 @@ function FilmGrain() {
         filter: `contrast(1.08) saturate(1.04)`,
       }}
     >
-      <svg
-        width="100%"
-        height="100%"
-        style={{ display: "block", animation: `spin ${2 / 3}s linear infinite` }}
-      >
+      <svg width="100%" height="100%" style={{ display: "block" }}>
         <defs>
           <filter id="grain" x="0" y="0" width="100%" height="100%">
             <feTurbulence
@@ -93,6 +93,7 @@ function FilmGrain() {
               baseFrequency="0.9"
               numOctaves="3"
               stitchTiles="stitch"
+              seed={frame % 97}
             />
             <feComponentTransfer>
               <feFuncR type="linear" slope="0.6" intercept="0.7" />
@@ -103,9 +104,6 @@ function FilmGrain() {
         </defs>
         <rect width="100%" height="100%" filter="url(#grain)" />
       </svg>
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
     </div>
   );
 }
@@ -158,6 +156,9 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         width={width}
         height={height}
         style={{ width, height }}
+        // Shadow maps: the stages already mark lights and meshes castShadow,
+        // but without this flag every one of those is ignored.
+        shadows
       >
         {activeScene.kit === "street-block" ? (
           // The dense populated street world (time-of-day looks + StatHud

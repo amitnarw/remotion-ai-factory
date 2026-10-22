@@ -9,7 +9,7 @@
  *   • useGltfPaint: after the model resolves, paint the real asset into the
  *     current canvas frame, then release the gate.
  */
-import { Suspense, Component, useEffect } from "react";
+import { Suspense, Component, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { staticFile, delayRender, continueRender } from "remotion";
 import { useGLTF } from "@react-three/drei";
@@ -61,9 +61,60 @@ class ModelBoundary extends Component<{ onError: (error: unknown) => void; fallb
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
-/** Boundary + Suspense pair shared by every GLB-consuming piece. */
+type ModelStatus = "pending" | "ok" | "missing";
+const MODEL_STATUS = new Map<string, "ok" | "missing">();
+
+/**
+ * Check that the file exists BEFORE the GLTF loader runs. A rejected loader
+ * request is not reliably caught by React error boundaries inside the Remotion
+ * render (it fails the whole render), so a missing model is detected up front
+ * and simply never loaded. The check holds the frame with delayRender.
+ */
+function useModelStatus(file: string): ModelStatus {
+  const [status, setStatus] = useState<ModelStatus>(() => MODEL_STATUS.get(file) ?? "pending");
+  useEffect(() => {
+    const known = MODEL_STATUS.get(file);
+    if (known) {
+      setStatus(known);
+      return;
+    }
+    const handle = delayRender(`model check: ${file}`, { timeoutInMilliseconds: 60000 });
+    let cancelled = false;
+    fetch(staticFile(file), { cache: "no-store" })
+      .then(async (res) => {
+        if (res.ok) {
+          await res.body?.cancel();
+          return "ok" as const;
+        }
+        return "missing" as const;
+      })
+      .catch(() => "missing" as const)
+      .then((result) => {
+        MODEL_STATUS.set(file, result);
+        if (result === "missing") releaseModelLoad(file);
+        if (!cancelled) setStatus(result);
+        continueRender(handle);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+  return status;
+}
+
+/**
+ * Model gate shared by every GLB-consuming piece: a missing file shows the
+ * fallback (with one console warning) and never reaches the GLTF loader; a
+ * present file loads under its Suspense + error boundary.
+ */
 export function GlbSuspense({ file, label, fallback, children }: { file: string; label: string; fallback: ReactNode; children: ReactNode }) {
   gateModelLoad(file);
+  const status = useModelStatus(file);
+  if (status === "missing") {
+    modelMissingWarning(label, file);
+    return <>{fallback}</>;
+  }
+  if (status === "pending") return <>{fallback}</>;
   return (
     <ModelBoundary onError={() => modelMissingWarning(label, file)} fallback={fallback}>
       <Suspense fallback={fallback}>{children}</Suspense>

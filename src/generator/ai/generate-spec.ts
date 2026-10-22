@@ -14,7 +14,15 @@ import { Ollama } from "ollama";
 import { z } from "zod";
 import { validateAssets } from "../asset-catalog";
 import { buildKnowledge } from "./knowledge";
-import { ShotSpec, ShotSpecSchema, validateSpec } from "../spec.schema";
+import {
+  ShotSpec,
+  ShotSpecSchema,
+  SettingsSchema,
+  formatDims,
+  maxDurationFor,
+  validateSpec,
+  type VideoSettings,
+} from "../spec.schema";
 import {
   loadAiConfig,
   resolveModel,
@@ -47,7 +55,7 @@ Output ONLY a single JSON object conforming to the zod schema below. No prose,
 no markdown fences.
 
 Rules:
-- Format: vertical 1080x1920, 30fps, TOTAL duration 12-45s (hard cap 45s — this is a Short).
+- Format, total duration and scene count come from the SETTINGS block in the user message. Follow it exactly. 30fps.
 - Scenes must start at t=0 and tile contiguously (no gaps, no overlaps) — every second covered.
 - Every number drives picture, caption, timer AND audio — sync is arithmetic
   (frame = seconds * fps), so everything stays frame-locked automatically.
@@ -83,7 +91,7 @@ HARD RULES:
 - EVERY scene declares: scenes[i] = { scene: <same string as kit>, kit: <one from
   the scene library>, from, to, look: { timeOfDay: <one from the menu> } }.
   A scene without .kit or without .look.timeOfDay is REJECTED.
-- MULTIPLE SHOTS ALLOWED (1-3 scenes; they tile contiguously). A cut between
+- MULTIPLE SHOTS ALLOWED (1-3 scenes unless SETTINGS gives a scene count; they tile contiguously). A cut between
   scenes = a location/time-of-day CHANGE (open in the most striking setting,
   e.g. the earth from orbit, then land on the street; or a golden-hour street
   that turns to night). Every shot must feel different from the others.
@@ -159,9 +167,28 @@ premise as a question.
 Write the story's complete ShotSpec now.
 `;
 
-function buildUserPrompt(premise: string): string {
+/** The user's production settings as hard constraints for the writer. */
+function settingsBlock(settings: VideoSettings): string {
+  const dims = formatDims(settings.format);
+  const max = maxDurationFor(settings.format);
+  const duration = settings.targetDuration
+    ? `about ${settings.targetDuration}s (must stay between 8s and ${max}s)`
+    : settings.format === "16:9"
+      ? "between 60s and 180s"
+      : "between 12s and 45s";
+  const scenes = settings.sceneCount ? `exactly ${settings.sceneCount}` : "1 to 6";
+  return `
+=== SETTINGS (mandatory) ===
+- format: ${settings.format} (${dims.width}x${dims.height}, 30fps)
+- total duration: ${duration}
+- scenes: ${scenes}
+=== END SETTINGS ===`;
+}
+
+function buildUserPrompt(premise: string, settings: VideoSettings): string {
   return `
 Premise: "${premise}"
+${settingsBlock(settings)}
 
 ${KNOWLEDGE.replace("{KNOWLEDGE}", buildKnowledge(premise))}
 `;
@@ -208,18 +235,19 @@ async function generateWithModel(
   provider: string,
   model: string,
   premise: string,
+  settings: VideoSettings,
   ollamaDirect: OllamaDirect | null = null,
 ): Promise<ShotSpec> {
   let lastFailure: { violations?: string; rawOutput?: string } | null = null;
   const fullPrompt =
-    buildUserPrompt(premise) + (lastFailure ? buildRepairContext(lastFailure) : "");
+    buildUserPrompt(premise, settings) + (lastFailure ? buildRepairContext(lastFailure) : "");
 
   for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
     const started = Date.now();
     const promptForAttempt =
       attempt === 1
         ? fullPrompt
-        : buildUserPrompt(premise) + (lastFailure ? buildRepairContext(lastFailure) : "");
+        : buildUserPrompt(premise, settings) + (lastFailure ? buildRepairContext(lastFailure) : "");
     console.log(
       `[AI] attempt ${attempt}/${MAX_REPAIR_ATTEMPTS} — prompting ${provider}/${model}...`,
     );
@@ -272,7 +300,8 @@ async function generateWithModel(
       console.log(
         `[AI] response received in ${secs}s${totalTokens ? ` (${totalTokens} tokens)` : ""}`,
       );
-      const valid = validateSpec(spec); // throws ZodError if invalid
+      // Our settings win over whatever the model wrote into the settings field.
+      const valid = validateSpec({ ...(spec as object), settings }); // throws ZodError if invalid
       validateAssets(valid); // throws if a cast asset id doesn't exist (repairable)
       console.log(
         `[AI] spec validation — PASS (${valid.scenes.length} scenes, ${(valid.events ?? []).length} events)`,
@@ -366,7 +395,9 @@ export async function generateSpec(
   premise: string,
   providerName: string | undefined,
   modelId: string | undefined,
+  settingsInput: Partial<VideoSettings> = {},
 ): Promise<GenerateSpecResult> {
+  const settings = SettingsSchema.parse(settingsInput);
   const config = loadAiConfig();
   const resolved = resolveModel(config, providerName, modelId);
 
@@ -375,7 +406,7 @@ export async function generateSpec(
     const { buildFamilySpec } = await import("../build-family-spec");
     const family = buildFamilySpec(premise);
     if (family) {
-      const spec = { ...family, id: slug(premise), title: premise };
+      const spec = { ...family, id: slug(premise), title: premise, settings };
       return {
         spec: validateSpec(spec),
         provider: "offline",
@@ -407,6 +438,7 @@ export async function generateSpec(
     resolved.provider,
     resolved.model,
     premise,
+    settings,
     ollamaDirect,
   );
 

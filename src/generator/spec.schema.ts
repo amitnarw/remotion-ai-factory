@@ -176,6 +176,38 @@ export const SceneSchema = z.object({
 export type SceneType = z.infer<typeof SceneSchema>;
 export type CastEntry = NonNullable<SceneType["cast"]>[number];
 
+/**
+ * User-chosen production settings (step 2). Everything is optional so specs
+ * written before this existed still validate and render as 9:16 Shorts.
+ *   format       — output shape; drives width/height and the duration cap
+ *   targetDuration — seconds the writer should aim for (within the cap)
+ *   sceneCount   — how many scenes to tile the video with (1..12)
+ *   quality      — "draft" renders at half resolution for fast previews
+ */
+export const FORMATS = ["9:16", "16:9", "1:1"] as const;
+export type VideoFormat = (typeof FORMATS)[number];
+
+export const SettingsSchema = z.object({
+  format: z.enum(FORMATS).default("9:16"),
+  targetDuration: z.number().positive().optional(),
+  sceneCount: z.number().int().min(1).max(12).optional(),
+  quality: z.enum(["draft", "final"]).default("final"),
+});
+export type VideoSettings = z.infer<typeof SettingsSchema>;
+
+/** Pixel size of each output format (1080 short side for every format). */
+export function formatDims(format: VideoFormat): { width: number; height: number } {
+  if (format === "16:9") return { width: 1920, height: 1080 };
+  if (format === "1:1") return { width: 1080, height: 1080 };
+  return { width: 1080, height: 1920 };
+}
+
+/** Longest video the format may contain, in seconds. Shorts stay under 90s;
+ *  landscape is the long-form shape (up to about 10 minutes). */
+export function maxDurationFor(format: VideoFormat): number {
+  return format === "16:9" ? 600 : 90;
+}
+
 export const ShotSpecSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -183,6 +215,7 @@ export const ShotSpecSchema = z.object({
   width: z.number().default(1080),
   height: z.number().default(1920),
   palette: z.string().default("pastelDay"),
+  settings: SettingsSchema.optional(),
   hook: z.object({
     text: z.string(),
     keywordHighlight: z.array(z.string()).optional().default([]),
@@ -273,15 +306,20 @@ export const ShotSpecSchema = z.object({
 export type ShotSpec = z.infer<typeof ShotSpecSchema>;
 
 export function validateSpec(input: unknown): ShotSpec {
-  const spec = ShotSpecSchema.parse(input);
+  // Settings decide the output shape: format sets width/height, so a spec
+  // written before settings existed comes out as 9:16 Shorts, as before.
+  const parsed = ShotSpecSchema.parse(input);
+  const settings = SettingsSchema.parse(parsed.settings ?? {});
+  const dims = formatDims(settings.format);
+  const spec: ShotSpec = { ...parsed, settings, width: dims.width, height: dims.height };
 
   // ---- Timing sanity (enforced so a plausible-looking LLM spec can't turn
   // into a broken 19-minute render). Each problem is phrased as a concrete
   // field violation so the LLM repair loop can fix it precisely.
   const problems: string[] = [];
   const MIN_DURATION_S = 8;
-  const MAX_DURATION_S = 45;
-  const MAX_SCENES = 6;
+  const MAX_DURATION_S = maxDurationFor(settings.format);
+  const MAX_SCENES = settings.sceneCount ?? 6;
 
   let t = 0;
   spec.scenes.forEach((s, i) => {
@@ -299,7 +337,7 @@ export function validateSpec(input: unknown): ShotSpec {
   });
   if (spec.scenes.length > MAX_SCENES) {
     problems.push(
-      `scenes has ${spec.scenes.length} entries — keep it to ${MAX_SCENES} or fewer scenes`,
+      `scenes has ${spec.scenes.length} entries — keep it to ${MAX_SCENES} or fewer scenes (the scene count setting)`,
     );
   }
   spec.scenes.forEach((s, i) => {
@@ -317,7 +355,7 @@ export function validateSpec(input: unknown): ShotSpec {
   }
   if (duration > MAX_DURATION_S) {
     problems.push(
-      `total duration ${duration}s exceeds the ${MAX_DURATION_S}s cap — this is a Short, tighten scenes[].to so the video is 8-45s total`,
+      `total duration ${duration}s exceeds the ${MAX_DURATION_S}s cap for ${settings.format} — tighten scenes[].to so the video is ${MIN_DURATION_S}-${MAX_DURATION_S}s total`,
     );
   }
 

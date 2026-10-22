@@ -24,6 +24,7 @@ import { WeatherLayer, lightsOutAt } from "./weather";
 import { GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
 import { Birds } from "./Birds";
+import { keepMistBase, driftMist } from "./mist";
 
 /** Per-TOD look for countryside (mirrors ASSET_TOD pattern). */
 const COUNTRYSIDE_TOD: Record<
@@ -294,9 +295,11 @@ function Windmill({ x, z, rot, scale, bodyCol, bladeCol, specId, index }: {
   bodyCol: string; bladeCol: string; specId: string; index: number;
 }) {
   const rotorRef = useRef<THREE.Group>(null);
+  const frame = useCurrentFrame();
   const baseSpeed = 0.8 + seeded(specId, `windmill-${index}-speed`, 0) * 0.6;
+  // Absolute angle from the frame number, not an accumulated per-tick step.
   useFrame(() => {
-    if (rotorRef.current) rotorRef.current.rotation.z -= baseSpeed / 30;
+    if (rotorRef.current) rotorRef.current.rotation.z = -(frame * baseSpeed) / 30;
   });
 
   return (
@@ -471,6 +474,7 @@ function MistLayer({ active, night }: { active: boolean; night: boolean }) {
     }
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
+    keepMistBase(g);
     return g;
   }, []);
   const mat = useMemo(() => new THREE.PointsMaterial({
@@ -485,17 +489,7 @@ function MistLayer({ active, night }: { active: boolean; night: boolean }) {
   }), [night]);
 
   useFrame(() => {
-    const pos = geo.attributes.position;
-    const alphaAttr = geo.attributes.alpha;
-    for (let i = 0; i < 60; i++) {
-      const driftX = Math.sin(t * 0.15 + i) * 0.5;
-      const driftZ = Math.cos(t * 0.1 + i) * 0.3;
-      pos.setXYZ(i, pos.getX(i) + driftX, pos.getY(i), pos.getZ(i) + driftZ);
-      const pulse = 0.5 + 0.5 * Math.sin(t * 0.4 + i);
-      alphaAttr.setX(i, alphaAttr.getX(i) * 0.99 + (0.08 + 0.04 * pulse) * 0.01);
-    }
-    pos.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
+    driftMist(geo, t, { ampX: 0.5, ampZ: 0.3, wx: 0.15, wz: 0.1, pulse: 0.4 });
   });
 
   if (!active) return null;

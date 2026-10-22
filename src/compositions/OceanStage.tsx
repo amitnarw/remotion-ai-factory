@@ -170,7 +170,15 @@ function Jetty({ tod }: { tod: string }) {
 /*  Floating: canoes riding the real swell + a mooring buoy             */
 /* ------------------------------------------------------------------ */
 
-function FloatingCanoe({ x, z, rot, index, tod, level }: { x: number; z: number; rot: number; index: number; tod: string; level: number }) {
+function FloatingCanoe(props: { x: number; z: number; rot: number; index: number; tod: string; level: number }) {
+  return (
+    <GlbSuspense label="canoe" file={CANOE_FILE} fallback={null}>
+      <FloatingCanoeModel {...props} />
+    </GlbSuspense>
+  );
+}
+
+function FloatingCanoeModel({ x, z, rot, index, tod, level }: { x: number; z: number; rot: number; index: number; tod: string; level: number }) {
   const gltf = useGltfPaint(CANOE_FILE);
   const ref = useRef<THREE.Group>(null);
   const frame = useCurrentFrame();
@@ -209,11 +217,9 @@ function FloatingCanoe({ x, z, rot, index, tod, level }: { x: number; z: number;
     g.rotation.z = Math.sin(t * 0.6 + index) * 0.05;
   });
   return (
-    <GlbSuspense label="canoe" file={CANOE_FILE} fallback={null}>
-      <group ref={ref} position={[x, 0, z]} rotation={[0, rot, 0]}>
-        <primitive object={boat.c} scale={boat.s} />
-      </group>
-    </GlbSuspense>
+    <group ref={ref} position={[x, 0, z]} rotation={[0, rot, 0]}>
+      <primitive object={boat.c} scale={boat.s} />
+    </group>
   );
 }
 
@@ -346,22 +352,6 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
       <GradientSkyDome top={look.sky[0]} bottom={look.sky[1]} />
       {night && <NightSky />}
       <fog attach="fog" args={[look.sky[1], 55, 300]} />
-      <hemisphereLight intensity={look.hemi} color={look.sky[0]} groundColor={look.sky[1]} />
-      <directionalLight
-        position={look.dirPos}
-        intensity={look.dirI}
-        color={look.dirColor}
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0006}
-        shadow-camera-left={-60}
-        shadow-camera-right={60}
-        shadow-camera-top={60}
-        shadow-camera-bottom={-60}
-        shadow-camera-far={220}
-      />
-      <ambientLight intensity={look.amb} />
-
       {/* The water: level + wave size + shore depth tint react to the story */}
       {visible && (
         <WaterSurface
