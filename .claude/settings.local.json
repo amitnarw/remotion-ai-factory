@@ -5,7 +5,32 @@
       "Bash(python3 -)",
       "Bash(git add *)",
       "Bash(git commit -q -m 'Phase 1 step 1 \\(part 2\\): mountain ridge, remove dead story jobs *)",
-      "Bash(git bundle *)"
+      "Bash(git bundle *)",
+      "Bash(npx vite *)",
+      "Bash(timeout 600 npx tsx src/generator/generate.ts \"What if gravity disappeared for just 5 seconds?\" --no-render --format 16:9 --duration 60 --scenes 2 --quality draft)",
+      "Bash(echo \"exit $?\")",
+      "Bash(node -e 'const s=require\\(\"./output/what-if-gravity-disappeared-for-just-5-seconds-spec.json\"\\); console.log\\(JSON.stringify\\({settings:s.settings,width:s.width,height:s.height,scenes:s.scenes.length}\\)\\)')",
+      "Bash(timeout 600 npx tsx src/generator/generate.ts \"What if gravity disappeared for just 5 seconds?\" --no-render)",
+      "Bash(git check-ignore *)",
+      "Bash(git commit -q -m 'Phase 1 step 2: video settings \\(format, length, scenes, quality\\) *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"tsc $?\")",
+      "Bash(python3 - __TRACKED_VAR__/voice-test.ts)",
+      "Bash(npx tsx *)",
+      "Bash(git commit -q -m 'Phase 1 step 4: voice switches, audition, resolver, cache *)",
+      "Bash(grep -n \"const { premise, provider, model, noRender\" src/generator/generate.ts)",
+      "Bash(python3 \"C:/Users/Dell/AppData/Local/Temp/claude/c--Users-Dell-Desktop-remotion-ai-factory/46b587e6-ea99-4075-82e3-b3f2441c2244/scratchpad/progress_notes.py\")",
+      "Bash(git commit -q -m 'Record review fixes and the unverified list in progress notes *)",
+      "Bash(node -e \"const p=require\\('./node_modules/@remotion/fonts/package.json'\\); console.log\\(p.version\\)\")",
+      "Bash(node -e 'const s=require\\(\"./output/what-if-money-doubled-every-3-seconds-spec.json\"\\); console.log\\(JSON.stringify\\(s.settings.captions\\)\\)')",
+      "Bash(python3 \"C:/Users/Dell/AppData/Local/Temp/claude/c--Users-Dell-Desktop-remotion-ai-factory/46b587e6-ea99-4075-82e3-b3f2441c2244/scratchpad/step5_docs.py\")",
+      "Bash(git commit -q -m 'Phase 1 step 5: caption style system and dashboard panel *)",
+      "Bash(node -e ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(timeout 1500 npm run audio:library -- --only kenney,freepd,bigsoundbank,oga --music 1)",
+      "Bash(python3 \"C:/Users/Dell/AppData/Local/Temp/claude/c--Users-Dell-Desktop-remotion-ai-factory/46b587e6-ea99-4075-82e3-b3f2441c2244/scratchpad/step6_docs.py\")",
+      "Bash(python3 \"C:/Users/Dell/AppData/Local/Temp/claude/c--Users-Dell-Desktop-remotion-ai-factory/46b587e6-ea99-4075-82e3-b3f2441c2244/scratchpad/step6_progress.py\")",
+      "Bash(git commit -q -m 'Phase 1 step 6: CC0 audio library downloader and index *)"
     ]
   }
 }

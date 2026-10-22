@@ -4,10 +4,9 @@ scripts/story-tts.py — batch voice rendering for storyboard stories.
 Engine-agnostic: reads a JSON job file and renders with either KittenTTS 2
 (default) or VoxCPM2, selected by job["engine"] or --engine.
 
-Runs under the matching local venv (no network for Kitten; VoxCPM may download
-weights on first run):
-  Kitten:  C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe
-  VoxCPM:  <set TTS_VOXCPM_PYTHON or install voxcpm in any venv>
+Runs under the engine's own venv (no network for Kitten; VoxCPM may download
+weights on first run). The Python is chosen by src/generator/tts-python.ts:
+  TTS_KITTEN_PYTHON / TTS_VOXCPM_PYTHON, else .tts/<engine>/.venv (Setup tab).
 
 Input (argv[1]): a JSON job file:
   { "engine": "kitten2" | "voxcpm2",
@@ -51,7 +50,7 @@ def wav_duration(path: str) -> float:
         return w.getnframes() / float(w.getframerate())
 
 
-def trim_silence(path: str, keep: float = 0.09, max_pause: float = 0.26) -> None:
+def trim_silence(path: str, keep: float = 0.09, max_pause: float = 0.42) -> None:
     """Cut edges + compress internal pauses (KittenTTS pads and breathes long)."""
     import numpy as np  # noqa: PLC0415
 
@@ -101,7 +100,9 @@ def run_kitten(job, out_dir):
             voice = KITTEN_DEFAULT_VOICE
         if voice in KITTEN_BANNED:
             voice = KITTEN_DEFAULT_VOICE
-        audio = model.generate(line["text"], voice=voice, temperature=0.1, top_k=1)
+        # Greedy decoding (temperature 0.1, top_k 1) sounded flat and rushed.
+        # Light sampling keeps the preset voice but adds natural variation.
+        audio = model.generate(line["text"], voice=voice, temperature=0.6, top_k=30)
         if os.path.exists(path):
             os.remove(path)
         for attempt in range(3):
@@ -130,6 +131,8 @@ def run_voxcpm(job, out_dir):
     model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
     sr = model.tts_model.sample_rate
     default_desc = job.get("defaultVoiceDesc")
+    # Voice descriptions are free text in parentheses. A bare preset id that
+    # reaches this point is left out rather than spoken as part of the line.
 
     durations = {}
     for line in job["lines"]:

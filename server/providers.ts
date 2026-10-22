@@ -18,6 +18,7 @@ export interface AiConfig {
   defaultProvider?: string;
   defaultModel?: string;
   providers: Record<string, ProviderConfig>;
+  roles?: Record<string, { provider?: string; model?: string }>;
 }
 
 export function loadConfig(): AiConfig {

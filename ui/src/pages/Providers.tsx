@@ -3,10 +3,13 @@
  * ?provider=<name> deep-links to that provider card.
  */
 import { useEffect, useState } from "react";
-import { Plug, KeyRound, Loader2, Plus, Minus, Check } from "lucide-react";
+import { Plug, KeyRound, Loader2, Plus, Minus, Check, Save } from "lucide-react";
 import { toast } from "sonner";
 import {
   getProviders,
+  getRoles,
+  saveRoles,
+  RolesResponse,
   setProviderKey,
   addProvider,
   testProvider,
@@ -21,9 +24,132 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { InfoTip } from "../components/InfoTip";
 import { useQuery, setQuery } from "../lib/navigation";
 import { cn } from "../lib/utils";
+
+const DEFAULT_CHOICE = "__default";
+
+/** Pick a provider and model for each pipeline role (stored in ai.config.json). */
+function ModelRolesCard() {
+  const [data, setData] = useState<RolesResponse | null>(null);
+  const [draft, setDraft] = useState<Record<string, { provider: string; model: string }>>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getRoles()
+      .then((r) => {
+        setData(r);
+        setDraft(
+          Object.fromEntries(
+            r.roles
+              .filter((x) => x.assignment?.provider && x.assignment?.model)
+              .map((x) => [x.name, { provider: x.assignment!.provider!, model: x.assignment!.model! }]),
+          ),
+        );
+      })
+      .catch((e) => toast.error(String(e)));
+  }, []);
+
+  if (!data) return null;
+
+  const modelsOf = (provider: string) => data.providers.find((p) => p.name === provider)?.models ?? [];
+
+  const setRole = (name: string, patch: { provider?: string; model?: string }) => {
+    const current = draft[name] ?? { provider: "", model: "" };
+    const next = { ...current, ...patch };
+    // Changing provider clears the model: the old one may not exist there.
+    if (patch.provider !== undefined && patch.provider !== current.provider) next.model = "";
+    setDraft((d) => ({ ...d, [name]: next }));
+  };
+
+  const clearRole = (name: string) => setDraft((d) => {
+    const { [name]: _removed, ...rest } = d;
+    return rest;
+  });
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload: Record<string, { provider: string; model: string } | null> = {};
+      for (const r of data.roles) {
+        const d = draft[r.name];
+        payload[r.name] = d?.provider && d?.model ? d : null;
+      }
+      await saveRoles(payload);
+      toast.success("Model roles saved");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="mb-6 p-6">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h3 className="text-lg font-extrabold">Model roles</h3>
+        <Button size="lg" onClick={save} disabled={saving}>
+          <Save className="h-5 w-5" /> {saving ? "Saving…" : "Save roles"}
+        </Button>
+      </div>
+      <p className="mb-4 text-sm text-muted-foreground">
+        Choose which model does each job. Roles that are not used yet are saved now and take effect when their phase lands.
+        A role left on "Default" uses the default provider{data.defaultProvider ? ` (${data.defaultProvider})` : ""}.
+      </p>
+      <div className="space-y-3">
+        {data.roles.map((r) => {
+          const d = draft[r.name];
+          const models = d?.provider ? modelsOf(d.provider) : [];
+          return (
+            <div key={r.name} className="grid items-center gap-3 rounded-xl bg-muted/40 p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold">{r.label}</span>
+                  <Badge variant={r.usedFrom === "now" ? "success" : "muted"}>
+                    {r.usedFrom === "now" ? "used now" : `from ${r.usedFrom}`}
+                  </Badge>
+                </div>
+                <div className="text-xs text-muted-foreground">{r.description}</div>
+              </div>
+              <Select
+                value={d?.provider || DEFAULT_CHOICE}
+                onValueChange={(v) => (v === DEFAULT_CHOICE ? clearRole(r.name) : setRole(r.name, { provider: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Default provider" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_CHOICE}>Default provider</SelectItem>
+                  {data.providers.map((p) => (
+                    <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {d?.provider ? (
+                models.length > 0 ? (
+                  <Select value={d.model || ""} onValueChange={(v) => setRole(r.name, { model: v })}>
+                    <SelectTrigger><SelectValue placeholder="Choose a model" /></SelectTrigger>
+                    <SelectContent>
+                      {models.map((m) => (
+                        <SelectItem key={m} value={m}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="text-xs text-muted-foreground">
+                    No models yet. Open this provider's card and press Get models.
+                  </div>
+                )
+              ) : (
+                <div className="text-xs text-muted-foreground">Uses the default model</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
 export default function Providers() {
   const query = useQuery();
@@ -144,6 +270,8 @@ const [reveal, setReveal] = useState<Record<string, boolean>>({});
       </PageHeader>
 
       {loadError ? <ErrorBanner error={loadError} fix='Start the app with "npm run server" and reload the page' /> : null}
+
+      <ModelRolesCard />
 
       {showAdd ? (
         <Card className="mb-6 p-6">

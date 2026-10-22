@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import fs from "fs";
+import { resolveTtsPython, venvPythonPath, TTS_ROOT } from "../src/generator/tts-python";
 import { join } from "path";
 import { ROOT } from "./providers";
 
@@ -11,35 +12,24 @@ export interface TtsEngineInfo {
   sizeMB: number;
   python: string | null;
   installed: boolean;
-  legacyPython?: string | null;
 }
 
-const ENGINES: Record<TtsEngineId, { label: string; sizeMB: number; pip: string; repo: string; legacy: string[] }> = {
+const ENGINES: Record<TtsEngineId, { label: string; sizeMB: number; pip: string; repo: string }> = {
   kitten2: {
     label: "KittenTTS 2",
     sizeMB: 950,
     pip: "kittenml",
     repo: "KittenML/kitten-tts-2",
-    legacy: ["C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe"],
   },
   voxcpm2: {
     label: "VoxCPM2",
     sizeMB: 2000,
     pip: "voxcpm",
     repo: "openbmb/VoxCPM2",
-    legacy: [],
   },
 };
 
-export const TTS_ROOT = join(ROOT, ".tts");
 
-function venvPython(engine: TtsEngineId): string {
-  return join(TTS_ROOT, engine, ".venv", "Scripts", "python.exe");
-}
-
-function venvExists(engine: TtsEngineId): boolean {
-  return fs.existsSync(venvPython(engine));
-}
 
 function weightsCached(engine: TtsEngineId): boolean {
   // HF cache layout: ~/.cache/huggingface/hub/models--<org>--<name>
@@ -51,17 +41,7 @@ function weightsCached(engine: TtsEngineId): boolean {
 }
 
 export function engineInfo(engine: TtsEngineId): TtsEngineInfo {
-  // Prefer project-local venv, then legacy, then env override.
-  const envKey = engine === "kitten2" ? "TTS_KITTEN_PYTHON" : "TTS_VOXCPM_PYTHON";
-  const envPath = process.env[envKey];
-  let python: string | null = null;
-  if (envPath && fs.existsSync(envPath)) python = envPath;
-  else if (venvExists(engine)) python = venvPython(engine);
-  else {
-    for (const p of ENGINES[engine].legacy) {
-      if (fs.existsSync(p)) { python = p; break; }
-    }
-  }
+  const python = resolveTtsPython(engine);
   const installed = !!python && weightsCached(engine);
   return {
     id: engine,
@@ -69,7 +49,6 @@ export function engineInfo(engine: TtsEngineId): TtsEngineInfo {
     sizeMB: ENGINES[engine].sizeMB,
     python,
     installed,
-    legacyPython: ENGINES[engine].legacy.find((p) => fs.existsSync(p)) ?? null,
   };
 }
 
@@ -138,7 +117,7 @@ export function startInstall(engine: TtsEngineId): string {
     job.status = "running";
     const eng = ENGINES[engine];
     const venv = join(TTS_ROOT, engine, ".venv");
-    const py = venvPython(engine);
+    const py = venvPythonPath(engine);
     try {
       // 1. create venv
       setProgress(job, "venv", 2, "Creating virtual environment…");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CaptionStyleSchema } from "./caption-style";
 
 /**
  * Shot spec schema — the single contract that drives the whole video.
@@ -187,12 +188,26 @@ export type CastEntry = NonNullable<SceneType["cast"]>[number];
 export const FORMATS = ["9:16", "16:9", "1:1"] as const;
 export type VideoFormat = (typeof FORMATS)[number];
 
-export const SettingsSchema = z.object({
-  format: z.enum(FORMATS).default("9:16"),
-  targetDuration: z.number().positive().optional(),
-  sceneCount: z.number().int().min(1).max(12).optional(),
-  quality: z.enum(["draft", "final"]).default("final"),
-});
+export const SettingsSchema = z
+  .object({
+    format: z.enum(FORMATS).default("9:16"),
+    targetDuration: z.number().positive().optional(),
+    sceneCount: z.number().int().min(1).max(12).optional(),
+    quality: z.enum(["draft", "final"]).default("final"),
+    /** Caption look (preset + overrides); see caption-style.ts. */
+    captions: CaptionStyleSchema.optional(),
+  })
+  .superRefine((s, ctx) => {
+    if (s.targetDuration === undefined) return;
+    const max = maxDurationFor(s.format);
+    if (s.targetDuration < 8 || s.targetDuration > max) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["targetDuration"],
+        message: `must be between 8 and ${max} seconds for ${s.format}`,
+      });
+    }
+  });
 export type VideoSettings = z.infer<typeof SettingsSchema>;
 
 /** Pixel size of each output format (1080 short side for every format). */
@@ -297,6 +312,8 @@ export const ShotSpecSchema = z.object({
           engine: z.enum(["kitten2", "voxcpm2"]).default("kitten2"),
           /** map character name -> voice id / description */
           voices: z.record(z.string(), z.string()).optional(),
+          /** voice for any character not in `voices` */
+          defaultVoice: z.string().optional(),
         })
         .optional(),
     })

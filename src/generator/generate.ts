@@ -100,7 +100,12 @@ function parseArgs(argv: string[]): {
     } else if (a === "--quality" && argv[i + 1]) {
       settings.quality = argv[++i] as VideoSettings["quality"];
     } else if (a === "--settings-json" && argv[i + 1]) {
-      Object.assign(settings, JSON.parse(argv[++i]));
+      try {
+        Object.assign(settings, JSON.parse(argv[++i]));
+      } catch {
+        console.error("--settings-json must be a JSON object, e.g. '{\"format\":\"16:9\"}'");
+        process.exit(1);
+      }
     } else if (!a.startsWith("--")) {
       premiseParts.push(a);
     }
@@ -109,6 +114,9 @@ function parseArgs(argv: string[]): {
 }
 
 function writeFailedLog(id: string, premise: string, error: unknown): string {
+  // output/ may not exist yet on a fresh checkout; without this the logger
+  // itself crashes and hides the real error.
+  mkdirSync(OUTPUT_DIR, { recursive: true });
   const logPath = join(OUTPUT_DIR, `FAILED-${id}.log`);
   const stamp = new Date().toISOString();
   const msg =
@@ -130,7 +138,15 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model, noRender, fromSpec, audioFile, settings } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec, audioFile, settings: rawSettings } = parseArgs(process.argv.slice(2));
+  const settingsCheck = SettingsSchema.safeParse(rawSettings);
+  if (!settingsCheck.success) {
+    console.error(
+      `Settings: ${settingsCheck.error.issues.map((i) => `${i.path.join(".") || "settings"} ${i.message}`).join("; ")}`,
+    );
+    process.exit(1);
+  }
+  const settings = settingsCheck.data;
   if (fromSpec) {
     // --- render-only mode: an approved spec (dashboard plan → approve) ---
     (async () => {

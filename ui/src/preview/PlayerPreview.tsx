@@ -1,5 +1,5 @@
 import { Player } from "@remotion/player";
-import { ShotSpec } from "@/generator/spec.schema";
+import { ShotSpec, formatDims } from "@/generator/spec.schema";
 import { WhatIfVideo } from "@/compositions/WhatIfVideo/index";
 import { useMemo } from "react";
 
@@ -9,6 +9,7 @@ export const PlayerPreview = ({ spec }: { spec: unknown }) => {
   const lastScene = shotSpec.scenes?.[shotSpec.scenes.length - 1];
   const durationSec = Number(lastScene?.to ?? 0) + 2;
   const durationInFrames = Math.round(durationSec * 30);
+  const dims = shotSpec.settings ? formatDims(shotSpec.settings.format) : { width: 1080, height: 1920 };
   return (
     <div
       style={{
@@ -23,11 +24,11 @@ export const PlayerPreview = ({ spec }: { spec: unknown }) => {
       <Player
         component={WhatIfVideo}
         inputProps={inputProps}
-        compositionWidth={1080}
-        compositionHeight={1920}
+        compositionWidth={dims.width}
+        compositionHeight={dims.height}
         fps={30}
         durationInFrames={durationInFrames}
-        style={{ width: "100%", height: "100%", maxHeight: 700 }}
+        style={{ width: "100%", height: "100%", maxHeight: 700, aspectRatio: `${dims.width} / ${dims.height}` }}
         controls
       />
     </div>

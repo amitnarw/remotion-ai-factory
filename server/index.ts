@@ -10,14 +10,64 @@ import { fetchProviderModels } from "./fetch-models";
 import { createJob, getJob, getAllJobs, premiseSlug, runJob, cancelJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
+import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
+import { ROLE_DEFS, ROLE_NAMES, pickRoleModel } from "../src/generator/ai/roles";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
-import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES } from "../src/generator/voices";
+import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription } from "../src/generator/voices";
+import { resolveTtsPython } from "../src/generator/tts-python";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // ---------- Providers ----------
+/** Model role assignments: which provider/model each pipeline step uses. */
+app.get("/api/roles", (_req, res) => {
+  const cfg = loadConfig();
+  res.json({
+    roles: ROLE_DEFS.map((d) => ({ ...d, assignment: cfg.roles?.[d.name] ?? null })),
+    providers: Object.entries(cfg.providers).map(([name, c]) => ({ name, models: c.models ?? [] })),
+    defaultProvider: cfg.defaultProvider ?? null,
+  });
+});
+
+app.put("/api/roles", (req, res) => {
+  const body = req.body as { roles?: Record<string, { provider?: string; model?: string } | null> };
+  const cfg = loadConfig();
+  const next: Record<string, { provider?: string; model?: string }> = { ...(cfg.roles ?? {}) };
+  for (const [name, value] of Object.entries(body.roles ?? {})) {
+    if (!ROLE_NAMES.includes(name)) {
+      return res.status(400).json({ error: `unknown role "${name}"`, fix: `Use one of: ${ROLE_NAMES.join(", ")}` });
+    }
+    if (value === null || (!value?.provider && !value?.model)) {
+      delete next[name]; // cleared: the role falls back to the default provider
+      continue;
+    }
+    const provider = (value.provider ?? "").trim();
+    if (!provider || !cfg.providers[provider]) {
+      return res.status(400).json({
+        error: `provider "${provider}" is not configured`,
+        fix: "Add it in the Providers tab first",
+      });
+    }
+    const model = (value.model ?? "").trim();
+    if (!model) {
+      return res.status(400).json({ error: `pick a model for the ${name} role`, fix: "Choose a model from the list" });
+    }
+    const known = cfg.providers[provider].models ?? [];
+    if (known.length && !known.includes(model)) {
+      return res.status(400).json({
+        error: `model "${model}" is not in the ${provider} list`,
+        fix: "Open the provider card and press Get models, then choose again",
+      });
+    }
+    next[name] = { provider, model };
+  }
+  cfg.roles = next;
+  saveConfig(cfg);
+  res.json({ ok: true, roles: next });
+});
+
 app.get("/api/providers", (_req, res) => {
   const cfg = loadConfig();
   const env = loadEnv();
@@ -213,7 +263,7 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
 
 // ---------- Plan Studio: spec engine (AI writes the plan, you approve) ----------
 app.post("/api/plan", async (req, res) => {
-  const body = req.body as { input?: string; premise?: string; provider?: string; model?: string; audio?: unknown };
+  const body = req.body as { input?: string; premise?: string; provider?: string; model?: string; audio?: unknown; settings?: unknown };
   const premise = (body.input ?? body.premise ?? "").trim();
   if (premise.length < 6) {
     return res.status(400).json({
@@ -221,8 +271,27 @@ app.post("/api/plan", async (req, res) => {
       fix: 'Type a full "what if" scenario, e.g. "What if money doubled every 3 seconds?"',
     });
   }
-  const provider = typeof body.provider === "string" ? body.provider : undefined;
-  const model = typeof body.model === "string" ? body.model : undefined;
+  // Validate settings before anything is created, so a bad request leaves no job behind.
+  let settings: VideoSettings | undefined;
+  if (body.settings !== undefined) {
+    const parsed = SettingsSchema.safeParse(body.settings);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: `invalid video settings: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`,
+        fix: "Pick a format (9:16, 16:9 or 1:1), a length within the format's limit, a scene count from 1 to 12, and a quality of draft or final",
+      });
+    }
+    settings = parsed.data;
+  }
+  // An explicit provider/model from the request wins; otherwise the writer role decides, never mixing providers.
+  const pick = pickRoleModel(
+    loadConfig().roles,
+    "writer",
+    typeof body.provider === "string" ? body.provider : undefined,
+    typeof body.model === "string" ? body.model : undefined,
+  );
+  const provider = pick.provider;
+  const model = pick.model;
 
   // Fail fast BEFORE spawning: validate provider + key + resolution.
   const savedEnv = loadEnv();
@@ -289,6 +358,7 @@ app.post("/api/plan", async (req, res) => {
   const job = createJob(premise, provName, model);
   job.engine = "plan";
   if (body.audio) (job as any).audio = body.audio;
+  if (settings) (job as any).settings = settings;
   runJob(job, { noRender: true });
   res.json({ jobId: job.id });
 });
@@ -505,13 +575,16 @@ app.post("/api/voice-sample", (req, res) => {
   const job = {
     engine,
     outDir,
-    lines: [{ id: "s", text, voice: body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm"), voiceDesc: body.voiceDesc }],
+    lines: [{
+      id: "s",
+      text,
+      voice: body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm"),
+      voiceDesc: engine === "voxcpm2" ? voxDescription(body.voice || "narrator-calm", body.voiceDesc) : undefined,
+    }],
   };
   const jobPath = join(outDir, "job.json");
   fs.writeFileSync(jobPath, JSON.stringify(job, null, 2));
-  const python = engine === "kitten2"
-    ? (process.env.TTS_KITTEN_PYTHON || "C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe")
-    : (process.env.TTS_VOXCPM_PYTHON || "");
+  const python = resolveTtsPython(engine) ?? "";
   if (!python || !fs.existsSync(python)) {
     return res.status(400).json({ error: "engine not installed", fix: "Install it from the Setup tab first" });
   }
@@ -595,10 +668,10 @@ app.get("/api/tts/job/:id", (req, res) => {
 // ---------- TTS voices / engines ----------
 app.get("/api/voices", (req, res) => {
   const engine = (req.query.engine as string) || "kitten2";
-  const kittenPython = process.env.TTS_KITTEN_PYTHON || "C:/Users/Narwal/Desktop/kitten-tts-test/.venv/Scripts/python.exe";
-  const voxcpmPython = process.env.TTS_VOXCPM_PYTHON || "";
-  const kittenAvailable = fs.existsSync(kittenPython);
-  const voxcpmAvailable = voxcpmPython !== "" && fs.existsSync(voxcpmPython);
+  const kittenPython = resolveTtsPython("kitten2");
+  const voxcpmPython = resolveTtsPython("voxcpm2");
+  const kittenAvailable = !!kittenPython;
+  const voxcpmAvailable = !!voxcpmPython;
   if (engine === "voxcpm2") {
     return res.json({
       engine,
@@ -607,7 +680,7 @@ app.get("/api/voices", (req, res) => {
       descriptions: VOXCPM_VOICE_DESCRIPTIONS,
       defaultNarrator: VOXCPM_VOICE_DESCRIPTIONS[0].id,
       defaultCharacter: VOXCPM_VOICE_DESCRIPTIONS[2].id,
-      venvPath: voxcpmPython || null,
+      venvPath: voxcpmPython,
     });
   }
   res.json({

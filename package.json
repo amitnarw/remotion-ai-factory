@@ -70,6 +70,7 @@
     "generate": "tsx src/generator/generate.ts",
     "sfx": "tsx scripts/setup-sfx.ts",
     "sfx:cc0": "tsx scripts/setup-sfx-cc0.ts",
+    "audio:library": "tsx scripts/setup-audio-library.ts",
     "assets": "tsx scripts/setup-assets.ts && tsx scripts/export-asset-index.ts",
     "assets:index": "tsx scripts/export-asset-index.ts",
     "models": "tsx scripts/models.ts",

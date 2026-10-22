@@ -180,6 +180,8 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     if (opts?.noRender) args.push("--no-render");
     if (job.provider) args.push("--provider", job.provider);
     if (job.model) args.push("--model", job.model);
+    const settings = (job as any).settings;
+    if (settings) args.push("--settings-json", JSON.stringify(settings));
   }
   const child = spawn("npx", ["--no-install", "tsx", ...args], {
     cwd: ROOT,

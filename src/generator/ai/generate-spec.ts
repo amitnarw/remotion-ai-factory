@@ -28,6 +28,7 @@ import {
   resolveModel,
   type ModelReference,
 } from "./provider-registry";
+import { pickRoleModel } from "./roles";
 
 const MAX_REPAIR_ATTEMPTS = 3;
 
@@ -399,7 +400,9 @@ export async function generateSpec(
 ): Promise<GenerateSpecResult> {
   const settings = SettingsSchema.parse(settingsInput);
   const config = loadAiConfig();
-  const resolved = resolveModel(config, providerName, modelId);
+  // The writer role decides the model unless the caller named one explicitly.
+  const pick = pickRoleModel(config.roles, "writer", providerName, modelId);
+  const resolved = resolveModel(config, pick.provider, pick.model);
 
   // Offline path: no provider configured or resolution failed → use templates.
   if (!resolved.reference || !resolved.hasKey) {

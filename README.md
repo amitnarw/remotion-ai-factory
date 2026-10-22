@@ -46,6 +46,105 @@ npm run generate -- "What if oxygen disappeared for just 5 seconds?"
 
 The final MP4 lands in `output/`. Upload it directly to YouTube Shorts.
 
+## Setting up on a new machine
+
+The project is developed on Windows. The steps below assume a fresh clone or copy.
+
+1. **Install dependencies** (use `--legacy-peer-deps`: a type-package peer conflict breaks a plain install):
+   ```bash
+   npm ci --legacy-peer-deps
+   cd ui && npm install && cd ..
+   ```
+2. **Download the sound library** (needs internet; a few hundred MB). This builds the free
+   sound effects and background music the video uses:
+   ```bash
+   npm run audio:library
+   ```
+   Re-running it reuses what it already downloaded. Use `-- --music 1` for a quick, smaller build.
+3. **Download the 3D models** (needs internet, takes a while). Without them, the offline
+   template premises (gravity, sun-set, time-stop) fail with "Asset violations":
+   ```bash
+   npm run assets
+   ```
+4. **Add your AI key** (only for arbitrary premises). Copy `.env.example` to `.env` and set
+   `OLLAMA_API_KEY` (Ollama Pro cloud). Or add the key in the dashboard's Providers tab.
+   `.env` holds secrets: never commit it or share it in a zip.
+5. **Voices (optional):** open the dashboard's Setup tab and install KittenTTS 2 (CPU) or
+   VoxCPM2 (needs an NVIDIA GPU). Or set `TTS_KITTEN_PYTHON` / `TTS_VOXCPM_PYTHON` to an
+   existing Python with the engine installed.
+6. **Check it works:**
+   ```bash
+   npx tsc --noEmit
+   npm run generate -- "What if money doubled every 3 seconds?" --no-render
+   ```
+
+## Making a video
+
+### From the dashboard (recommended)
+
+Run the server and the UI in two terminals:
+
+```bash
+npm run server      # API on http://127.0.0.1:5178
+npm run ui          # dashboard on http://localhost:5177
+```
+
+Then, on the **Generate** tab:
+
+1. **Tell your idea.** Type a "what if" question. Under it:
+   - **Format:** 9:16 (Shorts, 15–90s), 16:9 (long-form, up to 10 min) or 1:1 (square, up to 90s).
+   - **Length in seconds** and **Scenes** are optional. Leave them blank for automatic.
+   - **Quality:** *Draft* renders at half size for quick checks; *Final* is full size.
+   - **Captions:** pick a look (bold pop, clean, documentary serif, neon, minimal pill), then adjust the position, font, size, colours, box and entry animation. The live preview shows the same caption the video will use.
+   - **Voice:** narration and character voices are two separate switches. Each has its own engine (KittenTTS 2 or VoxCPM2). Use ▶ to listen before you choose. Lines you have already rendered are reused from a cache, so re-running a story is faster.
+2. **Write the plan.** The AI writes the scene plan. Nothing renders yet.
+3. **Review and approve.** Check the plan, then approve to render. Progress and logs appear
+   live. The finished video is in the Videos tab and in `output/`.
+
+### Choosing models for each step
+
+Open the **Providers** tab, then **Model roles**. Each pipeline role can use a different
+provider and model:
+
+- **Writer** writes the story. This is the one used today.
+- **Director, Sound designer, Critic, Photographer, Editor** are listed now and take effect
+  as their phases land (see `docs/factory/PROGRESS.md`).
+
+A role left on *Default provider* uses the default. To list the models a provider offers,
+open its card and press **Get models** first. The choices are saved to `ai.config.json`.
+
+### From the command line
+
+```bash
+npm run generate -- "What if time stopped for just 5 seconds?"
+npm run generate -- "What if money doubled every 3 seconds?" --format 16:9 --duration 60 --scenes 4 --quality draft
+npm run generate -- "<premise>" --provider ollama --model <model-id> --no-render   # plan only
+npm run generate -- "<premise>" --from-spec output/<id>-spec.json                  # render an approved plan
+```
+
+Flags: `--format 9:16|16:9|1:1`, `--duration <seconds>`, `--scenes 1..12`,
+`--quality draft|final`, `--provider`, `--model`, `--no-render`, `--from-spec`, `--audio-file`.
+
+### Where the output goes
+
+- `output/<id>-<timestamp>.mp4`: the video.
+- `output/<id>-spec.json`: the plan (scenes, captions, events, settings). Edit and render with `--from-spec`.
+- `output/<id>-report.json`: a summary of the run.
+- `output/FAILED-<id>.log`: the error, if a run fails.
+
+### Known limits right now
+
+- The offline template premises have a fixed length and ignore `--duration`. The AI path honours it.
+- Landscape (16:9) renders at the right size, but the camera framing is still tuned for portrait.
+- Character voices use one default voice per engine. Per-character casting comes with the editor (a later phase).
+- Voice settings were tuned by reading the code, not by listening. Judge the sound on your own machine and adjust in `scripts/story-tts.py`.
+- Sound effects and music are still synthesized. Real CC0 libraries come in a later phase.
+
+### Where the work is tracked
+
+`docs/factory/README.md` is the index of the factory rebuild. `docs/factory/PROGRESS.md`
+says what is done and what comes next. Read it before continuing the work on another machine.
+
 ## Supported premise families (offline, no API key)
 
 | Family | Example |
@@ -129,6 +228,7 @@ the catalog.
   quality gates) — this is what an AI coding agent follows to run the factory
   hands-free
 - `ai/PROMPTS.md` — shot-spec prompt templates + few-shot examples
+- `docs/factory/` — the factory rebuild: analysis, research, plan and progress
 
 ## License
 

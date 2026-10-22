@@ -1,28 +1,29 @@
 /**
  * Hook.tsx — the opening premise card ("What if gravity disappeared...").
+ * Same caption look as the captions; keyword highlighting uses React spans.
  */
-import { useCurrentFrame } from "remotion";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
+import "./fonts";
+import { CaptionLook, FONT_STACKS, resolveCaptionStyle } from "../../generator/caption-style";
 
 interface HookProps {
   text: string;
   keywordHighlight?: string[];
   startFrame: number;
   endFrame: number;
+  style?: CaptionLook;
 }
 
-export const Hook: React.FC<HookProps> = ({
-  text,
-  keywordHighlight = [],
-  startFrame,
-  endFrame,
-}) => {
+export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style }) => {
   const frame = useCurrentFrame();
+  const { width } = useVideoConfig();
   if (frame < startFrame || frame > endFrame) return null;
 
-  const highlight = keywordHighlight.length
-    ? new RegExp(keywordHighlight.join("|"), "i")
-    : null;
+  const look = resolveCaptionStyle(style);
+  const scale = width / 1080;
+  const keys = keywordHighlight.map((k) => k.toLowerCase()).filter(Boolean);
+  const words = (look.uppercase ? text.toUpperCase() : text).split(/\s+/).filter(Boolean);
 
   return (
     <div
@@ -42,28 +43,27 @@ export const Hook: React.FC<HookProps> = ({
     >
       <div
         style={{
-          fontFamily: "system-ui, -apple-system, sans-serif",
-          fontSize: 48,
-          fontWeight: 900,
-          color: "#ffffff",
+          fontFamily: FONT_STACKS[look.font],
+          fontWeight: look.font === "archivo-black" ? 400 : 800,
+          fontStyle: look.italic ? "italic" : "normal",
+          fontSize: 48 * scale,
+          color: look.color,
           textAlign: "center",
-          textTransform: "uppercase",
           lineHeight: 1.2,
-          maxWidth: "90vw",
-          textShadow: "0 3px 6px rgba(0,0,0,0.45)",
-          letterSpacing: 0.2,
-          paddingLeft: 40,
-          paddingRight: 40,
+          maxWidth: "90%",
+          textShadow: look.shadow ? `0 ${3 * scale}px ${6 * scale}px rgba(0,0,0,0.45)` : "none",
+          padding: `0 ${40 * scale}px`,
         }}
-        dangerouslySetInnerHTML={{
-          __html: highlight
-            ? text.replace(
-                highlight,
-                `<span style="color:#3b82f6;font-weight:900">$&</span>`,
-              )
-            : text,
-        }}
-      />
+      >
+        {words.map((word, i) => {
+          const hit = keys.some((k) => word.toLowerCase().replace(/[^a-z0-9]/g, "").includes(k.replace(/[^a-z0-9]/g, "")));
+          return (
+            <span key={`${i}-${word}`} style={{ color: hit ? look.highlight : look.color, fontWeight: hit ? 900 : undefined, marginRight: i < words.length - 1 ? "0.25em" : 0 }}>
+              {word}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 };

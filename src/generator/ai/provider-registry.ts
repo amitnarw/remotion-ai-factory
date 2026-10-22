@@ -48,6 +48,10 @@ export const AiConfigSchema = z.object({
   defaultProvider: z.string().optional(),
   defaultModel: z.string().optional(),
   providers: z.record(z.string(), ProviderConfigSchema),
+  /** Per-role model choice (see roles.ts). Missing role = the default provider/model. */
+  roles: z
+    .record(z.string(), z.object({ provider: z.string().optional(), model: z.string().optional() }))
+    .optional(),
 });
 
 export type AiConfig = z.infer<typeof AiConfigSchema>;

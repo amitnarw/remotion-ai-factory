@@ -19,6 +19,7 @@ import { StatHud, ZoomVignette } from "../hud/StatHud";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
+import { resolveCaptionStyle } from "../../generator/caption-style";
 import { AssetStage } from "../AssetStage";
 import { StreetStage } from "../StreetStage";
 import { SpaceStage } from "../SpaceStage";
@@ -140,6 +141,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const { scene, gravityOff, gravityOn } = resolvePhysicsAt(spec, timeSec);
   const SceneComp = sceneComponents[scene.scene as SceneKey];
   const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
+  const captionLook = resolveCaptionStyle(spec.settings?.captions);
 
   return (
     <div
@@ -210,6 +212,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       {/* Hook card */}
       <Hook
         text={spec.hook.text}
+        style={captionLook}
         keywordHighlight={spec.hook.keywordHighlight}
         startFrame={secToFrame(spec.hook.t, fps)}
         endFrame={secToFrame(spec.hook.t + spec.hook.duration, fps)}
@@ -225,7 +228,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       )}
 
       {/* Captions */}
-      <Captions captions={spec.captions ?? []} fps={fps} />
+      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} />
 
       {/* Audio cues */}
       <CompositionAudio spec={spec} fps={fps} />

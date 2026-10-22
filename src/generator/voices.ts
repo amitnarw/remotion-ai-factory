@@ -58,3 +58,17 @@ export function pickVoice(name: string | undefined, fallback: string): string {
     ? name
     : fallback;
 }
+
+/**
+ * The VoxCPM description for a voice. A preset id maps to its description; a
+ * free-text description passes through. An explicit description is used only
+ * when the voice is not a preset.
+ */
+export function voxDescription(voice: string | undefined, explicit?: string): string | undefined {
+  if (voice) {
+    const preset = VOXCPM_VOICE_DESCRIPTIONS.find((v) => v.id === voice);
+    if (preset) return preset.description;
+    if (voice.includes(" ")) return voice;
+  }
+  return explicit || undefined;
+}

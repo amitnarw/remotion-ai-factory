@@ -55,6 +55,7 @@ export async function planSpec(body: {
   provider?: string;
   model?: string;
   audio?: unknown;
+  settings?: unknown;
 }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/plan`, {
@@ -116,7 +117,6 @@ export interface TtsEngineStatus {
   sizeMB: number;
   python: string | null;
   installed: boolean;
-  legacyPython?: string | null;
 }
 export interface TtsStatus {
   kitten2: TtsEngineStatus;
@@ -184,6 +184,36 @@ async function errorText(r: Response): Promise<string> {
 async function json<T>(r: Response): Promise<T> {
   if (!r.ok) throw new Error(await errorText(r));
   return (await r.json()) as T;
+}
+
+export interface RoleInfo {
+  name: string;
+  label: string;
+  description: string;
+  usedFrom: string;
+  assignment: { provider?: string; model?: string } | null;
+}
+
+export interface RolesResponse {
+  roles: RoleInfo[];
+  providers: { name: string; models: string[] }[];
+  defaultProvider: string | null;
+}
+
+/** Which provider and model each pipeline role uses. */
+export async function getRoles(): Promise<RolesResponse> {
+  return json(await fetch(`${BASE}/roles`));
+}
+
+/** Save role choices. A null entry clears that role back to the default. */
+export async function saveRoles(roles: Record<string, { provider: string; model: string } | null>) {
+  return json(
+    await fetch(`${BASE}/roles`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roles }),
+    }),
+  );
 }
 
 export async function getProviders(): Promise<ProvidersResponse> {

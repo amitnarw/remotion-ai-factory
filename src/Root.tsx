@@ -12,7 +12,8 @@ import { z } from "zod";
 import { WhatIfDemo } from "./compositions/WhatIfVideo/demo";
 import { WhatIfVideo } from "./compositions/WhatIfVideo/index";
 import { WhatIfVideo as LegacyWhatIfVideo } from "./compositions/WhatIfVideo/index";
-import { ShotSpecSchema, validateSpec } from "./generator/spec.schema";
+import { ShotSpecSchema, validateSpec, formatDims, type ShotSpec } from "./generator/spec.schema";
+import { secToFrame } from "./generator/timing";
 import gravitySpec from "./generator/spec.example.gravity.json";
 import eyesightSpec from "./generator/spec.example.eyesight.json";
 
@@ -31,6 +32,20 @@ const WhatIfGravityDemo = () => <LegacyWhatIfVideo spec={gravityDemoSpec} />;
  * Schema for the entire props object of WhatIfVideo: { spec: ShotSpec }.
  */
 const WhatIfVideoPropsSchema = z.object({ spec: ShotSpecSchema });
+
+/** Size and length come from the spec, so a 16:9 plan opens as a 16:9 composition. */
+const specMetadata = ({ props }: { props: { spec: ShotSpec } }) => {
+  const spec = props.spec;
+  const dims = spec.settings ? formatDims(spec.settings.format) : { width: spec.width, height: spec.height };
+  const last = Math.max(...spec.scenes.map((sc) => sc.to));
+  return {
+    width: dims.width,
+    height: dims.height,
+    fps: spec.fps ?? FPS,
+    durationInFrames: secToFrame(last + 2, spec.fps ?? FPS),
+    props,
+  };
+};
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -63,6 +78,7 @@ export const RemotionRoot: React.FC = () => {
         width={WIDTH}
         height={HEIGHT}
         schema={WhatIfVideoPropsSchema}
+        calculateMetadata={specMetadata as never}
         defaultProps={{ spec: demoSpec }}
       />
     </>

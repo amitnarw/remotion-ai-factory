@@ -34,6 +34,10 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { ErrorBanner } from "../components/shared";
+import { Switch } from "../components/ui/switch";
+import { CaptionPanel } from "../components/CaptionPanel";
+import type { CaptionStyleInput } from "../../../src/generator/caption-style";
+import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { InfoTip } from "../components/InfoTip";
 import { useQuery, setQuery } from "../lib/navigation";
@@ -235,43 +239,184 @@ export default function Generate() {
 /* ==================================================================== */
 
 const VOICE_LS_KEY = "vf:voiceConfig";
+const VIDEO_LS_KEY = "vf:videoSettings";
+const CAPTION_LS_KEY = "vf:captionStyle";
 
+/** The caption look the user last chose (empty = the default preset). */
+function loadCaptionStyle(): CaptionStyleInput {
+  try {
+    const raw = localStorage.getItem(CAPTION_LS_KEY);
+    if (raw) return JSON.parse(raw) as CaptionStyleInput;
+  } catch { /* ignore */ }
+  return {};
+}
+
+/** Production settings chosen before writing the plan (sent as spec.settings). */
+interface VideoSettingsForm {
+  format: "9:16" | "16:9" | "1:1";
+  /** Seconds the writer should aim for; blank = automatic. */
+  targetDuration: string;
+  /** Scenes; blank = automatic. */
+  sceneCount: string;
+  quality: "draft" | "final";
+}
+
+const FORMAT_LABELS: Record<VideoSettingsForm["format"], string> = {
+  "9:16": "Vertical 9:16 (Shorts, 15–90s)",
+  "16:9": "Landscape 16:9 (long-form, up to 10 min)",
+  "1:1": "Square 1:1 (feeds, up to 90s)",
+};
+
+function defaultVideoSettings(): VideoSettingsForm {
+  return { format: "9:16", targetDuration: "", sceneCount: "", quality: "final" };
+}
+
+function loadVideoSettings(): VideoSettingsForm {
+  try {
+    const raw = localStorage.getItem(VIDEO_LS_KEY);
+    if (raw) return { ...defaultVideoSettings(), ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return defaultVideoSettings();
+}
+
+/** Turn the form into the settings object the server validates. */
+function videoSettingsToPayload(form: VideoSettingsForm): Record<string, unknown> {
+  const payload: Record<string, unknown> = { format: form.format, quality: form.quality };
+  const dur = Number(form.targetDuration);
+  if (form.targetDuration.trim() && dur > 0) {
+    const max = form.format === "16:9" ? 600 : 90;
+    payload.targetDuration = Math.min(max, Math.max(8, dur));
+  }
+  const scenes = Number(form.sceneCount);
+  if (form.sceneCount.trim() && scenes >= 1) payload.sceneCount = Math.round(scenes);
+  return payload;
+}
+
+function VideoSettingsPanel({ value, onChange }: { value: VideoSettingsForm; onChange: (v: VideoSettingsForm) => void }) {
+  const update = (patch: Partial<VideoSettingsForm>) => {
+    const next = { ...value, ...patch };
+    onChange(next);
+    try { localStorage.setItem(VIDEO_LS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">Format</span>
+        <Select value={value.format} onValueChange={(v) => update({ format: v as VideoSettingsForm["format"] })}>
+          <SelectTrigger className="w-72"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(Object.keys(FORMAT_LABELS) as VideoSettingsForm["format"][]).map((f) => (
+              <SelectItem key={f} value={f}>{FORMAT_LABELS[f]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="space-y-1">
+          <span className="text-xs text-muted-foreground">Length in seconds (blank = automatic)</span>
+          <Input
+            type="number"
+            min={8}
+            max={value.format === "16:9" ? 600 : 90}
+            placeholder="auto"
+            value={value.targetDuration}
+            onChange={(e) => update({ targetDuration: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted-foreground">Scenes, 1 to 12 (blank = automatic)</span>
+          <Input
+            type="number"
+            min={1}
+            max={12}
+            placeholder="auto"
+            value={value.sceneCount}
+            onChange={(e) => update({ sceneCount: e.target.value })}
+          />
+        </label>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">Quality</span>
+        <Select value={value.quality} onValueChange={(v) => update({ quality: v as VideoSettingsForm["quality"] })}>
+          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="final">Final (full size)</SelectItem>
+            <SelectItem value="draft">Draft (half size, faster)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </Card>
+  );
+}
+
+/** Narration (the story read aloud) and character voices (dialogue) are independent. */
 interface VoiceConfig {
-  mode: "none" | "narration" | "dialogs" | "both";
+  narrationOn: boolean;
   narrationEngine: "kitten2" | "voxcpm2";
   narrationVoice: string;
   narrationVoiceDesc: string;
-  dialogsEngine: "kitten2" | "voxcpm2";
+  charactersOn: boolean;
+  charactersEngine: "kitten2" | "voxcpm2";
+  characterVoice: string;
 }
 
 function defaultVoiceConfig(): VoiceConfig {
   return {
-    mode: "none",
+    narrationOn: false,
     narrationEngine: "voxcpm2",
     narrationVoice: "narrator-calm",
     narrationVoiceDesc: "Calm male narrator, mid-30s, steady pace, documentary tone",
-    dialogsEngine: "kitten2",
+    charactersOn: false,
+    charactersEngine: "kitten2",
+    characterVoice: "Rosie",
   };
 }
 
+/** Reads the current shape, and converts the old single "mode" setting once. */
 function loadVoiceConfig(): VoiceConfig {
   try {
     const raw = localStorage.getItem(VOICE_LS_KEY);
-    if (raw) return { ...defaultVoiceConfig(), ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return defaultVoiceConfig();
+    if (!raw) return defaultVoiceConfig();
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if ("mode" in parsed) {
+      const mode = parsed.mode as string;
+      return {
+        ...defaultVoiceConfig(),
+        narrationOn: mode === "narration" || mode === "both",
+        charactersOn: mode === "dialogs" || mode === "both",
+        narrationEngine: (parsed.narrationEngine as VoiceConfig["narrationEngine"]) ?? "voxcpm2",
+        narrationVoice: (parsed.narrationVoice as string) ?? "narrator-calm",
+        narrationVoiceDesc: (parsed.narrationVoiceDesc as string) ?? defaultVoiceConfig().narrationVoiceDesc,
+        charactersEngine: (parsed.dialogsEngine as VoiceConfig["charactersEngine"]) ?? "kitten2",
+      };
+    }
+    return { ...defaultVoiceConfig(), ...parsed } as VoiceConfig;
+  } catch {
+    return defaultVoiceConfig();
+  }
 }
 
+/** The audio block the server and generator receive. */
 function voiceConfigToAudio(cfg: VoiceConfig): unknown {
-  if (cfg.mode === "none") return { narration: { enabled: false }, dialogs: { enabled: false } };
-  const narrationOn = cfg.mode === "narration" || cfg.mode === "both";
-  const dialogsOn = cfg.mode === "dialogs" || cfg.mode === "both";
   return {
-    narration: narrationOn
-      ? { enabled: true, engine: cfg.narrationEngine, voice: cfg.narrationVoice, voiceDesc: cfg.narrationVoiceDesc }
+    narration: cfg.narrationOn
+      ? { enabled: true, engine: cfg.narrationEngine, voice: cfg.narrationVoice }
       : { enabled: false },
-    dialogs: dialogsOn ? { enabled: true, engine: cfg.dialogsEngine } : { enabled: false },
+    dialogs: cfg.charactersOn
+      ? { enabled: true, engine: cfg.charactersEngine, defaultVoice: cfg.characterVoice }
+      : { enabled: false },
   };
+}
+
+/** Play one sample. Errors are shown, not swallowed. */
+async function auditionVoice(engine: "kitten2" | "voxcpm2", voice: string, voiceDesc?: string) {
+  try {
+    const blob = await voiceSample({ engine, voice, voiceDesc });
+    const audio = new Audio(URL.createObjectURL(blob));
+    await audio.play();
+  } catch (e) {
+    toast.error(`Could not play the sample: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: VoiceConfig) => void }) {
@@ -286,70 +431,105 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
     onChange(next);
     try { localStorage.setItem(VOICE_LS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   };
-  const narrationVoices = value.narrationEngine === "kitten2" ? kittenVoices : voxVoices;
+  const voicesFor = (engine: VoiceConfig["narrationEngine"]) => (engine === "kitten2" ? kittenVoices : voxVoices);
   return (
-    <Card className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">Voice mode</span>
-        <Select value={value.mode} onValueChange={(v) => update({ mode: v as VoiceConfig["mode"] })}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No voices</SelectItem>
-            <SelectItem value="narration">Narration only</SelectItem>
-            <SelectItem value="dialogs">Character dialogs</SelectItem>
-            <SelectItem value="both">Narration + dialogs</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      {(value.mode === "narration" || value.mode === "both") && (
-        <div className="grid grid-cols-2 gap-2">
+    <Card className="p-4 space-y-4">
+      <div>
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <label className="text-xs text-muted-foreground">Narration engine</label>
-            <Select value={value.narrationEngine} onValueChange={(v) => update({ narrationEngine: v as any })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="kitten2">KittenTTS 2 (fast, presets)</SelectItem>
-                <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
-              </SelectContent>
-            </Select>
+            <span className="text-sm font-medium">Narration</span>
+            <div className="text-xs text-muted-foreground">The story read aloud by one narrator.</div>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Narrator voice</label>
-            <div className="flex gap-2">
-              <Select value={value.narrationVoice} onValueChange={(v) => update({ narrationVoice: v })}>
+          <Switch checked={value.narrationOn} onCheckedChange={(on) => update({ narrationOn: on })} aria-label="Narration on or off" />
+        </div>
+        {value.narrationOn && (
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <label className="text-xs text-muted-foreground">Engine</label>
+              <Select
+                value={value.narrationEngine}
+                onValueChange={(v) => update({ narrationEngine: v as VoiceConfig["narrationEngine"], narrationVoice: v === "kitten2" ? "Bruno" : "narrator-calm" })}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {narrationVoices.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
-                  ))}
+                  <SelectItem value="kitten2">KittenTTS 2 (fast, presets)</SelectItem>
+                  <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="secondary" size="sm" onClick={async () => {
-                try {
-                  const blob = await voiceSample({ engine: value.narrationEngine, voice: value.narrationVoice, voiceDesc: value.narrationVoiceDesc });
-                  const url = URL.createObjectURL(blob);
-                  const a = new Audio(url);
-                  a.play();
-                } catch (e) { /* ignore */ }
-              }} aria-label="Audition voice">
-                ▶
-              </Button>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Narrator voice</label>
+              <div className="flex gap-2">
+                <Select value={value.narrationVoice} onValueChange={(v) => update({ narrationVoice: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {voicesFor(value.narrationEngine).map((v) => (
+                      <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-label="Listen to the narrator voice"
+                  onClick={() => auditionVoice(value.narrationEngine, value.narrationVoice)}
+                >
+                  ▶
+                </Button>
+              </div>
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="text-sm font-medium">Character voices</span>
+            <div className="text-xs text-muted-foreground">Dialogue lines, spoken by each character's voice.</div>
+          </div>
+          <Switch checked={value.charactersOn} onCheckedChange={(on) => update({ charactersOn: on })} aria-label="Character voices on or off" />
         </div>
-      )}
-      {(value.mode === "dialogs" || value.mode === "both") && (
-        <div>
-          <label className="text-xs text-muted-foreground">Dialog engine</label>
-          <Select value={value.dialogsEngine} onValueChange={(v) => update({ dialogsEngine: v as any })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="kitten2">KittenTTS 2 (fast, 23 voices)</SelectItem>
-              <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
+        {value.charactersOn && (
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <label className="text-xs text-muted-foreground">Engine</label>
+              <Select
+                value={value.charactersEngine}
+                onValueChange={(v) => update({ charactersEngine: v as VoiceConfig["charactersEngine"], characterVoice: v === "kitten2" ? "Rosie" : "character-hero" })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="kitten2">KittenTTS 2 (fast, 23 voices)</SelectItem>
+                  <SelectItem value="voxcpm2">VoxCPM2 (best quality)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Default character voice</label>
+              <div className="flex gap-2">
+                <Select value={value.characterVoice} onValueChange={(v) => update({ characterVoice: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {voicesFor(value.charactersEngine).map((v) => (
+                      <SelectItem key={v.id} value={v.id}>{v.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-label="Listen to the character voice"
+                  onClick={() => auditionVoice(value.charactersEngine, value.characterVoice)}
+                >
+                  ▶
+                </Button>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">Per-character voices come with the editor (a later phase).</div>
+            </div>
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
@@ -362,13 +542,19 @@ function Step1({
   const [input, setInput] = useState("");
   const [writing, setWriting] = useState(false);
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig>(loadVoiceConfig());
+  const [videoSettings, setVideoSettings] = useState<VideoSettingsForm>(loadVideoSettings());
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyleInput>(loadCaptionStyle());
 
   const write = async () => {
     if (input.trim().length < 6) return;
     setError(null);
     setWriting(true);
     try {
-      const { jobId } = await planSpec({ premise: input.trim(), audio: voiceConfigToAudio(voiceConfig) });
+      const { jobId } = await planSpec({
+        premise: input.trim(),
+        audio: voiceConfigToAudio(voiceConfig),
+        settings: { ...videoSettingsToPayload(videoSettings), captions: captionStyle },
+      });
       setQuery({ step: "review", plan: jobId });
     } catch (e) {
       setError(String(e));
@@ -409,6 +595,14 @@ function Step1({
             The AI builds the whole plan from our real model and sound libraries. Every video is a fresh
             composition. Nothing renders until you say yes.
           </p>
+          <VideoSettingsPanel value={videoSettings} onChange={setVideoSettings} />
+          <CaptionPanel
+            value={captionStyle}
+            onChange={(next) => {
+              setCaptionStyle(next);
+              try { localStorage.setItem(CAPTION_LS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+            }}
+          />
           <VoiceSettings value={voiceConfig} onChange={setVoiceConfig} />
         </div>
       </Card>
@@ -723,10 +917,10 @@ const [modelInfo, setModelInfo] = useState<string | null>(null);
             <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Voice</div>
             {(() => {
               const vc = loadVoiceConfig();
-              if (vc.mode === "none") return <div className="mt-1 text-sm text-muted-foreground">No voices — silent video.</div>;
+              if (!vc.narrationOn && !vc.charactersOn) return <div className="mt-1 text-sm text-muted-foreground">No voices — silent video.</div>;
               const parts: string[] = [];
-              if (vc.mode === "narration" || vc.mode === "both") parts.push(`Narration: ${vc.narrationEngine} (${vc.narrationVoice})`);
-              if (vc.mode === "dialogs" || vc.mode === "both") parts.push(`Dialogs: ${vc.dialogsEngine}`);
+              if (vc.narrationOn) parts.push(`Narration: ${vc.narrationEngine} (${vc.narrationVoice})`);
+              if (vc.charactersOn) parts.push(`Characters: ${vc.charactersEngine} (${vc.characterVoice})`);
               return <div className="mt-1 text-sm font-semibold">{parts.join(" · ")}</div>;
             })()}
             <div className="mt-2 text-xs text-muted-foreground">Change in Step 1 before approving.</div>
