@@ -55,11 +55,11 @@
   - [ ] Milestone 3 check: stills per kit × shot size × format, then full renders compared with milestone 2.
   - Input: [07-milestone2-visual-review.md](07-milestone2-visual-review.md) — the milestone 2 frames reviewed: the camera doesn't frame the narrated subject, rain radiates from the horizon, props block the lens, night is too dark, captions and HUDs need per-aspect sizing.
 - [~] **Phase 4:** editor + chunked fast re-render (milestone 4). About 55% done, paused 2026-10-23 to move laptops: status, files and the exact next steps are in [09-phase4.md](09-phase4.md). Not committed yet.
-- [~] **Phase 5:** better worlds and characters (milestone 5). About 40% done. Status, how to run it on another machine, and the pending list are in [09-phase5.md](09-phase5.md).
+- [~] **Phase 5:** better worlds and characters (milestone 5). About 70% — the 2026-10-24 lane landed the world LIFE.
   - [x] Research: characters/animation and deterministic atmosphere (two passes, findings in 09).
   - [x] `Actor` (`src/world/actors/`): director script schema, pure planner and `poseAt`, clip mapping across the four rig families on disk, stride-matched walking, seats, look/point/talk overlays, casting by role. Test plaza `ActorStage`. 10 tests pass. Checked in stills only.
-  - [ ] Actors in world places (`cityAnchors`), the director prompt block, a video check.
-  - [ ] Atmosphere: mood palette, particles, light shafts, sky and clouds, water, height fog.
+  - [x] Actors in world places + atmosphere — **laned 2026-10-24**: `cityAnchors` (named spots + ground heights), a deterministic 43-person crowd (walkers both ways — a quarter carrying bag/box/briefcase, avenue crossers, 10 plaza lingerers; thinning by altitude for aerials), dressed plazas (fountain, striped market stalls, benches, bins, lamps with night light pools), tree sway/cloud drift/height fog/birds/flags (shader-patch + pure-t), night lit windows + lamp glow. `GroundWorld` draws it all, so world scenes, flights and the inspector get it free. 15 new tests; world suite 85/85; stills in `out/qa/phase5-lane/` (density, plaza, night, carried-box close-up, plaza-top). NOT yet: the director's prompt block for actor placement (09 pending 2), a motion video check (foot-slide), crowd LOD near-camera-only rig use, kit-building night windows (Phase 6 step 4), toon palette/light shafts/Gerstner water/FBM sky (09 pending 4).
+  - [ ] Atmosphere polish remainder (09): mood palette, light shafts, water quality.
   - [ ] River axis fix (coordinate with the Phase 3 camera work). The Interior camera bounds are left to Phase 3.
 - [ ] **Phase 6:** one world and video quality (milestone 6). The engine base is built and tested in `src/world/` ([06-world-engine.md](06-world-engine.md)); step 1 (connect it to the director and the main composition) comes before Phase 3.
 
