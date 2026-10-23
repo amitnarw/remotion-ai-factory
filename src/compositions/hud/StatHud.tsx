@@ -1,7 +1,9 @@
 /**
  * StatHud.tsx — the escalation stat panel from the "What If Fun facts"
- * reference: small red caps title ("YOUR EYESIGHT"), huge value ("16×"),
- * all-caps subline, and a live red EKG pulse with the BPM number.
+ * reference: small red caps title ("YOUR EYESIGHT"), huge value ("16×") and
+ * an all-caps subline. The red EKG pulse with the BPM number is a device the
+ * director can attach to the panel (optional `bpm` on every beat): it renders
+ * only when every beat carries one — never a default decoration.
  *
  * Driven from spec.statPanel.beats; values/zoom/bpm blend toward the active
  * beat over ~0.9s so every escalation reads as a change happening on screen.
@@ -54,14 +56,18 @@ export const StatHud: React.FC<{ panel?: StatPanelSpec; fps?: number }> = ({ pan
   const value = statValueAt(panel, t);
   const shown = formatStat(value);
   const sub = statSubAt(panel, t);
-  const bpm = Math.round(statBpmAt(panel, t));
+  // The pulse/EKG row is the director's device: shown only when the panel's
+  // beats carry an authored bpm (the always-on row was deleted per the
+  // intent audit — nothing renders unless it was chosen).
+  const hasPulse = panel.beats.every((b) => b.bpm != null) && panel.beats.length > 0;
+  const bpmAt = hasPulse ? statBpmAt(panel, t) : undefined;
+  const bpm = bpmAt != null ? Math.round(bpmAt) : 0;
+  const phase = bpmAt != null ? (frame / fps) * (bpmAt / 60) : 0;
   const idx = statIndexAt(panel, t);
   const beat = panel.beats[idx];
   const sinceBeat = Math.max(0, t - beat.t);
   const pop = sinceBeat < 0.35 ? 1 + (1 - sinceBeat / 0.35) * 0.08 : 1;
   const fade = sinceBeat < 0.3 ? sinceBeat / 0.3 : 1;
-
-  const phase = (frame / fps) * (statBpmAt(panel, t) / 60);
 
   return (
     <div
@@ -132,46 +138,50 @@ export const StatHud: React.FC<{ panel?: StatPanelSpec; fps?: number }> = ({ pan
       >
         {sub}
       </div>
-      <div style={{ height: 2, background: "rgba(16,24,40,0.12)", margin: "16px 0 12px 0", borderRadius: 2 }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span
-            style={{
-              width: 11,
-              height: 11,
-              borderRadius: 6,
-              background: "#e0342b",
-              display: "inline-block",
-              opacity: 0.45 + 0.55 * Math.abs(Math.sin(phase * Math.PI)),
-            }}
-          />
-          <span style={{ color: "#e0342b", fontSize: 15, fontWeight: 900, letterSpacing: 1.8, whiteSpace: "nowrap" }}>
-            PULSE
-          </span>
-        </div>
-        <svg width="100%" height="46" viewBox="0 0 246 46" style={{ flex: 1, display: "block" }}>
-          <path
-            d={pulsePath(bpm, 246, 46, phase)}
-            stroke="#e11d48"
-            strokeWidth={3.2}
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <div
-          style={{
-            fontSize: 26,
-            fontWeight: 900,
-            color: "#101828",
-            fontVariantNumeric: "tabular-nums",
-            minWidth: 74,
-            textAlign: "right",
-          }}
-        >
-          {bpm} BPM
-        </div>
-      </div>
+      {hasPulse && (
+        <>
+          <div style={{ height: 2, background: "rgba(16,24,40,0.12)", margin: "16px 0 12px 0", borderRadius: 2 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <span
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: 6,
+                  background: "#e0342b",
+                  display: "inline-block",
+                  opacity: 0.45 + 0.55 * Math.abs(Math.sin(phase * Math.PI)),
+                }}
+              />
+              <span style={{ color: "#e0342b", fontSize: 15, fontWeight: 900, letterSpacing: 1.8, whiteSpace: "nowrap" }}>
+                PULSE
+              </span>
+            </div>
+            <svg width="100%" height="46" viewBox="0 0 246 46" style={{ flex: 1, display: "block" }}>
+              <path
+                d={pulsePath(bpm, 246, 46, phase)}
+                stroke="#e11d48"
+                strokeWidth={3.2}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <div
+              style={{
+                fontSize: 26,
+                fontWeight: 900,
+                color: "#101828",
+                fontVariantNumeric: "tabular-nums",
+                minWidth: 74,
+                textAlign: "right",
+              }}
+            >
+              {bpm} BPM
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

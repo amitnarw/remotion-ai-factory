@@ -95,7 +95,24 @@ test("the counter keeps numeric steps, scales the world 1..16 and pops on each s
   }
   assert.equal(beats[beats.length - 1].scale, 16);
   assert.equal(s.events.filter((e) => e.name.startsWith("counter-")).length, 3);
-  assert.ok((s.audio?.ambient ?? []).some((a) => a.tag.startsWith("heartbeat_bpm")));
+  // The fabricated bpm and the always-on heartbeat bed are deleted: with no
+  // authored pulse the beats carry no bpm and no heartbeat plays.
+  assert.ok(beats.every((b) => b.bpm === undefined), "no fabricated bpm");
+  assert.equal((s.audio?.ambient ?? []).filter((a) => a.tag.startsWith("heartbeat_bpm")).length, 0, "no heartbeat without an authored pulse");
+});
+
+test("the pulse device renders only when the director sets bpm", () => {
+  const pulseInput = JSON.parse(JSON.stringify(messyDirector));
+  pulseInput.statPanel.steps = pulseInput.statPanel.steps.map((st: Record<string, unknown>) => ({ ...st, bpm: 120 }));
+  const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, 2.6) }));
+  const timeline = buildTimeline({ beats: story.beats, lines, format: "9:16", target: 20, cap: 90, wps: 2.6 });
+  const captions = buildCaptions(timeline, story.beats, "9:16", true);
+  const direction = DirectorSchema.parse(normalizeDirector(pulseInput));
+  const spec = assemble({ id: "t", premise: "p", settings, story, timeline, captions, direction, sound: soundRules(story, direction), casting: castVoices(story, audio), audio }).spec;
+  const s = validateSpec(spec);
+  const beats = s.statPanel!.beats;
+  assert.ok(beats.every((b) => b.bpm === 120), "authored bpm lands on every beat");
+  assert.ok((s.audio!.ambient ?? []).filter((a) => a.tag.startsWith("heartbeat_bpm")).length >= 3, "a heartbeat bed follows the chosen pulse");
 });
 
 test("world events only where the world can show them", () => {

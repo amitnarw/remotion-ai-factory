@@ -226,8 +226,9 @@ WORLD + PRODUCTION GUIDE — you are the DIRECTOR. Choose with these exact tools
      center strip and survive every zoom beat) }
    + accent ${STREET_ACCENTS.join(" | ")}, crowdCount 10-30, vehicleCount 4-10.
    The prop count tracks the SAME numbers the HUD shows. statPanel (escalation
-   stories): 5 beats {t, value, zoom, sub, bpm}, value/zoom double; title names
-   the SUBJECT ("YOUR MONEY", "THE MOON"). Timer HUD for "gone for N seconds"
+   stories): 5 beats {t, value, zoom, sub}, value/zoom double; title names
+   the SUBJECT ("YOUR MONEY", "THE MOON"). bpm belongs to the optional pulse
+   device (fear/urgency premises only) — never a default beat field. Timer HUD for "gone for N seconds"
    (timer {label, startT, endT}). Keep every beat >= 1.2s on screen and the
    last beat ending >= 1s before the video ends.
 

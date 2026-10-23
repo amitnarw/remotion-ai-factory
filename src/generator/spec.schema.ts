@@ -58,13 +58,16 @@ export const CameraKeySchema = z.object({
  *  value  = the big number before the unit ("16")
  *  zoom   = camera zoom multiplier while this beat is active
  *  sub    = the all-caps subline ("LIKE 16X BINOCULARS")
- *  bpm    = pulse shown on the red EKG line */
+ *  bpm    = the red pulse row on the card — a director device, not a fixture:
+ *           present only when the director chooses it (fear/urgency premises);
+ *           the row and a heartbeat sound render only when it is set. The
+ *           assembler never invents it (see docs/factory/10-intent-audit.md). */
 export const StatBeatSchema = z.object({
   t: z.number(),
   value: z.string().regex(/^[0-9][0-9.]*$/, "big value like \"16\" — no letters"),
   zoom: z.number().min(1),
   sub: z.string(),
-  bpm: z.number().min(40).max(220),
+  bpm: z.number().min(40).max(220).optional(),
   /** World reaction 1..16 (planet size, water level, prop count). Set by the
    *  assembler; the HUD still shows `value`. Absent = use the value (old specs). */
   scale: z.number().min(1).max(16).optional(),

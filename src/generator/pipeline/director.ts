@@ -51,7 +51,17 @@ export const DirectorSchema = z.object({
     .object({
       title: z.string(),
       unit: z.string(),
-      steps: z.array(z.object({ beat: z.string(), value: z.string(), sub: z.string() })),
+      steps: z
+        .array(
+          z.object({
+            beat: z.string(),
+            value: z.string(),
+            sub: z.string(),
+            /** Optional pulse device (fear/urgency premises only): shows the red
+             *  EKG row on the counter card and ties a heartbeat sound to it. */
+            bpm: z.number().min(40).max(220).optional(),
+          }),
+        ),
     })
     .nullable(),
   timer: z.object({ label: z.string(), startBeat: z.string(), endBeat: z.string().nullable() }).nullable(),
@@ -113,7 +123,15 @@ export function normalizeDirector(raw: unknown): unknown {
         steps: asArray<Record<string, unknown>>(pick(counterRaw, ["steps", "beats", "values"]))
           .map((st) => obj(st))
           .filter((st): st is Record<string, unknown> => !!st)
-          .map((st) => ({ beat: beatRef(pick(st, ["beat", "at", "start"])) ?? "", value: str(pick(st, ["value", "number", "amount"])), sub: str(pick(st, ["sub", "caption", "label", "note"])) }))
+          .map((st) => {
+            const bpm = Number(pick(st, ["bpm", "pulse", "heart"]));
+            return {
+              beat: beatRef(pick(st, ["beat", "at", "start"])) ?? "",
+              value: str(pick(st, ["value", "number", "amount"])),
+              sub: str(pick(st, ["sub", "caption", "label", "note"])),
+              bpm: Number.isFinite(bpm) && bpm >= 40 && bpm <= 220 ? Math.round(bpm) : undefined,
+            };
+          })
           .filter((st) => st.beat && st.value),
       }
     : null;
@@ -165,7 +183,7 @@ TIME (time): ${TIME_OF_DAY.join(", ")}. dawn = hope; noon = heat, peak; afternoo
 WEATHER: ${WEATHERS.join(", ")} (storm adds lightning).
 CAMERA (camera): ${CAMERA_STYLES.join(", ")}. walk-through = a person filming while walking; steady-push = locked frame with push-ins on big moments; crane-reveal = rises to reveal; drone-top = overhead.
 CROWD (street only): none, light, busy.  ACCENT (street colours): ${STREET_ACCENTS.join(", ")}.
-COUNTER (optional): a big on-screen number that escalates, e.g. "YOUR MONEY 1x -> 2x -> 4x". Give it a title, a unit ("x", "%", "°C" or ""), and steps at beats with a numeric value and a short subline. Values are plain numbers: digits only, no commas, no powers, no words, at most 10 digits. The world grows with it.
+COUNTER (optional): a big on-screen number that escalates, e.g. "YOUR MONEY 1x -> 2x -> 4x". Give it a title, a unit ("x", "%", "°C" or ""), and steps at beats with a numeric value and a short subline. Values are plain numbers: digits only, no commas, no powers, no words, at most 10 digits. The world grows with it. Optional per step: "bpm" (40-220) shows a red pulse row on the card and ties a heartbeat sound under the video — use it ONLY when the premise is about fear, panic or an urgent body threat; never default it.
 TIMER (optional): "TIME WITHOUT WATER" style clock from a start beat to an end beat (or to the end).
 PROP (street only, optional): the premise as an object on the street: ${HERO_PROP_STYLES.join(", ")}; growth multiply or vanish; anchor ${HERO_ANCHORS.join(", ")}.
 WORLD EVENTS (optional, at beats): water-vanish, water-return, water-rise (ocean, pier, river); rain-start, rain-stop (any); lights-out (street, interior, forest, countryside).

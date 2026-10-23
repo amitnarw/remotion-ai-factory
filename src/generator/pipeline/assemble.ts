@@ -190,20 +190,27 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
         if (t <= lastT + 0.3) t = lastT + 0.3;
         lastT = t;
         const scale = i === 0 ? 1 : Math.min(16, Math.max(1, scales[i]));
+        // bpm is a director device (optional, fear/urgency premises only per
+        // the intent audit): propagated as chosen, never invented here. The
+        // old assembler fabricated 76→152 and added a heartbeat bed under
+        // every counting video — deleted.
         return {
           t: r3(t),
           value: Number.isInteger(st.v) ? String(st.v) : String(Number(st.v.toFixed(2))),
           zoom: Number(scale.toFixed(3)),
           scale: Number(scale.toFixed(3)),
           sub: st.sub.toUpperCase().slice(0, 28),
-          bpm: Math.round(76 + (76 * i) / (kept.length - 1)),
+          ...(st.bpm != null ? { bpm: Math.round(Math.min(220, Math.max(40, st.bpm))) } : {}),
         };
       });
       statPanel = { title: direction.counter.title.toUpperCase().slice(0, 32), unit: direction.counter.unit, beats };
       beats.forEach((b, i) => {
         if (i > 0) events.push({ t: b.t, name: `counter-${i}`, targets: [], sfx: [{ tag: "pop_light" }] });
-        const end = i + 1 < beats.length ? beats[i + 1].t : D;
-        ambient.push({ tag: heartbeatTag(b.bpm), from: i === 0 ? 0 : b.t, to: r3(end), vol: 0.35, restart: true });
+        // Heartbeat sound only follows the director's chosen pulse.
+        if (b.bpm != null) {
+          const end = i + 1 < beats.length ? beats[i + 1].t : D;
+          ambient.push({ tag: heartbeatTag(b.bpm), from: i === 0 ? 0 : b.t, to: r3(end), vol: 0.35, restart: true });
+        }
       });
     } else {
       warnings.push("counter dropped: fewer than 2 usable numeric steps");

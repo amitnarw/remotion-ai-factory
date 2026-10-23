@@ -60,16 +60,22 @@ export function statZoomAt(panel: StatPanelSpec, t: number): number {
   return prev.zoom + (cur.zoom - prev.zoom) * easeOut(f);
 }
 
-/** Current pulse in BPM at time t: jumps on each beat, settled within 0.6s
- *  so the heartbeat audio/graphic follows the pop without lingering behind. */
-export function statBpmAt(panel: StatPanelSpec, t: number): number {
-  const idx = activeIndex(panel, t);
-  const cur = panel.beats[idx];
-  if (idx === 0) return cur.bpm;
-  const prev = panel.beats[idx - 1];
-  const f = (t - cur.t) / 0.6;
-  if (f >= 1) return cur.bpm;
-  return prev.bpm + (cur.bpm - prev.bpm) * easeOut(Math.min(1, Math.max(0, f)));
+/** BPM shown at t when the pulse device is in use, undefined when the panel
+ *  has no authored bpm anywhere. Beats without a bpm hold the last chosen
+ *  value, so a partial pulse choice still blends at the chosen beats. */
+export function statBpmAt(panel: StatPanelSpec, t: number): number | undefined {
+  if (!panel.beats.some((b) => b.bpm != null)) return undefined;
+  const bpmFrom = (w: number): number => {
+    for (let i = Math.min(w, panel.beats.length - 1); i >= 0; i--) {
+      if (panel.beats[i].bpm != null) return panel.beats[i].bpm as number;
+    }
+    return panel.beats.find((b) => b.bpm != null)!.bpm as number;
+  };
+  const j = activeIndex(panel, t);
+  const f = (t - panel.beats[j].t) / 0.6;
+  if (f >= 1 || j === 0) return bpmFrom(j);
+  const prev = bpmFrom(j - 1);
+  return prev + (bpmFrom(j) - prev) * easeOut(Math.min(1, Math.max(0, f)));
 }
 
 /** The beat index currently active (0 = base). */
