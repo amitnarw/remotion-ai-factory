@@ -1,0 +1,10 @@
+{
+  "edits": [
+    { "beat": "b4", "say": "Ruth's timber walks off." },
+    { "beat": "b5", "say": "Ten miles east, daily." },
+    { "beat": "b6", "say": "Amazon next. Then Siberia." },
+    { "beat": "b7", "say": "Boise: roots crack asphalt." },
+    { "beat": "b8", "say": "A boy touches a trunk." },
+    { "beat": "b9", "say": "Every forest flees north." }
+  ]
+}

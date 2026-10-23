@@ -1,7 +1,7 @@
 # Progress & Handoff
 
 **Last updated:** 2026-10-24 (01:35), on the original machine (Windows, RTX 3060 Laptop GPU, VoxCPM2 + KittenTTS 2 installed, Ollama Pro key in `.env`)
-**Current status:** **The real-model milestone ran to completion (attempt 2; attempt 1 was killed at 2 of 9 videos by a broken shell pipe after a harness restart). Result: 7/9 PASS with real `ollama/glm-5.3` plans + real KittenTTS 2 voices — exact lengths, 0 overlaps, 100% caption sync, −14 LUFS mixes.** money-doubles-16:9 FAILED on loudness (−15.3 vs the −14±1 rule, only 0.3 over tolerance) and forest-walks-16:9 crashed on a missing synthesized fallback file (`engine_hum`), a port gap. Both are diagnosed with fixes planned; the two re-renders are queued. **Phase 7 — The Reference Bar** was added on the user's quality references ([quality-refs/](quality-refs/)); the EKG/BPM row returns as a director-chosable device (see [10-intent-audit.md](10-intent-audit.md) amendment). **Engine verdict from the user: both KittenTTS 2 and VoxCPM2 stay as first-class, per-video selectable engines** (defaults: Kitten = always-works fallback, VoxCPM = max quality).
+**Current status:** **Milestone 2 (real models) = 9/9 PASS** on the final tree (2026-10-24, 02:46): real `ollama/glm-5.3` plans + real KittenTTS 2 voices; the two failures were fixed and re-rendered the same night (money-16:9 loudness via the per-cue peak ceiling + master-loop cap → −14.3; forest-16:9 via the missing-fallback-file drop-guard + a new `engine_hum` synth role). **Phase 7 — The Reference Bar** was added on the user's quality references ([quality-refs/](quality-refs/)); the EKG/BPM row returns as a director-chosable device. **Engines: both stay** (user A/B verdict). **The runs got 2× faster**: renders bundle per id and the milestone runner plans/renders 2 videos at a time (`MILESTONE_PARALLEL`), so the 9-video matrix now costs about 70 min instead of 2.3 h. **The 3 lanes are running** (Phase 3 camera/look/typography, Phase 4 editor+chunks, Phase 5 world life) — coordinator commits their work.
 
 ## Next step
 **Phase 3 is about 65% done and was paused for a move to another laptop.** Start from **[09-phase3-handoff.md](09-phase3-handoff.md)**: what is done, what is left, in order, with commands. Research and design: [08-phase3-research.md](08-phase3-research.md); the problems it answers: [07-milestone2-visual-review.md](07-milestone2-visual-review.md).
@@ -41,7 +41,7 @@
   - [x] 9. Server + dashboard: per-role key checks, voice settings to plan jobs, stage pills, Story section with audition and recast
   - [x] 10. Review pass (code checks always; optional AI critic) + long-form (over 180 s) written act by act
   - [x] 11. Milestone 2 check on the dev laptop — DONE 2026-10-23: `npm run milestone -- --fixtures`, real Kitten voices, 9/9 pass (table below)
-  - [ ] 12. On the user's machine: the same check with real Ollama models, and record their replies as fixtures (see Next step)
+  - [x] 12. On the user's machine — DONE 2026-10-24: real Ollama models (writer `ollama/glm-5.3`), real Kitten voices, replies recorded to `test-fixtures/pipeline/real/`; **9/9 pass on the final tree** (2 failures fixed + re-rendered same night — see the real-models table above)
 - [~] **Phase 3:** cinematic camera, transitions, look, photographer vision QA (milestone 3). Research first: [08-phase3-research.md](08-phase3-research.md) (4 parallel research passes).
   - [x] Layout per format: safe areas from the platforms' published zones, captions ~7.5% of the width on 9:16 with an outline, the hook fitted between whole words, and counter and timer cards scaled per shape (`src/generator/layout.ts`). Checked with stills in all three formats.
   - [x] Camera solver (`src/generator/camera/`). The director names a shot per beat (subject, size, angle, side, move, place, energy, style), and a pure closed-form solver places the camera. Tested by projecting through a real three.js camera.
@@ -143,24 +143,24 @@
   - `/api/voice-sample` (▶ audition) uses the same cache, so a sample is slow once and instant after. It used to time out after 120 s and return an empty error.
 - **Nothing was played.** Durations and loudness are measured from the files.
 
-## Milestone 2 result — real models (2026-10-23 late, this machine)
-Written from `output/milestone/report.md` (run attempt 2, 23:19 → 01:30; attempt 1 lost 6 videos to a broken shell pipe after a harness restart, its 2 rendered videos were folded in). Same checks as the fixture run. **7 of 9 pass.** The two failures were fixed the same night and re-rendered (`--only`, final tree): **money-doubles-16:9 now measures −14.39 LUFS / −1.26 dBTP — passes** (per-cue true-peak ceiling + master-loop cap fix). forest-walks-16:9's re-render pays live planning + fresh voice synthesis (a re-run without `--fixtures` re-calls the roles and re-records; `FACTORY_LLM_RECORD` records, it does not replay).
+## Milestone 2 result — real models (2026-10-24 02:46, this machine) — **9/9 PASS**
+Run attempt 2 (23:19 → 01:30, real plans + real voices), then the two failures re-rendered on the final tree (attempt 3, 02:04 → 02:46; attempt 1 lost 6 videos to a broken shell pipe after a harness restart, its 2 rendered videos were folded in). Same checks as the fixture run.
 
-| video | target | length | ±10% | overlaps | longest silence | caption sync | LUFS | true peak | estimated lines | result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| milestone-money-doubles-9x16 | 25s | 25.1s | yes | 0 | 0.96s | 100% | -14.8 | -1.4 | 0 | PASS |
-| milestone-money-doubles-1x1 | 25s | 25.0s | yes | 0 | 1.06s | 100% | -14.8 | -1.3 | 0 | PASS |
-| milestone-money-doubles-16x9 | 60s | 60.0s | yes | 0 | 2.26s | 100% | **-15.3** | -1.2 | 0 | **FAIL** (loudness 0.3 over tolerance) |
-| milestone-oceans-vanish-9x16 | 25s | 25.0s | yes | 0 | 1.31s | 100% | -14.0 | -1.4 | 0 | PASS |
-| milestone-oceans-vanish-1x1 | 25s | 25.0s | yes | 0 | 1.01s | 100% | -14.0 | -1.4 | 0 | PASS |
-| milestone-oceans-vanish-16x9 | 60s | 60.0s | yes | 0 | 2.14s | 100% | -14.1 | -1.3 | 0 | PASS |
-| milestone-forest-walks-9x16 | 25s | 25.7s | yes | 0 | 0.95s | 100% | -14.1 | -1.3 | 0 | PASS |
-| milestone-forest-walks-1x1 | 25s | 25.0s | yes | 0 | 1.04s | 100% | -14.2 | -1.4 | 0 | PASS |
-| milestone-forest-walks-16x9 | 60s | — | — | — | — | — | — | — | — | **ERROR**: render crashed — `engine_hum` fallback file missing (port gap, public/sfx not rebuilt here) |
+| video | target | length | overlaps | longest silence | caption sync | LUFS | true peak | result |
+|---|---|---|---|---|---|---|---|---|
+| milestone-money-doubles-9x16 | 25s | 25.1s | 0 | 0.96s | 100% | -14.8 | -1.4 | PASS |
+| milestone-money-doubles-1x1 | 25s | 25.0s | 0 | 1.06s | 100% | -14.8 | -1.3 | PASS |
+| milestone-money-doubles-16x9 | 60s | 60.0s | 0 | 2.31s | 100% | **-14.3** | -1.3 | PASS (was FAIL) |
+| milestone-oceans-vanish-9x16 | 25s | 25.0s | 0 | 1.31s | 100% | -14.0 | -1.4 | PASS |
+| milestone-oceans-vanish-1x1 | 25s | 25.0s | 0 | 1.01s | 100% | -14.0 | -1.4 | PASS |
+| milestone-oceans-vanish-16x9 | 60s | 60.0s | 0 | 2.14s | 100% | -14.1 | -1.3 | PASS |
+| milestone-forest-walks-9x16 | 25s | 25.7s | 0 | 0.95s | 100% | -14.1 | -1.3 | PASS |
+| milestone-forest-walks-1x1 | 25s | 25.0s | 0 | 1.04s | 100% | -14.2 | -1.4 | PASS |
+| milestone-forest-walks-16x9 | 60s | 60.0s | 0 | 2.26s | 100% | -14.2 | -1.3 | PASS (was ERROR) |
 
-Firsts on this run: **real model plans end to end** (writer ~2–4 min, writer-revise ~3, director ~5, sound ~2 per video on `ollama/glm-5.3`), no voice speed-up needed anywhere (1× on all nine — the calibrated word budget held with real models), and the known director quirk appeared exactly once (`counter step "0" dropped`, logged twice for the money 16:9 — validator drops "0" as "not a plain number"; seen and documented, same as the dev-laptop run).
+Firsts on this run: **real model plans end to end** (writer ~2–4 min, writer-revise ~3, director ~5, sound ~2 per video on `ollama/glm-5.3`), no voice speed-up needed anywhere (1× on all nine — the calibrated word budget held with real models), and the known director quirk appeared once (`counter step "0" dropped`, logged — validator drops "0" as "not a plain number"; documented, same as the dev-laptop run).
 
-**Not yet shown: the videos themselves.** The user reviews them (Phase 1 sign-off + Phase 2 step 12) — frame review against the Phase 7 bar is overdue (typeset quality gap: see quality-refs/).
+**Not yet shown: the videos themselves.** The user reviews them (Phase 1 sign-off + Phase 2 step 12) — frame review against the Phase 7 bar is overdue (typset quality gap: see quality-refs/). Phase 2 step 12's machinery is done; the user's boxes gate the phase.
 
 ## Milestone 2 result (2026-10-23, dev laptop, fixtures + real KittenTTS 2)
 Checks per video: length within ±10% of the target, no overlapping speech, longest silence of 4 s or less (to the end of the MP4), at least 95% of caption words inside the line that says them, -14 ±1 LUFS, true peak of -1 dBTP or lower, 48 kHz, and no voice line left as an estimate.

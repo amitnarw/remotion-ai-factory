@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b3","say":"The house bursts."},{"beat":"b4","say":"Neighbors dive into cash."},{"beat":"b5","say":"Bread: a trillion. Money: nothing."},{"beat":"b6","say":"It outweighs Earth."},{"beat":"b7","say":"Then the Sun."},{"beat":"b10","say":"One last dollar splits."}]}

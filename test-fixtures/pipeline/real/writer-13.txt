@@ -1,0 +1,88 @@
+{
+  "title": "The Walking Forest",
+  "hook": "What if the forest could walk?",
+  "mood": "epic",
+  "characters": [
+    { "name": "Ruth", "gender": "female", "age": "old", "look": "farmer in overalls, gray braid, porch rocker" },
+    { "name": "Marcus", "gender": "male", "age": "adult", "look": "park ranger, khaki uniform, binoculars and radio" },
+    { "name": "Sam", "gender": "male", "age": "child", "look": "small boy in a yellow rain jacket" }
+  ],
+  "beats": [
+    {
+      "say": "The pines of Idaho rip their roots free and stand up.",
+      "lines": [],
+      "see": "A pine hillside tilts; roots tear free, raining dirt across the valley.",
+      "pace": "quick",
+      "stress": "rip"
+    },
+    {
+      "say": "The whole forest rises like one animal and walks.",
+      "lines": [],
+      "see": "An entire treeline rises like one creature above a green valley.",
+      "pace": "linger",
+      "stress": "rises"
+    },
+    {
+      "say": "It crosses the Salmon River, drinking as it goes.",
+      "lines": [],
+      "see": "Giant root-legs wade the wide Salmon River, fish scattering downstream.",
+      "pace": "normal",
+      "stress": "drinking"
+    },
+    {
+      "say": "Farmer Ruth watches her timber money stroll off her land.",
+      "lines": [
+        { "who": "Ruth", "text": "I planted every one with my own hands." }
+      ],
+      "see": "Old woman on a farmhouse porch, coffee mug, forest leaving her fields.",
+      "pace": "normal",
+      "stress": "stroll"
+    },
+    {
+      "say": "Rangers track it moving ten miles east every single day.",
+      "lines": [
+        { "who": "Marcus", "text": "It isn't lost. It knows exactly where it's going." }
+      ],
+      "see": "Helicopter above the marching treeline; a map with a moving arrow.",
+      "pace": "quick",
+      "stress": "ten"
+    },
+    {
+      "say": "Then the Amazon follows, and Siberia's endless taiga pulls loose.",
+      "lines": [],
+      "see": "Earth from space: green continents lifting like slow herds.",
+      "pace": "linger",
+      "stress": "Amazon"
+    },
+    {
+      "say": "The forest reaches the edge of Boise, roots cracking asphalt.",
+      "lines": [],
+      "see": "Treeline halts at a suburban street; roots split asphalt under streetlights.",
+      "pace": "quick",
+      "stress": "Boise"
+    },
+    {
+      "say": "Roots lift parked cars aside, and a boy touches a trunk.",
+      "lines": [
+        { "who": "Sam", "text": "It's warm. Like a big slow horse." }
+      ],
+      "see": "Huge roots cradle a parked car; a small boy touches a moving trunk.",
+      "pace": "normal",
+      "stress": "lift"
+    },
+    {
+      "say": "The pattern is simple: every forest is fleeing north from heat.",
+      "lines": [],
+      "see": "World map: red equator, green arrows streaming toward both poles.",
+      "pace": "normal",
+      "stress": "fleeing"
+    },
+    {
+      "say": "The Earth doesn't die — it just quietly moves its lungs.",
+      "lines": [],
+      "see": "Satellite view: green Arctic circle, tan equator, tiny treeline still walking.",
+      "pace": "linger",
+      "stress": "lungs"
+    }
+  ]
+}
