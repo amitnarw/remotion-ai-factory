@@ -1,7 +1,7 @@
 # Progress & Handoff
 
-**Last updated:** 2026-10-23 (evening), on the original machine (Windows, RTX 3060 Laptop GPU, VoxCPM2 + KittenTTS 2 installed, Ollama Pro key in `.env`)
-**Current status:** The project was **ported from the dev laptop to this, the user's original machine**. All three parallel-session work trees (Phase 3 camera/look, Phase 4 editor, Phase 5+6 world engine) were secured on this machine as committed work. **The real-model milestone run is in progress** (3 premises × 3 formats, writer role `ollama/glm-5.3`, real KittenTTS 2 voices); results go into the table below when it finishes.
+**Last updated:** 2026-10-23 (late evening), on the original machine (Windows, RTX 3060 Laptop GPU, VoxCPM2 + KittenTTS 2 installed, Ollama Pro key in `.env`)
+**Current status:** The project was **ported from the dev laptop to this, the user's original machine**. All three parallel-session work trees (Phase 3 camera/look, Phase 4 editor, Phase 5+6 world engine) were secured on this machine as committed work. **The real-model milestone run is in progress, attempt 2** (attempt 1 was killed at 2 of 9 videos by a broken shell pipe after the harness session restarted; the detached process tree died later on a stdout write — re-run launched ~23:29 with the log on disk, immune to that failure mode). **Phase 7 — The Reference Bar** was added on the user's quality references ([quality-refs/](quality-refs/)); the EKG/BPM row returns as a director-chosable device (see [10-intent-audit.md](10-intent-audit.md) amendment).
 
 ## Next step
 **Phase 3 is about 65% done and was paused for a move to another laptop.** Start from **[09-phase3-handoff.md](09-phase3-handoff.md)**: what is done, what is left, in order, with commands. Research and design: [08-phase3-research.md](08-phase3-research.md); the problems it answers: [07-milestone2-visual-review.md](07-milestone2-visual-review.md).

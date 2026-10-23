@@ -252,6 +252,24 @@ Every stage writes its own file under `output/<id>/`, so any stage can be re-run
 
 ---
 
+## Phase 7 — The Reference Bar *(milestone 7 — added 2026-10-23)*
+**Goal: a finished video stands next to the two channels the user chose as the quality bar and holds up.** The 8 reference frames live in [quality-refs/](quality-refs/): the **gravity-town** channel (one dressed European plaza, day → night, buildings lifting, ground breaking) is the target aesthetic for the Phase 6 world; the **toilets/fun-facts** channel (dense NYC, animated people, tracking/aerial/close-up camera, timer HUD) is the target for density, life, camera and HUD.
+
+**The checklist items are acceptance criteria inside Phases 3, 5 and 6** (each listed below); this phase owns the gate, plus the two items with no home yet.
+
+1. **Typography (cheap first win, runs inside the Phase 3 look work).** Captions default to the serif italic style with a soft shadow (the reference channels read as "documentary serif"); the hook/title renders serif over the live scene with the **keyword highlighted in gold** (a caption-style preset, not a separate card).
+2. **Pulse/BPM returns as a director device.** `bpm` comes back into `StatBeatSchema` as **optional**, rendered only when the director sets it (checked against the media in `quality-refs/` where the reference channel drives it deliberately). The heartbeat sound becomes a **sound-designer cue derived from the chosen bpm** — the fabricated always-on bed and the invented bpm values of the audit stay deleted. Amends [10-intent-audit.md](10-intent-audit.md).
+3. **Dressed places** *(→ Phase 5 step 3 / Phase 6 steps 3, 10):* per-region prop kits fill scenes — plaza: market stalls, striped awnings, bunting lines, fountain, tower, trees, bins; NYC blocks: rooftop water towers, taxis, bodegas, hydrants, crosswalks. Gate: a wide shot of the hero scene shows **≥ 30 authored props**, no bare box corridors.
+4. **Visible life** *(→ Phase 5 step 1 / Phase 6 step 3):* **≥ 10 animated background people** per street/plaza scene with real walk cycles, at least one carrying an object (coffee cup, bag); birds overhead.
+5. **Camera language** *(→ Phase 3 step 3):* every video exercises a **tracking follow-shot, an aerial flyover and a close-up**, chosen by the director per beat; the aerial shows street depth (crossings, traffic lights).
+6. **Light & atmosphere gate** *(→ Phase 3 step 5 / Phase 5 step 2 / Phase 6 step 4):* sun with god-rays or a starfield night; haze in depth layers; consistent shadows; at least one wet/reflection moment per video.
+7. **The world reacts** *(→ Phase 5 / Phase 6 step 5):* every stat beat visibly moves the world on screen (buildings lift, ground cracks, confetti rises) within 0.5 s of the value change — no number-change without a physical change.
+8. **The gate.** Side-by-side stills of our video against `quality-refs/` for every checklist item, then the full video. Milestone 7 passes **only when the user says it looks like the references**.
+
+**Milestone 7 check:** one AI-made premise at reference level in 9:16: stills pass items 3–7 side by side with the references, the full video passes items 1–2 and 8. Then the bar applies to the other two premises and formats.
+
+---
+
 ## Critical files
 - **Schema and AI:** `src/generator/spec.schema.ts`, `src/generator/ai/provider-registry.ts`, `src/generator/ai/knowledge.ts`, `src/generator/ai/generate-spec.ts` (repair helpers are moved into `pipeline/llm.ts`), new `src/generator/pipeline/*`.
 - **Voice:** `src/generator/tts.ts`, `src/generator/voices.ts`, `scripts/story-tts.py`, `server/tts.ts`.

@@ -25,12 +25,22 @@ What is unauthored today:
 | `statPanel.ts` `statBpmAt` + `statPanel.test.ts` bpm cases | Support code and tests for the above | — |
 | `ai/knowledge.ts` L229 | Prompt text mentioning `bpm` beats | Teaches the model a field it shouldn't use |
 
-**Fix (one commit after the milestone, so the milestone measures one consistent
-tree):** delete the PULSE row + `statBpmAt`, drop the fabricated-bpm step and
+**Fix (executed 2026-10-23):** delete the PULSE row + `statBpmAt`, drop the fabricated-bpm step and
 the heartbeat bed from the assembler, make `bpm` optional in `StatBeatSchema`
 (then delete it with the family templates) and update the tests. The counter
 device itself (title, big value, subline, zoom pair) stays — the director
 chooses it; `ZoomVignette` stays (it is derived from the counter's own zoom).
+
+**Amendment (2026-10-23, later — same evening):** the user's reference
+channels (see [quality-refs/](quality-refs/) and Phase 7 in the plan) **choose
+the pulse deliberately** — on "What If Fun facts" the raised BPM row is part of
+that channel's grammar for panic premises. So under the same intent rule, the
+EKG row returns as an **optional device**: `bpm` may come back into
+`StatBeatSchema` as an *optional* field the director sets for fear/urgency
+premises; the row renders only when it is present, and the heartbeat sound is
+a sound-designer cue *derived from* the chosen bpm. What stays deleted
+forever: the assembler's invented bpm values and the always-on heartbeat bed
+on every counting video — those had no author behind them.
 
 ## Inventory — everything else in `WhatIfVideo/index.tsx` (checked 2026-10-23)
 
