@@ -98,9 +98,8 @@ function newestMp4(id: string): string | null {
 /** How many videos plan+render at once. Fixture replay keeps a global label
  *  counter, so --fixtures stays serial. Real-model runs overlap the network
  *  planning of one video with the CPU work (synth, render) of the previous —
- *  MILESTONE_PARALLEL raises it (a value above 2 needs generate.ts to bundle
- *  per id; until that lands the default is 1). */
-const POOL = useFixtures ? 1 : Math.max(1, Math.min(4, Number(process.env.MILESTONE_PARALLEL ?? 1)));
+ *  MILESTONE_PARALLEL raises it (4 max; renders bundle per id). */
+const POOL = useFixtures ? 1 : Math.max(1, Math.min(4, Number(process.env.MILESTONE_PARALLEL ?? 2)));
 
 function measure(row: Row, spec: ShotSpec, mp4: string) {
   // Length from the file itself (not the plan), so a tail the render adds counts.
@@ -202,8 +201,8 @@ async function planAndRenderOne(p: (typeof PREMISES)[number], f: (typeof FORMATS
     if (!mp4) throw new Error("no MP4 produced");
     measure(row, props, mp4);
     if (withQa && props.shots?.length) {
-      // The render just bundled into out/render-bundle; reuse it for the stills.
-      const checks = await checkShots({ spec: props, outDir: join(REPORT_DIR, `${row.id}-qa`), serveUrl: join(ROOT, "out", "render-bundle") });
+      // The render just bundled out/render-bundle-<id>; reuse it for the stills.
+      const checks = await checkShots({ spec: props, outDir: join(REPORT_DIR, `${row.id}-qa`), serveUrl: join(ROOT, "out", `render-bundle-${row.id}`) });
       row.shots = checks.length;
       row.shotsFlagged = checks.filter((c) => c.problems.length).length;
       for (const c of checks) for (const p of c.problems) row.warnings.push(`shot ${c.beat} (${c.subject} ${c.size}): ${p}`);

@@ -40,11 +40,11 @@ const FFMPEG = join(
   "compositor-win32-x64-msvc",
   "ffmpeg.exe",
 );
-// Render from an EXPLICIT fresh bundle (out/render-bundle). Passing src/index.ts
-// to `remotion render` triggers the CLI's auto-bundle, which intermittently
-// serves a stale cached bundle on this machine — an explicit bundle step always
-// builds from current code.
-const ENTRY = join(process.cwd(), "out", "render-bundle");
+// Render from an EXPLICIT fresh bundle (out/render-bundle-<id>). Passing
+// src/index.ts to `remotion render` triggers the CLI's auto-bundle, which
+// intermittently serves a stale cached bundle on this machine — an explicit
+// bundle step always builds from current code. Per-id so concurrent renders
+// (the milestone pool) never write the same directory.
 const BUNDLE_SRC = join(process.cwd(), "src", "index.ts");
 const COMP_ID = "WhatIfVideo";
 const OUTPUT_DIR = join(process.cwd(), "output");
@@ -327,16 +327,19 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
       writeFileSync(propsPath, inputProps);
 
       // Fresh explicit bundle (step 3) so the render never serves stale code.
+      // Per-id: two renders at once (milestone pool, parallel jobs) must not
+      // write the same directory.
+      const bundleDir = join(process.cwd(), "out", `render-bundle-${id}`);
       const bundleCmd = join(process.cwd(), "node_modules", ".bin", "remotion.cmd");
       execFileSync(
         "cmd",
-        ["/c", bundleCmd, "bundle", BUNDLE_SRC, "--out-dir", ENTRY],
+        ["/c", bundleCmd, "bundle", BUNDLE_SRC, "--out-dir", bundleDir],
         { stdio: "inherit", env: { ...process.env, FFMPEG_PATH: FFMPEG } },
       );
 
       const cmdArgs = [
         "render",
-        ENTRY,
+        bundleDir,
         COMP_ID,
         "--props",
         propsPath,
