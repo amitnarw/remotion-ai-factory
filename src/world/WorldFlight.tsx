@@ -19,6 +19,9 @@ import { resolvePlace, type Moment, type ResolvedPlace } from "./places";
 export type WorldFlightProps = {
   from: { place: string; moment: Moment };
   to: { place: string; moment: Moment };
+  /** Screen time the flight occupies. The 15 s path is time-scaled to fit
+   *  (a shorter window is a faster flight); default: the full 15 s. */
+  dur?: number;
 };
 
 const GL = { logarithmicDepthBuffer: true, antialias: true };
@@ -101,10 +104,10 @@ function placeLines(p: ResolvedPlace): string[] {
 const fade = (t: number, a: number, b: number, c: number, d: number) =>
   Math.max(0, Math.min(1, (t - a) / (b - a), (d - t) / (d - c)));
 
-export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to }) => {
+export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur }) => {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
-  const t = frame / fps;
+  const t = (frame / fps) * (TIMING.end / (dur ?? TIMING.end));
   const a = useMemo(() => resolvePlace(from.place, from.moment), [from]);
   const b = useMemo(() => resolvePlace(to.place, to.moment), [to]);
   const course = useMemo(() => travelCourse(a, b), [a, b]);

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedAt": 1792599313343,
+  "generatedAt": 1792787063307,
   "roles": {
     "ocean_waves": {
       "label": "Ocean waves",
@@ -308,6 +308,31 @@
           "source": "Synth v2 (in-house DSP)",
           "peakDb": -12,
           "rmsDb": -32.4,
+          "autoRank": 50
+        }
+      ]
+    },
+    "engine_hum": {
+      "label": "Idle engine",
+      "description": "A parked engine idling with a slow putter; street or vehicle bed.",
+      "family": "ambient",
+      "tags": [
+        "ambient",
+        "engine",
+        "idle",
+        "vehicle",
+        "rumble",
+        "bed",
+        "street"
+      ],
+      "variants": [
+        {
+          "id": "synth",
+          "file": "sfx/engine_hum.wav",
+          "dur": 10,
+          "source": "Synth v2 (in-house DSP)",
+          "peakDb": -8,
+          "rmsDb": -18.7,
           "autoRank": 50
         }
       ]
