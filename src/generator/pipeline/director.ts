@@ -26,6 +26,7 @@ import { KIT_SUBJECTS, subjectMenu } from "../camera/subjects";
 import { asArray, beatRef, callRole, fuzzyEnum, type RoleModel } from "./llm";
 import { normalizeShots } from "./shots";
 import type { Timeline } from "./timeline";
+import { worldDirectorContext } from "../../world/director-context";
 import type { WriterStory } from "./writer";
 
 export const ACTIONS = ["idle", "walk", "kneel", "cheer", "panic", "fall", "look-up"] as const;
@@ -43,6 +44,9 @@ const SceneOut = z.object({
   camera: z.enum(CAMERA_STYLES),
   accent: z.enum(STREET_ACCENTS),
   cast: z.array(z.object({ asset: z.string(), count: z.number().int().min(1).max(40), action: z.enum(ACTIONS) })),
+  /** One-world choice (Phase 6 step 1): where and when this scene happens.
+   *  Present ⇒ kit is advisory; the scene renders the real place instead. */
+  worldPlace: z.object({ place: z.string(), date: z.string(), time: z.string() }).optional(),
 });
 
 export const DirectorSchema = z.object({
@@ -95,25 +99,39 @@ export function normalizeDirector(raw: unknown): unknown {
   const scenes = asArray<Record<string, unknown>>(pick(o, ["scenes", "locations", "sets"]))
     .map((s) => obj(s))
     .filter((s): s is Record<string, unknown> => !!s)
-    .map((s) => ({
-      start: beatRef(pick(s, ["start", "beat", "from", "startBeat", "at"])) ?? "b1",
-      kit: fuzzyEnum(pick(s, ["kit", "location", "world", "set"]), SCENE_KITS) ?? "street-block",
-      time: fuzzyEnum(pick(s, ["time", "timeOfDay", "tod", "light"]), TIME_OF_DAY) ?? "afternoon",
-      weather: fuzzyEnum(String(pick(s, ["weather"]) ?? "none").replace(/^clear$/i, "none"), WEATHERS) ?? "none",
-      subject: fuzzyEnum(pick(s, ["subject", "planet"]), SUBJECTS) ?? "none",
-      crowd: fuzzyEnum(pick(s, ["crowd", "people", "density"]), CROWDS) ?? "light",
-      camera: fuzzyEnum(pick(s, ["camera", "cameraStyle", "move"]), CAMERA_STYLES) ?? "steady-push",
-      accent: fuzzyEnum(pick(s, ["accent", "palette"]), STREET_ACCENTS) ?? "classic",
-      cast: asArray<Record<string, unknown>>(pick(s, ["cast", "characters", "props"]))
-        .map((c) => obj(c))
-        .filter((c): c is Record<string, unknown> => !!c)
-        .map((c) => ({
-          asset: str(pick(c, ["asset", "id", "model"])),
-          count: Math.max(1, Math.min(40, Math.round(Number(pick(c, ["count", "n", "amount"])) || 1))),
-          action: fuzzyEnum(pick(c, ["action", "anim", "animation"]), ACTIONS) ?? "idle",
-        }))
-        .filter((c) => c.asset),
-    }));
+    .map((s) => {
+      // One-world choice (strict): all three fields must be present, else the
+      // scene stays a kit scene and the schema rejects a broken choice so the
+      // repair loop fixes it.
+      const wRaw = obj(pick(s, ["world", "where"]));
+      const wPlace = wRaw ? str(pick(wRaw, ["place", "placeId", "city"])) : "";
+      const wDate = wRaw ? str(pick(wRaw, ["date"])) : "";
+      const wTime = wRaw ? str(pick(wRaw, ["time", "localTime"])) : "";
+      const worldPlace =
+        wPlace && /^\d{4}-\d{2}-\d{2}$/.test(wDate) && /^([01]\d|2[0-3]):[0-5]\d$/.test(wTime)
+          ? { place: wPlace, date: wDate, time: wTime }
+          : undefined;
+      return {
+        start: beatRef(pick(s, ["start", "beat", "from", "startBeat", "at"])) ?? "b1",
+        kit: fuzzyEnum(pick(s, ["kit", "location", "set"]), SCENE_KITS) ?? "street-block",
+        time: fuzzyEnum(pick(s, ["time", "timeOfDay", "tod", "light"]), TIME_OF_DAY) ?? "afternoon",
+        weather: fuzzyEnum(String(pick(s, ["weather"]) ?? "none").replace(/^clear$/i, "none"), WEATHERS) ?? "none",
+        subject: fuzzyEnum(pick(s, ["subject", "planet"]), SUBJECTS) ?? "none",
+        crowd: fuzzyEnum(pick(s, ["crowd", "people", "density"]), CROWDS) ?? "light",
+        camera: fuzzyEnum(pick(s, ["camera", "cameraStyle", "move"]), CAMERA_STYLES) ?? "steady-push",
+        accent: fuzzyEnum(pick(s, ["accent", "palette"]), STREET_ACCENTS) ?? "classic",
+        cast: asArray<Record<string, unknown>>(pick(s, ["cast", "characters", "props"]))
+          .map((c) => obj(c))
+          .filter((c): c is Record<string, unknown> => !!c)
+          .map((c) => ({
+            asset: str(pick(c, ["asset", "id", "model"])),
+            count: Math.max(1, Math.min(40, Math.round(Number(pick(c, ["count", "n", "amount"])) || 1))),
+            action: fuzzyEnum(pick(c, ["action", "anim", "animation"]), ACTIONS) ?? "idle",
+          }))
+          .filter((c) => c.asset),
+        worldPlace,
+      };
+    });
 
   const counterRaw = obj(pick(o, ["counter", "statPanel", "stat", "meter"]));
   const counter = counterRaw
@@ -163,6 +181,17 @@ export function normalizeDirector(raw: unknown): unknown {
   const shots = normalizeShots(pick(o, ["shots", "cameraShots", "camera_shots"]));
 
   return { scenes, counter, timer, prop, world, shots };
+}
+
+/** World context: one place + moment per scene, the flight rule and the
+ *  catalog of places + assets (Phase 6 step 1). Included only when the story's
+ *  world setting matters is unknowable here — the director decides per scene. */
+export function worldBlock(): string {
+  return `ONE WORLD (optional per scene): instead of naming a kit, a scene may happen at a REAL place.
+Add "world": { "place": "<place id>", "date": "YYYY-MM-DD", "time": "HH:MM" } to that scene (local date and time;
+the sun, season and skies follow from it). Choose a place only when the story's setting matters; kit scenes stay
+fine for abstract or intimate premises. A change of place between consecutive scenes is filmed as a flight.
+${worldDirectorContext()}`;
 }
 
 const KIT_GUIDE = `
@@ -226,15 +255,17 @@ Use at most ${maxScenes} scene${maxScenes === 1 ? "" : "s"}${input.settings.scen
 
 ${directorInventory(input.premise)}
 
+${worldBlock()}
+
 JSON shape:
 {
-  "scenes": [{ "start": "b1", "kit": "street-block", "time": "golden", "weather": "none", "subject": "none", "crowd": "busy", "camera": "walk-through", "accent": "classic", "cast": [] }],
+  "scenes": [{ "start": "b1", "kit": "street-block", "time": "golden", "weather": "none", "subject": "none", "crowd": "busy", "camera": "walk-through", "accent": "classic", "cast": [] }, { "start": "b4", "world": { "place": "los-angeles", "date": "2026-06-21", "time": "18:30" }, "time": "golden" }],
   "counter": { "title": "YOUR MONEY", "unit": "x", "steps": [{ "beat": "b1", "value": "1", "sub": "A NORMAL DAY" }] } or null,
   "timer": { "label": "TIME WITHOUT WATER", "startBeat": "b2", "endBeat": null } or null,
   "prop": { "style": "coin-stacks", "growth": "multiply", "anchor": "sidewalk-left" } or null,
   "world": [{ "beat": "b4", "event": "lights-out" }],
   "shots": [{ "beat": "b1", "subject": "scene", "size": "WS", "angle": "eye", "side": "auto", "move": "push_in", "place": "auto", "energy": "calm", "style": "smooth" }]
-}`;
+} (a scene either carries kit or world — never both; leave "world" off entirely to not use places)`;
 }
 
 export async function directStory(input: {

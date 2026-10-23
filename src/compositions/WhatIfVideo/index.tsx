@@ -34,6 +34,8 @@ import { TransitionOverlay, whipBlur } from "../TransitionOverlay";
 import { CinematicLook } from "../look/CinematicLook";
 import { lookFor } from "../../generator/look-choice";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
+import { WorldStage } from "./WorldStage";
+import { FlightView } from "./FlightView";
 
 type SceneKey = "city" | "first-person";
 
@@ -81,6 +83,8 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const SceneComp = sceneComponents[scene.scene as SceneKey];
   const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
   const captionLook = resolveCaptionStyle(spec.settings?.captions);
+  // A flight renders instead of the ground stage while its window runs (Phase 6).
+  const flightWindow = (spec.flights ?? []).find((f) => timeSec >= f.from && timeSec < f.to);
 
   return (
     <div
@@ -102,7 +106,11 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         // but without this flag every one of those is ignored.
         shadows
       >
-        {activeScene.kit === "street-block" ? (
+        {activeScene.kit === "world" ? (
+          // The one-world place scene (Phase 6 step 1): a real place with its
+          // own sun, season and city style
+          <WorldStage scene={activeScene} fps={fps} />
+        ) : activeScene.kit === "street-block" ? (
           // The dense populated street world (time-of-day looks + StatHud
           // escalation + traffic + crowd + human camera operator)
           <StreetStage spec={spec} scene={activeScene} />
@@ -152,6 +160,9 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
 
       {/* Scene-to-scene dips and flashes */}
       <TransitionOverlay transitions={spec.transitions} />
+
+      {/* The flight between two world places replaces the picture while its window runs */}
+      {flightWindow && <FlightView spec={spec} window={flightWindow} />}
 
       {/* Stat-panel escalation HUD + zoom vignette */}
       <ZoomVignette panel={spec.statPanel} fps={fps} />

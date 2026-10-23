@@ -27,6 +27,8 @@ import { resolveAudio } from "./audio-resolve";
 import { masterAudio } from "./audio-master";
 import { secToFrame } from "./timing";
 import { generateSpec } from "./ai/generate-spec";
+import { creditsForPlaces } from "../world/landmarks";
+import { PLACES } from "../world/places";
 import { canReassemble, reassemble } from "./pipeline/run";
 import type { AudioConfig } from "./pipeline/voice";
 import { validateAssets } from "./asset-catalog";
@@ -377,6 +379,12 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
         `[audio] master: ${master.applied ? `${master.before?.lufs?.toFixed(1)} → ${master.after?.lufs?.toFixed(1)} LUFS` : `skipped (${master.reason})`}`,
       );
 
+      const creditsLines = creditsForPlaces(
+        (valid.scenes ?? []).flatMap((s) =>
+          s.world && PLACES[s.world.place] ? [PLACES[s.world.place]] : [],
+        ),
+      );
+
       const reportPath = join(OUTPUT_DIR, `${id}-report.json`);
       writeFileSync(
         reportPath,
@@ -402,6 +410,9 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
               ]),
             ),
             worldEvents: (valid.worldEvents ?? []).map((e) => e.name),
+            // CC-BY credits: only the models THIS video used (Phase 6 step 1) —
+            // landmarks standing in the world scenes' places.
+            ...(creditsLines.length ? { credits: creditsLines } : {}),
             audio: { ...ar, master },
             generatedAt: new Date().toISOString(),
           },

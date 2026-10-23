@@ -10,6 +10,7 @@
  */
 import { getAsset } from "../asset-catalog";
 import type { ShotSpec, VideoSettings } from "../spec.schema";
+import { resolveWorldScene } from "../../world/director-context";
 import { matchesStress, type Caption } from "./captions";
 import type { Direction } from "./director";
 import { timeShots } from "./shots";
@@ -135,6 +136,26 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
         ...(s.weather !== "none" ? { weather: s.weather } : {}),
       },
     };
+    // One-world scenes (Phase 6 step 1): validate and carry the director's
+    // choice; the composition re-resolves sun/season from it, so the frame
+    // stays deterministic. A place change from the previous scene is a flight.
+    if (s.worldPlace != null) {
+      const w = resolveWorldScene(s.worldPlace);
+      if (w.ok) {
+        scene.kit = "world";
+        scene.scene = "world";
+        scene.world = s.worldPlace;
+        const myIdx = spans.indexOf(spans.find((x) => x.s === s)!);
+        const prevWorld = spans
+          .slice(0, myIdx)
+          .map((x) => x.s.worldPlace)
+          .filter((p): p is NonNullable<typeof p> => p != null)
+          .pop();
+        scene.flight = prevWorld != null && prevWorld.place !== s.worldPlace.place;
+      } else {
+        warnings.push(`world scene at ${s.start} fell back to kit "${s.kit}": ${w.error}`);
+      }
+    }
     if (space) scene.subject = s.subject === "none" ? "earth" : s.subject;
     if (s.kit === "street-block") {
       const [crowdCount, vehicleCount] = CROWD[s.crowd];
@@ -284,6 +305,21 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
   const shotPlan = timeShots({ directed: direction.shots ?? [], story, timeline, kitAt });
   warnings.push(...shotPlan.warnings);
 
+  /* ---- flights (Phase 6 step 1): a place change is filmed as a flight ---- */
+  // One 8 s window per flight mark: the world engine's 15 s path is
+  // time-compressed (WorldFlight scales it). 5 s of A leaving, the veiled
+  // scale switch, 3 s arriving at B.
+  const flights: ShotSpec["flights"] = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const sc = scenes[i];
+    if (sc.kit !== "world" || !sc.flight) continue;
+    const prev = scenes[i - 1];
+    const from = Math.max(Math.min(sc.from - 5, sc.to - 6.5), (prev?.from ?? 0) + 0.6, 0);
+    const to = Math.min(sc.from + 3, sc.to - 1.0, D);
+    if (to - from >= 3) flights.push({ from: r3(from), to: r3(to) });
+    else warnings.push(`flight at ${sc.from}s dropped: shorter than 3s after clamping`);
+  }
+
   const spec = {
     id: input.id,
     title: story.title || input.premise,
@@ -317,6 +353,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
     scenes,
     shots: shotPlan.shots,
     transitions: planTransitions(scenes, worldEvents),
+    ...(flights.length ? { flights } : {}),
     worldEvents,
     audio: {
       ambient,

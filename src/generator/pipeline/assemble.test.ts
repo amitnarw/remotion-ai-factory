@@ -115,6 +115,46 @@ test("the pulse device renders only when the director sets bpm", () => {
   assert.ok((s.audio!.ambient ?? []).filter((a) => a.tag.startsWith("heartbeat_bpm")).length >= 3, "a heartbeat bed follows the chosen pulse");
 });
 
+test("world scenes carry the place choice and a place change becomes a flight (Phase 6 step 1)", () => {
+  const worldInput = JSON.parse(JSON.stringify(messyDirector));
+  worldInput.Scenes = [
+    { beat: 1, world: { place: "paris", date: "2026-06-21", time: "06:30" } },
+    { beat: 3, kit: "street-block", timeOfDay: "golden", weather: "none", cameraStyle: "steady push", accent: "classic", crowd: "busy" },
+    { beat: 4, world: { place: "cairo", date: "2026-06-21", time: "12:00" } },
+  ];
+  const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, 2.6) }));
+  const timeline = buildTimeline({ beats: story.beats, lines, format: "9:16", target: 20, cap: 90, wps: 2.6 });
+  const captions = buildCaptions(timeline, story.beats, "9:16", true);
+  const direction = DirectorSchema.parse(normalizeDirector(worldInput));
+  const spec = assemble({ id: "t", premise: "p", settings, story, timeline, captions, direction, sound: soundRules(story, direction), casting: castVoices(story, audio), audio }).spec;
+  const s = validateSpec(spec);
+  // b1: a world place (no kit needed), b3: a plain kit scene, b4: a world place
+  const w1 = s.scenes[0];
+  assert.equal(w1.kit, "world", "a scene with a world choice becomes a world scene");
+  assert.deepEqual(w1.world, { place: "paris", date: "2026-06-21", time: "06:30" });
+  assert.notEqual(w1.flight, true, "the first world scene is not a flight");
+  assert.equal(s.scenes[1].kit, "street-block", "a kit scene stays a kit scene");
+  const w3 = s.scenes[2];
+  assert.equal(w3.kit, "world");
+  assert.equal(w3.flight, true, "a change of place from an earlier world scene is a flight");
+  assert.equal(s.flights?.length, 1, "one flight window planned");
+  const win = s.flights![0];
+  assert.ok(win.to <= s.scenes[2].to && win.from >= 0.5, "the flight window sits inside the scenes");
+});
+
+test("an invalid world choice falls back to the kit and warns", () => {
+  const badInput = JSON.parse(JSON.stringify(messyDirector));
+  badInput.Scenes = [{ beat: 1, world: { place: "atlantis", date: "2026-06-21", time: "12:00" } }];
+  const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, 2.6) }));
+  const timeline = buildTimeline({ beats: story.beats, lines, format: "9:16", target: 20, cap: 90, wps: 2.6 });
+  const captions = buildCaptions(timeline, story.beats, "9:16", true);
+  const direction = DirectorSchema.parse(normalizeDirector(badInput));
+  const { spec, warnings } = assemble({ id: "t", premise: "p", settings, story, timeline, captions, direction, sound: soundRules(story, direction), casting: castVoices(story, audio), audio });
+  const s = validateSpec(spec);
+  assert.notEqual(s.scenes[0].kit, "world", "the unknown place falls back to the kit scene");
+  assert.ok(warnings.some((w) => /atlantis/.test(w)), "the failure is named, not silent");
+});
+
 test("world events only where the world can show them", () => {
   const { spec, warnings } = build();
   const s = validateSpec(spec);

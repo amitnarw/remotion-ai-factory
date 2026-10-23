@@ -129,7 +129,7 @@ export const SceneSchema = z.object({
    *    "city-street" | "park" | "boardwalk" | "pier" | "interior" = CC0 GLB
    *                     kits rendered by AssetStage (with scene.cast) */
   kit: z
-    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river"])
+    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river", "world"])
     .optional(),
   /** For space scenes: which world is in frame (planet built procedurally). */
   subject: z.enum(["earth", "moon", "mars"]).optional(),
@@ -185,6 +185,20 @@ export const SceneSchema = z.object({
       waterfallHeight: z.number().positive().optional(),
     })
     .optional(),
+  /** One-world scene: the director's choice of where and when (Phase 6 step 1).
+   *  Present ⇒ the place renders instead of the kit stages (kit becomes
+   *  "world"). The composition re-resolves sun/season from this choice —
+   *  nothing derived is stored here, so the frame is deterministic. */
+  world: z
+    .object({
+      place: z.string(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+      time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM, 24-hour"),
+    })
+    .optional(),
+  /** Set when the previous scene's world place differs from this one's:
+   *  the join renders as a flight over the globe. */
+  flight: z.boolean().optional(),
 });
 
 export type SceneType = z.infer<typeof SceneSchema>;
@@ -337,6 +351,16 @@ export const ShotSpecSchema = z.object({
   shots: z.array(SpecShotSchema).optional(),
   /** Scene-to-scene transitions (Phase 3). Absent: hard cuts. */
   transitions: z.array(SpecTransitionSchema).optional(),
+  /** Flight windows (Phase 6): during one, the composition renders WorldFlight
+   *  between the surrounding world scenes' places instead of the two stages. */
+  flights: z
+    .array(
+      z.object({
+        from: z.number(),
+        to: z.number(),
+      }),
+    )
+    .optional(),
   hook: z.object({
     text: z.string(),
     keywordHighlight: z.array(z.string()).optional().default([]),
@@ -487,9 +511,9 @@ export function validateSpec(input: unknown): ShotSpec {
     );
   }
   spec.scenes.forEach((s, i) => {
-    if (!s.kit && !["city", "first-person"].includes(s.scene)) {
+    if (!s.kit && !s.world && !["city", "first-person"].includes(s.scene)) {
       problems.push(
-        `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street`,
+        `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street (or a world place choice)`,
       );
     }
   });
