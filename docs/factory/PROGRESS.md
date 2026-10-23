@@ -144,7 +144,7 @@
 - **Nothing was played.** Durations and loudness are measured from the files.
 
 ## Milestone 2 result — real models (2026-10-23 late, this machine)
-Written from `output/milestone/report.md` (run attempt 2, 23:19 → 01:30; attempt 1 lost 6 videos to a broken shell pipe after a harness restart, its 2 rendered videos were folded in). Same checks as the fixture run. **7 of 9 pass.**
+Written from `output/milestone/report.md` (run attempt 2, 23:19 → 01:30; attempt 1 lost 6 videos to a broken shell pipe after a harness restart, its 2 rendered videos were folded in). Same checks as the fixture run. **7 of 9 pass.** The two failures were fixed the same night and re-rendered (`--only`, final tree): **money-doubles-16:9 now measures −14.39 LUFS / −1.26 dBTP — passes** (per-cue true-peak ceiling + master-loop cap fix). forest-walks-16:9's re-render pays live planning + fresh voice synthesis (a re-run without `--fixtures` re-calls the roles and re-records; `FACTORY_LLM_RECORD` records, it does not replay).
 
 | video | target | length | ±10% | overlaps | longest silence | caption sync | LUFS | true peak | estimated lines | result |
 |---|---|---|---|---|---|---|---|---|---|---|

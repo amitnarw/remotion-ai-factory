@@ -95,6 +95,13 @@ function newestMp4(id: string): string | null {
   return files[0] ?? null;
 }
 
+/** How many videos plan+render at once. Fixture replay keeps a global label
+ *  counter, so --fixtures stays serial. Real-model runs overlap the network
+ *  planning of one video with the CPU work (synth, render) of the previous —
+ *  MILESTONE_PARALLEL raises it (a value above 2 needs generate.ts to bundle
+ *  per id; until that lands the default is 1). */
+const POOL = useFixtures ? 1 : Math.max(1, Math.min(4, Number(process.env.MILESTONE_PARALLEL ?? 1)));
+
 function measure(row: Row, spec: ShotSpec, mp4: string) {
   // Length from the file itself (not the plan), so a tail the render adds counts.
   const loud = measureLoudness(mp4);
@@ -153,67 +160,89 @@ function measure(row: Row, spec: ShotSpec, mp4: string) {
     row.estimatedLines === 0;
 }
 
+/** One video, end to end: plan -> draft render -> measure. Any failure lands
+ *  on the row so the report always comes out complete. */
+async function planAndRenderOne(p: (typeof PREMISES)[number], f: (typeof FORMATS)[number], row: Row) {
+  console.log(`\n=== ${row.id} (${f.format}, ${f.duration}s) ===`);
+  try {
+    const fixtureDir = join(FIXTURES, `${p.name}${f.set}`);
+    let audio = DEFAULT_AUDIO;
+    if (useFixtures) {
+      if (!existsSync(fixtureDir)) throw new Error(`no fixtures at ${fixtureDir}`);
+      process.env.FACTORY_LLM_FIXTURES = fixtureDir;
+      resetFixtureCounters();
+      const a = join(fixtureDir, "audio.json");
+      if (existsSync(a)) audio = JSON.parse(readFileSync(a, "utf8")) as AudioConfig;
+    } else {
+      delete process.env.FACTORY_LLM_FIXTURES;
+    }
+    const settings = SettingsSchema.parse({ format: f.format, targetDuration: f.duration, quality: "draft" });
+    const planned = await generateSpec(p.premise, undefined, undefined, settings, audio, row.id);
+    row.warnings.push(...(planned.report?.warnings ?? []));
+    const specPath = join(OUT, `${row.id}-spec.json`);
+    writeFileSync(specPath, JSON.stringify(planned.spec, null, 2));
+    const audioPath = join(REPORT_DIR, `${row.id}-audio.json`);
+    writeFileSync(audioPath, JSON.stringify(audio, null, 2));
+
+    console.log(`[milestone] rendering ${row.id}…`);
+    const r = spawnSync(process.execPath, [join(ROOT, "node_modules", "tsx", "dist", "cli.mjs"), "src/generator/generate.ts", "--from-spec", specPath, "--audio-file", audioPath], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, FACTORY_LLM_FIXTURES: "" },
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    writeFileSync(join(REPORT_DIR, `${row.id}-render.log`), (r.stdout ?? "") + (r.stderr ?? ""));
+    if (r.status !== 0) throw new Error(`render failed (see output/milestone/${row.id}-render.log)`);
+    for (const line of ((r.stdout ?? "") + (r.stderr ?? "")).split(/\r?\n/)) {
+      const w = /\[voice\] warning: (.*)/.exec(line);
+      if (w) row.warnings.push(w[1]);
+    }
+    const props = JSON.parse(readFileSync(join(OUT, `${row.id}-props.json`), "utf8")).spec as ShotSpec;
+    const mp4 = newestMp4(row.id);
+    if (!mp4) throw new Error("no MP4 produced");
+    measure(row, props, mp4);
+    if (withQa && props.shots?.length) {
+      // The render just bundled into out/render-bundle; reuse it for the stills.
+      const checks = await checkShots({ spec: props, outDir: join(REPORT_DIR, `${row.id}-qa`), serveUrl: join(ROOT, "out", "render-bundle") });
+      row.shots = checks.length;
+      row.shotsFlagged = checks.filter((c) => c.problems.length).length;
+      for (const c of checks) for (const p of c.problems) row.warnings.push(`shot ${c.beat} (${c.subject} ${c.size}): ${p}`);
+    }
+    console.log(`[milestone] ${row.id}: ${row.pass ? "PASS" : "FAIL"} — ${row.duration?.toFixed(1)}s, gap ${row.maxGap}s, sync ${row.captionSync}, ${row.lufs?.toFixed(1)} LUFS`);
+  } catch (e) {
+    row.error = e instanceof Error ? e.message : String(e);
+    row.pass = false;
+    console.error(`[milestone] ${row.id}: ERROR ${row.error}`);
+  }
+}
+
+/** A queue of videos drained by `limit` workers. */
+async function runPool(count: number, jobs: Array<{ p: (typeof PREMISES)[number]; f: (typeof FORMATS)[number]; row: Row }>) {
+  const queue = [...jobs];
+  const workers = Array.from({ length: count }, async () => {
+    for (;;) {
+      const job = queue.shift();
+      if (!job) return;
+      await planAndRenderOne(job.p, job.f, job.row);
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function main() {
   mkdirSync(REPORT_DIR, { recursive: true });
-  const rows: Row[] = [];
-  for (const p of PREMISES.filter((x) => !only || only.includes(x.name))) {
-    for (const f of FORMATS.filter((x) => !formats || formats.includes(x.format))) {
-      const id = `milestone-${p.name}-${f.format.replace(":", "x")}`;
-      const row: Row = { id, premise: p.premise, format: f.format, target: f.duration, warnings: [] };
-      rows.push(row);
-      console.log(`\n=== ${id} (${f.format}, ${f.duration}s) ===`);
-      try {
-        const fixtureDir = join(FIXTURES, `${p.name}${f.set}`);
-        let audio = DEFAULT_AUDIO;
-        if (useFixtures) {
-          if (!existsSync(fixtureDir)) throw new Error(`no fixtures at ${fixtureDir}`);
-          process.env.FACTORY_LLM_FIXTURES = fixtureDir;
-          resetFixtureCounters();
-          const a = join(fixtureDir, "audio.json");
-          if (existsSync(a)) audio = JSON.parse(readFileSync(a, "utf8")) as AudioConfig;
-        } else {
-          delete process.env.FACTORY_LLM_FIXTURES;
-        }
-        const settings = SettingsSchema.parse({ format: f.format, targetDuration: f.duration, quality: "draft" });
-        const planned = await generateSpec(p.premise, undefined, undefined, settings, audio, id);
-        row.warnings.push(...(planned.report?.warnings ?? []));
-        const specPath = join(OUT, `${id}-spec.json`);
-        writeFileSync(specPath, JSON.stringify(planned.spec, null, 2));
-        const audioPath = join(REPORT_DIR, `${id}-audio.json`);
-        writeFileSync(audioPath, JSON.stringify(audio, null, 2));
-
-        console.log(`[milestone] rendering ${id}…`);
-        const r = spawnSync(process.execPath, [join(ROOT, "node_modules", "tsx", "dist", "cli.mjs"), "src/generator/generate.ts", "--from-spec", specPath, "--audio-file", audioPath], {
-          cwd: ROOT,
-          encoding: "utf8",
-          env: { ...process.env, FACTORY_LLM_FIXTURES: "" },
-          maxBuffer: 256 * 1024 * 1024,
-        });
-        writeFileSync(join(REPORT_DIR, `${id}-render.log`), (r.stdout ?? "") + (r.stderr ?? ""));
-        if (r.status !== 0) throw new Error(`render failed (see output/milestone/${id}-render.log)`);
-        for (const line of ((r.stdout ?? "") + (r.stderr ?? "")).split(/\r?\n/)) {
-          const w = /\[voice\] warning: (.*)/.exec(line);
-          if (w) row.warnings.push(w[1]);
-        }
-        const props = JSON.parse(readFileSync(join(OUT, `${id}-props.json`), "utf8")).spec as ShotSpec;
-        const mp4 = newestMp4(id);
-        if (!mp4) throw new Error("no MP4 produced");
-        measure(row, props, mp4);
-        if (withQa && props.shots?.length) {
-          // The render just bundled into out/render-bundle; reuse it for the stills.
-          const checks = await checkShots({ spec: props, outDir: join(REPORT_DIR, `${id}-qa`), serveUrl: join(ROOT, "out", "render-bundle") });
-          row.shots = checks.length;
-          row.shotsFlagged = checks.filter((c) => c.problems.length).length;
-          for (const c of checks) for (const p of c.problems) row.warnings.push(`shot ${c.beat} (${c.subject} ${c.size}): ${p}`);
-        }
-        console.log(`[milestone] ${id}: ${row.pass ? "PASS" : "FAIL"} — ${row.duration?.toFixed(1)}s, gap ${row.maxGap}s, sync ${row.captionSync}, ${row.lufs?.toFixed(1)} LUFS`);
-      } catch (e) {
-        row.error = e instanceof Error ? e.message : String(e);
-        row.pass = false;
-        console.error(`[milestone] ${id}: ERROR ${row.error}`);
-      }
-    }
-  }
+  const jobs = PREMISES.filter((x) => !only || only.includes(x.name)).flatMap((p) =>
+    FORMATS.filter((x) => !formats || formats.includes(x.format)).map((f) => ({ p, f })),
+  );
+  const rows: Row[] = jobs.map(({ p, f }) => ({
+    id: `milestone-${p.name}-${f.format.replace(":", "x")}`,
+    premise: p.premise,
+    format: f.format,
+    target: f.duration,
+    warnings: [],
+  }));
+  if (POOL > 1) console.log(`[milestone] planning/rendering ${POOL} videos at a time`);
+  await runPool(POOL, jobs.map((j, i) => ({ ...j, row: rows[i] })));
   delete process.env.FACTORY_LLM_FIXTURES;
 
   // A partial run (--only / --formats) replaces its own rows in the last report
