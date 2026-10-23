@@ -17,6 +17,7 @@ The factory turns a topic into a video with Remotion + React Three Fiber, using 
 - **Captions:** controllable position, colour, font and animation.
 - **AI direction:** the AI chooses story, camera, angles, transitions and sound, for a cinematic result.
 - **Visuals:** much better low-poly worlds, with CC0 rigged characters.
+- **One world (added 2026-10-23):** a single continuous low-poly Earth (countries, cities, nature, seasons, time of day) plus planets and interiors. The AI picks the best place and moment for each scene, and one video can travel between places smoothly. See Phase 6 and [06-world-engine.md](06-world-engine.md).
 - **Editing:** a browser editor with live preview, where small edits only redo what changed.
 
 **Confirmed constraints:**
@@ -143,6 +144,8 @@ Every stage writes its own file under `output/<id>/`, so any stage can be re-run
 - Length within ±10% of the target.
 
 ## Phase 3 — Cinematic camera, transitions, look  *(milestone 3)*
+> **With the world engine (Phase 6):** camera anchors come from the world (landmarks, avenues, lots, junctions, parks) instead of a table per stage; a flight over the globe is one more transition type ("travel"); the look pass applies to both the ground and the globe scenes. Do Phase 6 step 1 first.
+
 1. **Spike first (half a day):** pin `@react-three/postprocessing@3.0.4` (it accepts fiber ^9.0, while current releases need ≥9.7) with `postprocessing@6.39`. Verify that `EffectComposer` renders correctly in a `ThreeCanvas` still and in the Player. Fallback: a custom composer pass through `useFrame` priority.
 2. **Anchors.**
    - Each stage exports a static anchor table, measured from its layout code. Examples: street hero-prop row, shop row, crosswalk; space planet radius from the stat value; ocean jetty, canoes, shoreline; countryside houses, barn, windmill; interior window, sofa, lamp, cast slots.
@@ -196,12 +199,56 @@ Every stage writes its own file under `output/<id>/`, so any stage can be re-run
 **Milestone 4 check:** edit one caption in a 3-minute 16:9 video. The log shows 1 chunk re-rendered with the rest reused, and the total time is a fraction of a full render.
 
 ## Phase 5 — Better worlds & characters  *(milestone 5)*
+> **With the world engine (Phase 6):** step 3 (the composable set builder) is now done by the world engine: place catalog, street generator, kit assembler and asset catalog. Steps 1 and 2 still apply, but inside the world rather than per stage.
+
 1. **Characters**
    - Make sure `npm run assets` fetches the Kenney blocky/mini characters and the Quaternius Animated Men/Women packs (already in [setup-assets.ts](../../scripts/setup-assets.ts)).
    - New `Actor` component: GLB rig and recolour, plus an **action timeline from the director**: walk-to(anchor), idle, run, wave, point, sit, look-at, react/panic, fall, cheer.
    - Clips are played deterministically with `mixer.setTime`.
 2. **Materials and atmosphere:** a consistent toon/gradient material palette per mood, dust motes or fireflies, cheap volumetric light shafts, layered cloud skies. Improve water. Fix the River axis bug and the Interior camera bounds.
 3. **Composable set builder.** The director picks a kit, a layout variant, and catalog props placed at named slots, so new worlds don't need new code. Add 2–3 new kits where the milestone tests show gaps (e.g. lab/tech interior, desert, snow mountain).
+
+## Phase 6 — One world and video quality  *(milestone 6)*
+**Goal: every video happens in one living, continuous world, chosen by the AI, and looks and sounds like it.** The engine's base is built and tested (`src/world/`, see [06-world-engine.md](06-world-engine.md)); this phase connects it to the factory and adds what makes the videos feel alive.
+
+**Order:** step 1 (and the speed work in step 2) comes before Phase 3, because Phase 3's camera aims at things in the world. The other steps can run alongside Phases 3–5. **Every step starts with a prior-art check** (libraries, CC0 assets, research code) before any code is written.
+
+1. **Connect the world to the factory**
+   - The director gets `worldDirectorContext()` (places, city looks, asset summary) and answers `{place, date, time}` per scene, checked with `WorldSceneSchema`. This edits the Phase 2 director: coordinate so only one session works on it.
+   - The main composition renders world scenes (ground and globe) in place of the separate stages; a change of place between scenes becomes a flight.
+   - The CC-BY credits for the models a video used go into its report and description automatically (`creditsForPlaces`, `creditsFor`).
+   - `npm run` scripts for the world data, asset download and catalog build; the setup steps go into the README.
+2. **Render speed**
+   - Distance levels of detail for kit cities: real kit pieces near the camera's path, merged boxes beyond (Colmar → New York takes 229 s today against 82 s for Paris → Cairo).
+   - Only the assets a video uses are copied into the render bundle (today the whole 0.9 GB public folder is).
+3. **Life in the world**
+   - Traffic driving along the generated streets (car kit, road graph), stopping at junctions.
+   - Pedestrians on sidewalks and in plazas (the animated character packs; they share Phase 5's `Actor`).
+   - Birds, trees and flags swaying in the wind, chimney smoke, boats on water, drifting clouds.
+   - All driven by the frame number, so every render is identical.
+4. **Light and time** (possible because the sun is real)
+   - Night: lit windows, street lights, car headlights, a starry sky.
+   - Time-lapse: a place from dawn to night in a few seconds, lights switching on as the sun sets.
+   - Season-lapse: trees going from green to autumn colours to bare to snow.
+5. **"What if" world events.** Water rising through the streets, the lights going out, gravity switching off, snow covering everything, the sun not setting. The director schedules events on the timeline; each is a pure function of time. Ports and extends the old stages' world events.
+6. **Camera extras.** Motion blur on fast moves (measure the render cost first); travel shots that follow the flight line; shot choices aimed at landmarks and avenues.
+7. **Graphics layer.** An animated flight line between cities on the globe, a distance counter, city and country labels, animated stat cards and small maps, designed to work with the caption styles.
+8. **Globe polish and the continuous descent**
+   - Smooth coastlines, climate colours that blend instead of latitude stripes, real cloud systems (tropical belt, storm bands), a soft atmosphere glow, a night side with city lights.
+   - Test NASA 3DTilesRendererJS (Apache-2.0) for a truly continuous street-to-orbit descent; keep the cloud cover if it fails.
+9. **Sound from the place.** Ambience by place type and density (traffic and crowds in cities, wind in deserts, birds in parks), effects from world events and passing traffic, volume falling off with distance. Uses the CC0 library and the Phase 2 sound designer.
+10. **More of the world**
+    - Famous landmarks with no free model (Taj Mahal, Pisa, Sydney Opera House, Burj Khalifa, Sagrada Familia, ...) modelled in low-poly, simple ones first.
+    - More places and regional looks (East Asian, South Asian, Middle Eastern, Nordic winter, tropical coast), with our generator where no kit exists.
+    - Interiors: rooms laid out Holodeck-style (relational constraints, a small solver) with the furniture kits; the camera can enter a building through a window or door.
+    - Planet surfaces (Moon, Mars) reached from the globe.
+
+**Milestone 6 check:**
+- Three AI-made premises with real Ollama models, each using at least two places, rendered in all three formats.
+- Streets have traffic and people; at least one night or time-lapse shot; at least one world event.
+- Render time per 15 s stays within 1.5× of Paris → Cairo (82 s on the dev laptop).
+- The CC-BY credits appear in each video's description.
+- The user reviews the videos.
 
 ---
 
@@ -213,6 +260,7 @@ Every stage writes its own file under `output/<id>/`, so any stage can be re-run
 - **Audio library:** `scripts/setup-audio-library.ts` (new), `public/library/audio-library.json`.
 - **Server:** `server/index.ts`, `server/jobs.ts`, `server/providers.ts`.
 - **UI:** `ui/src/pages/Generate.tsx` (split into `ui/src/pages/editor/*`), `ui/src/pages/Providers.tsx`, `ui/src/preview/PlayerPreview.tsx`, `ui/src/api.ts`.
+- **World engine (Phase 6):** `src/world/*` (places, city, roads, terrain, trees, assembler, kits, catalog, landmarks, director-context, Ground, Globe, WorldFlight), `scripts/world-assets/*`, `scripts/setup-world-data.ts`, `scripts/setup-world-assets.ts`, `scripts/build-world-catalog.ts`.
 - **Dependencies:** `@remotion/google-fonts@4.0.536`, `@remotion/renderer@4.0.536`, `@react-three/postprocessing@3.0.4`, `postprocessing@6.39.x`, `vitest` (dev). Install with `--legacy-peer-deps` because of the existing `@types/react-dom` peer conflict.
 
 ## Verification
@@ -225,4 +273,5 @@ Every stage writes its own file under `output/<id>/`, so any stage can be re-run
   - An offline fixture LLM (recorded role outputs) runs the full pipeline here without a key.
   - Real runs with the user's Ollama Pro key happen on their machine, since this one has no `.env`.
   - Kitten is verified here; VoxCPM is verified on the other machine.
+- **World:** `npx tsx --test src/world/*.test.ts`; stills of each place at street level and from above; render time per 15 s flight compared with the 82 s (Paris → Cairo) and 229 s (Colmar → New York) baselines.
 - **The user reviews each milestone's sample videos before the next phase starts.**

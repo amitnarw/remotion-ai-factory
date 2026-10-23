@@ -9,7 +9,10 @@ This folder holds everything about rebuilding the factory: the analysis, the res
 | [02-prior-art.md](02-prior-art.md) | Existing products and repos we checked, and what we borrow from them |
 | [03-audio-sources.md](03-audio-sources.md) | Verified CC0 sound-effect and music sources, with download URLs and caveats |
 | [04-codebase-map.md](04-codebase-map.md) | How the code works today: stages, cameras, anchors, UI/server routes, known bugs |
-| [05-plan.md](05-plan.md) | The agreed phased plan (5 milestones) |
+| [05-plan.md](05-plan.md) | The agreed phased plan (6 milestones) |
+| [06-world-engine.md](06-world-engine.md) | The one-world engine: research, what is built, measurements, setup |
+| [09-phase4.md](09-phase4.md) | Phase 4 (editor + fast re-render): status, files, pending steps, how to resume |
+| [07-milestone2-visual-review.md](07-milestone2-visual-review.md) | What the milestone 2 frames get wrong, ranked, with fixes (input for Phase 3) |
 | [decisions.md](decisions.md) | Decisions the user made, with dates |
 
 ## How to resume on another laptop
