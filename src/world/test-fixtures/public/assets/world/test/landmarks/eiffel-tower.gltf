@@ -1,0 +1,45 @@
+{
+ "asset": {
+  "version": "2.0"
+ },
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0
+     }
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "componentType": 5126,
+   "type": "VEC3",
+   "count": 3,
+   "min": [
+    -15,
+    0,
+    -15
+   ],
+   "max": [
+    15,
+    100,
+    15
+   ]
+  }
+ ]
+}

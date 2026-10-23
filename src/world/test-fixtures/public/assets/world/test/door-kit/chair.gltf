@@ -1,0 +1,82 @@
+{
+ "asset": {
+  "version": "2.0"
+ },
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "chair",
+   "matrix": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    10,
+    0,
+    0,
+    1
+   ],
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0
+     },
+     "indices": 1
+    },
+    {
+     "attributes": {
+      "POSITION": 0
+     },
+     "indices": 1,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "componentType": 5126,
+   "type": "VEC3",
+   "count": 8,
+   "min": [
+    -25,
+    0,
+    -25
+   ],
+   "max": [
+    25,
+    90,
+    25
+   ]
+  },
+  {
+   "componentType": 5123,
+   "type": "SCALAR",
+   "count": 36
+  }
+ ],
+ "materials": [
+  {
+   "name": "seat"
+  }
+ ]
+}

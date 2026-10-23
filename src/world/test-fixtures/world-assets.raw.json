@@ -1,0 +1,63 @@
+[
+ {
+  "id": "test-door-kit-door",
+  "file": "assets/world/test/door-kit/door.gltf",
+  "source": "test",
+  "pack": "Test Door Kit",
+  "license": "CC0-1.0",
+  "author": "Test",
+  "sourceUrl": "https://example.org/door-kit",
+  "tags": [
+   "door",
+   "medieval"
+  ]
+ },
+ {
+  "id": "test-door-kit-chair",
+  "file": "assets/world/test/door-kit/chair.gltf",
+  "source": "test",
+  "pack": "Test Door Kit",
+  "license": "CC0-1.0",
+  "author": "Test",
+  "sourceUrl": "https://example.org/door-kit",
+  "tags": [
+   "chair"
+  ]
+ },
+ {
+  "id": "test-door-kit-broken",
+  "file": "assets/world/test/door-kit/broken.glb",
+  "source": "test",
+  "pack": "Test Door Kit",
+  "license": "CC0-1.0",
+  "author": "Test",
+  "sourceUrl": "https://example.org/door-kit",
+  "tags": []
+ },
+ {
+  "id": "test-door-kit-ghost",
+  "file": "assets/world/test/door-kit/ghost.glb",
+  "source": "test",
+  "pack": "Test Door Kit",
+  "license": "CC0-1.0",
+  "author": "Test",
+  "sourceUrl": "https://example.org/door-kit",
+  "tags": []
+ },
+ {
+  "id": "landmark-eiffel-tower",
+  "file": "assets/world/test/landmarks/eiffel-tower.gltf",
+  "source": "polypizza",
+  "pack": "Poly Pizza landmarks",
+  "license": "CC-BY-3.0",
+  "author": "Jane Doe",
+  "sourceUrl": "https://poly.pizza/m/abc",
+  "credit": "\"Eiffel Tower\" by Jane Doe (https://poly.pizza/m/abc), licensed under CC-BY 3.0",
+  "tags": [
+   "eiffel",
+   "tower",
+   "paris",
+   "landmark"
+  ]
+ }
+]
