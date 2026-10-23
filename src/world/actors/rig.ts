@@ -53,6 +53,8 @@ export interface ActorRig {
   armR: AimBone[];
   armL: AimBone[];
   height: number;
+  /** A carried background prop (see carry in the script), placed per pose. */
+  carry?: CarryProp;
 }
 
 // Reused scratch objects (single-threaded, no state kept between calls).
@@ -229,7 +231,43 @@ function measureSit(model: THREE.Object3D, clip: THREE.AnimationClip, thighNames
  * Builds an actor from a loaded model. `height` in metres (default: the
  * model's own size in metres via `modelScale`, the catalog's scale factor).
  */
-export function buildRig(gltf: GLTF, opts: { seed: string; height?: number; modelScale?: number; colors?: ActorColors }): ActorRig {
+export type CarryKind = "bag" | "box" | "briefcase";
+
+/** A low-poly background prop a crowd actor carries in the right hand,
+ *  sized to the actor's height. The mesh hangs from the rig root; each
+ *  applyPose() moves it under the posed hand bone's world position, so the
+ *  walk's arm swing carries it regardless of the rig's bone-space axes
+ *  (bone-space offsets are not portable across the packs). */
+export interface CarryProp {
+  kind: CarryKind;
+  node: THREE.Mesh;
+  /** Which hand: the last bone of the arm's chain (the hand, if found). */
+  hand?: THREE.Object3D;
+  side: -1 | 1;
+}
+
+const CARRY_SPEC: Record<CarryKind, { geo: () => THREE.BufferGeometry; color: string; y: number }> = {
+  bag: { geo: () => new THREE.BoxGeometry(0.24, 0.3, 0.12), color: "#a06a3c", y: -0.2 },
+  box: { geo: () => new THREE.BoxGeometry(0.4, 0.28, 0.28), color: "#caa55e", y: -0.21 },
+  briefcase: { geo: () => new THREE.BoxGeometry(0.44, 0.32, 0.13), color: "#2c3038", y: -0.23 },
+};
+
+function attachCarry(model: THREE.Object3D, armR: AimBone[], kind: CarryKind, height: number): CarryProp | undefined {
+  const hand = armR.length ? armR[armR.length - 1].bone : undefined;
+  const k = height / 1.75;
+  const s = CARRY_SPEC[kind];
+  const node = new THREE.Mesh(s.geo(), new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.85 }));
+  node.castShadow = true;
+  node.scale.setScalar(k);
+  node.visible = false;
+  model.parent!.add(node); // the rig root
+  return { kind, node, ...(hand ? { hand } : {}), side: 1 };
+}
+
+export function buildRig(
+  gltf: GLTF,
+  opts: { seed: string; height?: number; modelScale?: number; colors?: ActorColors; carry?: CarryKind },
+): ActorRig {
   const model = skeletonClone(gltf.scene);
   model.updateMatrixWorld(true);
   // Size at rest, in model units.
@@ -297,7 +335,8 @@ export function buildRig(gltf: GLTF, opts: { seed: string; height?: number; mode
     t.action.weight = 0;
   }
 
-  return { root, model, baseY: model.position.y, mixer, tracks, missing: new Set(map.missing), stride, sitContact, head, neck, armR, armL, height };
+  const carry = opts.carry ? attachCarry(model, armR, opts.carry, height) : undefined;
+  return { root, model, baseY: model.position.y, mixer, tracks, missing: new Set(map.missing), stride, sitContact, head, neck, armR, armL, height, ...(carry ? { carry } : {}) };
 }
 
 /** Which tracked clip plays a key (posture keys fall back to idle). */
@@ -335,6 +374,7 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
   rig.model.position.set(sx, rig.baseY + lift, sz);
   rig.root.updateMatrixWorld(true);
 
+
   // Bones the overlays move go back to rest first, so an overlay on a bone
   // no clip animates can't compound across frames.
   for (const b of [rig.head, rig.neck, ...rig.armR, ...rig.armL]) b?.bone.quaternion.copy(b.rest);
@@ -359,6 +399,26 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
   }
   rig.mixer.update(0);
   rig.model.updateMatrixWorld(true);
+
+  // The carried prop rides under the posed hand bone, in the root's own
+  // space (or at the hip when the rig has no arm bones). Pure per pose.
+  if (rig.carry) {
+    const cp = rig.carry;
+    const arm = cp.hand ? rig.armR : rig.armR.length ? rig.armR : rig.armL;
+    const bone = arm.length ? arm[arm.length - 1].bone : undefined;
+    if (bone) {
+      const p = rig.root.worldToLocal(bone.getWorldPosition(_v).clone());
+      const drop = (cp.kind === "bag" ? 0.28 : 0.24) * (rig.height / 1.75);
+      const bob = Math.abs(Math.sin((pose.layers[0]?.time ?? 0) * 2.2)) * 0.02;
+      cp.node.visible = true;
+      cp.node.position.set(p.x, p.y - drop - bob, p.z);
+      cp.node.rotation.set(0, 0, 0);
+    } else {
+      cp.node.visible = true;
+      cp.node.position.set(-0.25, rig.height * 0.45, 0.1);
+      cp.node.rotation.set(0, 0, 0);
+    }
+  }
 
   // Overlays: procedural stand-ins for missing clips, then aims.
   const side = { r: -1, l: 1 };

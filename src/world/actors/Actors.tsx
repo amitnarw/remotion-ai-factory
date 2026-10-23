@@ -100,7 +100,7 @@ export function ActorsLayer({
       const asset = casting.models.get(s.id);
       const gltf = asset && loaded.models.get(asset.file);
       if (!asset || !gltf) continue;
-      out.set(s.id, buildRig(gltf, { seed: s.id, height: casting.heights.get(s.id), modelScale: asset.scale, colors: s.colors }));
+      out.set(s.id, buildRig(gltf, { seed: s.id, height: casting.heights.get(s.id), modelScale: asset.scale, colors: s.colors, carry: s.carry }));
     }
     return out;
   }, [loaded, filesKey, scripts, casting]);

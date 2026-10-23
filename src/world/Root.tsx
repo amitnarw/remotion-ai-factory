@@ -13,6 +13,7 @@ import { GlobeSpin, type GlobeSpinProps } from "./GlobeSpin";
 import { KitPreview, type KitPreviewProps } from "./KitPreview";
 import { PlaceView, type PlaceViewProps } from "./PlaceView";
 import { WorldFlight, type WorldFlightProps } from "./WorldFlight";
+import { WorldActors, type WorldActorsProps } from "./WorldActors";
 
 const FPS = 30;
 
@@ -90,6 +91,26 @@ export const WorldRoot: React.FC = () => (
       width={1920}
       height={1080}
       defaultProps={{ mode: "street" } satisfies KitPreviewProps}
+    />
+    {/* Phase 5: the dressed world at street level - background crowd,
+        plaza dressing, flags, lamps, birds (GroundWorld's life). */}
+    <Composition
+      id="WorldActors"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "09:30" } } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldActorsWide"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1920}
+      height={1080}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "09:30" } } satisfies WorldActorsProps}
     />
     {/* Phase 5: scripted actors on a test plaza (src/world/actors/). */}
     <Composition

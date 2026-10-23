@@ -19,6 +19,17 @@ import { TREE_KINDS, treeTemplates, type TreeKind } from "./trees";
 import { KitInstances } from "./KitInstances";
 import { kitPlacements } from "./kitTown";
 import { landmarkPlacements, landmarksFor } from "./landmarks";
+import { useCurrentFrame, useVideoConfig } from "remotion";
+import { ActorsLayer } from "./actors/Actors";
+import type { ActorScriptInput } from "./actors/script";
+import { cityAnchors, GROUND, openBlocks, blockCentre, type CityAnchors } from "./cityAnchors";
+import { crowdFor, crowdLevel, crowdCountFor } from "./crowd";
+import { plazaDressing, lampGroup } from "./atmosphere/dressing";
+import { flagSpots, Flags } from "./atmosphere/Flags";
+import { BirdsLayer } from "./atmosphere/Birds";
+import { applyCloudDrift, applyTreeSway, type LifeTime } from "./atmosphere/sway";
+import { applyHeightFog, type HeightFogOptions } from "./atmosphere/fog";
+import { windowGlowTexture } from "./atmosphere/night";
 
 const SKY_RADIUS = 55_000;
 
@@ -62,7 +73,8 @@ function treesGroup(
   seed: string,
   palmCountry: boolean,
   clearings: [number, number, number][],
-): THREE.Group {
+  fog: HeightFogOptions,
+): { group: THREE.Group; sway: LifeTime } {
   const r = makeRng(`trees:${seed}`);
   const templates = treeTemplates({ seed, season });
   const heights = Object.fromEntries(
@@ -116,7 +128,11 @@ function treesGroup(
     mesh.receiveShadow = true;
     group.add(mesh);
   }
-  return group;
+  // The crown sways in the wind and the tree haze falls into height fog
+  // (uniforms only: renders stay deterministic).
+  const sway = applyTreeSway(material, season === "winter" ? 0.1 : 0.16);
+  applyHeightFog(material, fog);
+  return { group, sway };
 }
 
 function landmarksGroup(list: Landmark[]): THREE.Group {
@@ -145,7 +161,7 @@ function landmarksGroup(list: Landmark[]): THREE.Group {
   return group;
 }
 
-function cloudsMesh(clouds: Cloud[], seed: string): THREE.InstancedMesh {
+function cloudsMesh(clouds: Cloud[], seed: string): { mesh: THREE.InstancedMesh; drift: LifeTime } {
   const r = makeRng(`clouds:${seed}`);
   const mesh = new THREE.InstancedMesh(
     new THREE.IcosahedronGeometry(1, 1),
@@ -161,7 +177,9 @@ function cloudsMesh(clouds: Cloud[], seed: string): THREE.InstancedMesh {
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
   });
-  return mesh;
+  // The cloud layer drifts in the wind (a pure function of t, GPU-side).
+  const drift = applyCloudDrift(mesh.material, { span: 14000, speed: 1 });
+  return { mesh, drift };
 }
 
 export function GroundWorld({
@@ -169,13 +187,21 @@ export function GroundWorld({
   pose,
   fov,
   cloudPassage,
+  crowd = true,
+  birds = true,
 }: {
   place: ResolvedPlace;
   pose: GroundPose;
   fov: number;
   cloudPassage: [number, number];
+  /** The city's background people (off for pure-geometry stills). */
+  crowd?: boolean;
+  /** The flock over the city. */
+  birds?: boolean;
 }) {
   const { camera, scene } = useThree();
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const style = place.style;
   const sky = useMemo(() => skyFor(place.sun.elevation, style.haze, style.outskirts[0]), [place, style]);
 
@@ -191,10 +217,9 @@ export function GroundWorld({
       cloudPassages: [cloudPassage],
     });
     const tex = windowTexture(style);
-    const walls = new THREE.Mesh(
-      buildingsGeometry(layout.buildings, style),
-      new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.92, metalness: 0 }),
-    );
+    const glow = windowGlowTexture(style);
+    const wallsMat = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.92, metalness: 0 });
+    const walls = new THREE.Mesh(buildingsGeometry(layout.buildings, style), wallsMat);
     const roofs = new THREE.Mesh(
       mansardGeometry(layout.buildings),
       new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.65, metalness: 0.15, flatShading: true }),
@@ -226,8 +251,64 @@ export function GroundWorld({
       new THREE.MeshStandardMaterial({ color: mixHex(style.outskirts[0], style.outskirts[1], 0.5), roughness: 1 }),
     );
     disc.position.y = -1;
+
+    // Night: warm lit windows in the walls and glowing street-lamp heads.
+    const night = place.sun.elevation < 1;
+    if (night) {
+      wallsMat.emissive = new THREE.Color("#ffffff");
+      wallsMat.emissiveMap = glow;
+      wallsMat.emissiveIntensity = 2.4;
+    }
+    const lamps = lampGroup(style, night);
+
+    // Height fog per material (uniforms only - deterministic): densest for
+    // hazier places, tinted by the sun toward it.
+    const fogOpts: HeightFogOptions = {
+      horizon: sky.horizon,
+      zenith: sky.zenith,
+      density: 0.0009 + style.haze * 0.0025,
+      lambda: 700,
+      sunColor: sky.sunColor,
+      sunDir: place.sun.dir,
+      sunStrength: 0.35,
+    };
+    for (const mat of [groundMat, wallsMat, ...([roofs.material, props.material, land.material] as THREE.Material[])]) applyHeightFog(mat, fogOpts);
+    const { group: treeMeshes, sway } = treesGroup(
+      layout.trees,
+      terrain,
+      place.season,
+      place.place.id,
+      style.trees.kind === "palm",
+      clearings,
+      fogOpts,
+    );
+
+    // The dressed plazas (fountain, stalls, benches) and their flags.
+    const dressing = plazaDressing(layout, style, place.place.id);
+    const flags = flagSpots(
+      layout,
+      style,
+      openBlocks(layout, GROUND.plaza)
+        .slice(0, 3)
+        .map((a) => {
+          const [x, z] = blockCentre(a.polygon);
+          return { centre: [x, z] as [number, number], reach: 12 };
+        }),
+      place.place.id,
+    );
+
+    // Named camera/actor anchors (cityAnchors.ts) and the crowd that lives
+    // on them (crowd.ts): avenue walkers, crossers, a plaza cluster.
+    const anchors = cityAnchors(layout, style);
+    const scripts: ActorScriptInput[] = crowdFor(`${place.place.id}:crowd`, style, anchors);
+
     return {
       layout,
+      anchors,
+      scripts,
+      dressing,
+      flags,
+      lamps,
       walls,
       roofs,
       props,
@@ -236,19 +317,23 @@ export function GroundWorld({
       open,
       land,
       disc,
-      trees: treesGroup(layout.trees, terrain, place.season, place.place.id, style.trees.kind === "palm", clearings),
+      trees: treeMeshes,
+      sway,
       // Famous landmarks and the kit-built core (kit styles), drawn together
       // as one set of instanced meshes.
       models: [...landmarkPlacements(famous, terrain.heightAt), ...kitPlacements(layout.kitBuildings)],
       landmarks: landmarksGroup(layout.landmarks),
       clouds: cloudsMesh(layout.clouds, place.place.id),
+      fogOpts,
     };
-  }, [place, style, cloudPassage]);
+  }, [place, style, cloudPassage, sky]);
 
   const dome = useMemo(() => skyDome(sky, place.sun.dir), [sky, place]);
 
   const lights = useMemo(() => {
-    const sun = new THREE.DirectionalLight(sky.sunColor, sky.sunIntensity);
+    // Night: a dim cool moon stands in for the sun, so the dark still reads.
+    const night = place.sun.elevation < 1;
+    const sun = new THREE.DirectionalLight(night ? "#8fa8cf" : sky.sunColor, night ? 0.85 : sky.sunIntensity);
     sun.castShadow = place.sun.elevation > 0.5;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
@@ -257,7 +342,7 @@ export function GroundWorld({
     sun.shadow.camera.far = 6000;
     // No bounced light in the renderer, so the sky fill is strong enough to
     // stand in for it: streets in shade must stay readable.
-    const hemi = new THREE.HemisphereLight(sky.ambientSky, sky.ambientGround, sky.ambient * 2.4);
+    const hemi = new THREE.HemisphereLight(sky.ambientSky, sky.ambientGround, night ? Math.max(sky.ambient * 2.4, 1.1) : sky.ambient * 2.4);
     const disk = new THREE.Mesh(
       new THREE.SphereGeometry(700, 16, 12),
       new THREE.MeshBasicMaterial({ color: sky.sunColor, fog: false, toneMapped: false }),
@@ -272,7 +357,21 @@ export function GroundWorld({
     scene.fog = new THREE.Fog(sky.horizon, 300, 7000);
   }, [scene, sky]);
 
+  // Crowd density follows the camera's altitude (full at street level,
+  // half from the air, none very high).
+  const level = crowdLevel(pose.pos[1]);
+  const shownScripts = useMemo(() => {
+    const n = crowdCountFor(level);
+    return n >= world.scripts.length ? world.scripts : world.scripts.slice(0, n);
+  }, [world.scripts, level]);
+  const wantCrowd = crowd && level !== "none";
+
   useFrame(() => {
+    const t = frame / (fps || 30);
+    // Wind is a pure function of t.
+    world.sway.uTime.value = t;
+    world.clouds.drift.uTime.value = t;
+
     const cam = camera as THREE.PerspectiveCamera;
     const alt = Math.max(1, pose.pos[1]);
     cam.fov = fov;
@@ -306,11 +405,12 @@ export function GroundWorld({
     sc.top = half;
     sc.bottom = -half;
     sc.updateProjectionMatrix();
-    const sunDir = new THREE.Vector3(...place.sun.dir);
+    // The moon shines from a fixed high angle (the real sun is below the horizon).
+    const sunDir = place.sun.elevation < 1 ? new THREE.Vector3(0.35, 0.85, -0.4).normalize() : new THREE.Vector3(...place.sun.dir);
     lights.sun.position.copy(focus).addScaledVector(sunDir, 2500);
     lights.sun.target.position.copy(focus);
     lights.sun.target.updateMatrixWorld();
-    lights.disk.position.copy(cam.position).addScaledVector(sunDir, 50_000);
+  lights.disk.position.copy(cam.position).addScaledVector(sunDir, 50_000);
   });
 
   return (
@@ -330,8 +430,13 @@ export function GroundWorld({
       <primitive object={world.props} />
       <primitive object={world.trees} />
       <primitive object={world.landmarks} />
+      <primitive object={world.dressing} />
+      <primitive object={world.lamps} />
       {world.models.length > 0 && <KitInstances placements={world.models} />}
-      <primitive object={world.clouds} />
+      <Flags spots={world.flags} />
+      {birds && place.sun.elevation > -2 && <BirdsLayer seed={place.place.id} />}
+      {wantCrowd && <ActorsLayer scripts={shownScripts} anchors={world.anchors as CityAnchors} onWarnings={(w) => console.warn(`[world crowd] ${w.join("\n")}`)} />}
+      <primitive object={world.clouds.mesh} />
     </>
   );
 }

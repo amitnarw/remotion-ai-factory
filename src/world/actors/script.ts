@@ -106,6 +106,9 @@ export const ActorScriptSchema = z.object({
     .object({ shirt: ColorSchema, pants: ColorSchema, skin: ColorSchema, hair: ColorSchema, shoes: ColorSchema })
     .partial()
     .optional(),
+  /** A background prop held in the right hand (crowds walking with their
+   *  shopping, a briefcase): nothing to do with the action timeline. */
+  carry: z.enum(["bag", "box", "briefcase"]).optional(),
   steps: z.array(ActorStepSchema).max(60).default([]),
 });
 export type ActorScript = z.infer<typeof ActorScriptSchema>;
