@@ -17,6 +17,8 @@ import {
   RefreshCw,
   ArrowLeft,
   Check,
+  Play,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   getJob,
@@ -36,6 +38,7 @@ import { Input } from "../components/ui/input";
 import { ErrorBanner } from "../components/shared";
 import { Switch } from "../components/ui/switch";
 import { CaptionPanel } from "../components/CaptionPanel";
+import { StorySection } from "../components/StorySection";
 import type { CaptionStyleInput } from "../../../src/generator/caption-style";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -259,10 +262,12 @@ interface VideoSettingsForm {
   /** Scenes; blank = automatic. */
   sceneCount: string;
   quality: "draft" | "final";
+  /** One extra AI pass that rewrites weak beats before you review. */
+  critic?: boolean;
 }
 
 const FORMAT_LABELS: Record<VideoSettingsForm["format"], string> = {
-  "9:16": "Vertical 9:16 (Shorts, 15–90s)",
+  "9:16": "Vertical 9:16 (Shorts, 15 to 90s)",
   "16:9": "Landscape 16:9 (long-form, up to 10 min)",
   "1:1": "Square 1:1 (feeds, up to 90s)",
 };
@@ -281,7 +286,7 @@ function loadVideoSettings(): VideoSettingsForm {
 
 /** Turn the form into the settings object the server validates. */
 function videoSettingsToPayload(form: VideoSettingsForm): Record<string, unknown> {
-  const payload: Record<string, unknown> = { format: form.format, quality: form.quality };
+  const payload: Record<string, unknown> = { format: form.format, quality: form.quality, critic: !!form.critic };
   const dur = Number(form.targetDuration);
   if (form.targetDuration.trim() && dur > 0) {
     const max = form.format === "16:9" ? 600 : 90;
@@ -344,6 +349,13 @@ function VideoSettingsPanel({ value, onChange }: { value: VideoSettingsForm; onC
             <SelectItem value="draft">Draft (half size, faster)</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <span className="text-sm font-medium">AI review pass</span>
+          <div className="text-xs text-muted-foreground">A critic flags weak beats and the writer rewrites them. One extra AI call.</div>
+        </div>
+        <Switch checked={!!value.critic} onCheckedChange={(on) => update({ critic: on })} aria-label="AI review pass" />
       </div>
     </Card>
   );
@@ -474,7 +486,7 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   aria-label="Listen to the narrator voice"
                   onClick={() => auditionVoice(value.narrationEngine, value.narrationVoice)}
                 >
-                  ▶
+                  <Play className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -522,7 +534,7 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   aria-label="Listen to the character voice"
                   onClick={() => auditionVoice(value.charactersEngine, value.characterVoice)}
                 >
-                  ▶
+                  <Play className="h-4 w-4" />
                 </Button>
               </div>
               <div className="mt-1 text-xs text-muted-foreground">Per-character voices come with the editor (a later phase).</div>
@@ -615,7 +627,7 @@ function Step1({
 /* ==================================================================== */
 
 const ENGINE_STAGES: Record<string, string[]> = {
-  plan: ["script", "done"],
+  plan: ["writer", "voice", "director", "sound", "assemble", "done"],
   template: ["script", "bundle", "render", "encode"],
   story: ["music", "bundle", "render", "encode"],
   storyboard: ["music", "bundle", "render", "encode"],
@@ -623,6 +635,11 @@ const ENGINE_STAGES: Record<string, string[]> = {
 
 const STAGE_LABELS: Record<string, string> = {
   script: "writing the plan",
+  writer: "writing the story",
+  director: "directing",
+  sound: "sound design",
+  critic: "reviewing",
+  assemble: "putting it together",
   music: "picking sounds",
   voice: "voices",
   bundle: "building the 3D world",
@@ -899,6 +916,8 @@ const [modelInfo, setModelInfo] = useState<string | null>(null);
             </div>
           ) : null}
 
+          <StorySection spec={spec} specId={specId} onSpec={setSpec} />
+
           {spec.captions.length > 0 ? (
             <div className="rounded-2xl bg-input/40 p-4">
               <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">On-screen text</div>
@@ -917,7 +936,7 @@ const [modelInfo, setModelInfo] = useState<string | null>(null);
             <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Voice</div>
             {(() => {
               const vc = loadVoiceConfig();
-              if (!vc.narrationOn && !vc.charactersOn) return <div className="mt-1 text-sm text-muted-foreground">No voices — silent video.</div>;
+              if (!vc.narrationOn && !vc.charactersOn) return <div className="mt-1 text-sm text-muted-foreground">No voices, a silent video.</div>;
               const parts: string[] = [];
               if (vc.narrationOn) parts.push(`Narration: ${vc.narrationEngine} (${vc.narrationVoice})`);
               if (vc.charactersOn) parts.push(`Characters: ${vc.charactersEngine} (${vc.characterVoice})`);
@@ -941,6 +960,13 @@ const [modelInfo, setModelInfo] = useState<string | null>(null);
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="secondary" onClick={onBack}>
             <ArrowLeft className="h-4 w-4" /> Not quite, write again
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!specId || approving}
+            onClick={() => specId && setQuery({ tab: "editor", film: specId })}
+          >
+            <SlidersHorizontal className="h-4 w-4" /> Open editor
           </Button>
           <Button variant="amber" size="lg" className="flex-1" disabled={approving} onClick={approve}>
             <Check className={cn("h-5 w-5", approving && "animate-pulse")} />

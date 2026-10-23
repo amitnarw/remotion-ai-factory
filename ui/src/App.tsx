@@ -15,7 +15,10 @@ import Videos from "./pages/Videos";
 import Setup from "./pages/Setup";
 import { cn } from "./lib/utils";
 
-export type TabKey = "generate" | "videos" | "providers" | "setup";
+// The editor pulls in the 3D composition; load it only when it is opened.
+const Editor = React.lazy(() => import("./pages/editor/Editor"));
+
+export type TabKey = "generate" | "videos" | "providers" | "setup" | "editor";
 
 const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
   { key: "generate", label: "Generate", icon: <Sparkles className="h-4 w-4" /> },
@@ -24,9 +27,9 @@ const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
   { key: "setup", label: "Setup", icon: <Settings className="h-4 w-4" /> },
 ];
 
-/** Coerce arbitrary ?tab= values onto a known tab. */
+/** Coerce arbitrary ?tab= values onto a known tab. "editor" has no pill: it opens from a plan. */
 function safeTab(raw: string | undefined): TabKey {
-  return raw === "videos" || raw === "providers" || raw === "setup" ? raw : "generate";
+  return raw === "videos" || raw === "providers" || raw === "setup" || raw === "editor" ? raw : "generate";
 }
 
 export default function App() {
@@ -78,7 +81,7 @@ export default function App() {
                   onClick={() => setQuery({ tab: t.key })}
                   className={cn(
                     "inline-flex h-11 items-center gap-2 rounded-2xl px-5 text-[15px] font-bold transition-all active:scale-[0.97]",
-                    tab === t.key
+                    tab === t.key || (tab === "editor" && t.key === "generate")
                       ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
                       : "bg-secondary text-secondary-foreground hover:brightness-125",
                   )}
@@ -94,11 +97,18 @@ export default function App() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-5xl px-4 py-8">
+        <main className={cn("mx-auto px-4 py-8", tab === "editor" ? "max-w-[1600px]" : "max-w-5xl")}>
           {tab === "generate" && <Generate />}
           {tab === "videos" && <Videos />}
           {tab === "providers" && <Providers />}
-{tab === "setup" && <Setup />}
+          {tab === "setup" && <Setup />}
+          {tab === "editor" && (
+            <React.Suspense
+              fallback={<div className="py-16 text-center text-sm font-semibold text-muted-foreground">Loading the editor...</div>}
+            >
+              <Editor />
+            </React.Suspense>
+          )}
         </main>
 
         <footer className="pb-8 pt-2 text-center text-sm font-medium text-muted-foreground">

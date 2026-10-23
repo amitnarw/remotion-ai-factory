@@ -146,6 +146,17 @@ export async function getTtsInstallJob(id: string): Promise<TtsInstallJob> {
 export async function cancelJob(id: string): Promise<{ cancelled: boolean }> {
   return json(await fetch(`${BASE}/jobs/${id}`, { method: "DELETE" }));
 }
+/** Give a character another voice; the server rebuilds the plan from its saved stages. */
+export async function recastVoice(specId: string, name: string, voice: string): Promise<{ spec: unknown; warnings: string[] }> {
+  return json(
+    await fetch(`${BASE}/plan/${specId}/recast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, voice }),
+    }),
+  );
+}
+
 export async function voiceSample(body: { engine: string; voice?: string; voiceDesc?: string; text?: string }): Promise<Blob> {
   const r = await fetch(`${BASE}/voice-sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(await r.text());
@@ -304,6 +315,91 @@ export async function generateVideo(
   });
   if (!r.ok) throw new Error(await errorText(r));
   return (await r.json()) as { jobId: string };
+}
+
+/* ---------- Editor (Phase 4): one planned video, versioned edits, Ask AI ---------- */
+
+export type Film = import("../../src/generator/film/edits").Film;
+export type FilmEdit = import("../../src/generator/film/edits").Edit;
+export type FilmRedo = import("../../src/generator/film/edits").Redo;
+export type FilmHead = import("../../src/generator/film/store").FilmHead;
+export type FilmVersion = import("../../src/generator/film/store").FilmVersion;
+export type FieldInfo = import("../../src/generator/film/fields").FieldInfo;
+export type AudioReport = import("../../src/generator/audio-resolve").AudioReport;
+type PlayableSpec = import("../../src/generator/spec.schema").ShotSpec;
+
+/** What each editable thing has, and its choices (from the pipeline's schemas). */
+export interface EditorFields {
+  beat: Record<string, FieldInfo>;
+  scene: Record<string, FieldInfo>;
+  shot: Record<string, FieldInfo>;
+  sound: { moods: string[]; sounds: string[] };
+}
+
+/** The current version, re-prepared: the spec plays in the Player as is. */
+export interface FilmState {
+  head: FilmHead;
+  film: Film;
+  spec: PlayableSpec;
+  warnings: string[];
+  audio: AudioReport;
+  measured: boolean;
+}
+
+export interface FilmResponse extends FilmState {
+  id: string;
+  fields: EditorFields;
+}
+
+export interface FilmChangeResponse extends FilmState {
+  redo: FilmRedo;
+  summary?: string[];
+}
+
+export type FilmTarget = { kind: "beat"; beat: string } | { kind: "video" };
+
+/** Ask AI's answer. Nothing is saved until it is sent back through editFilm. */
+export interface FilmProposal {
+  summary: string;
+  edits: FilmEdit[];
+  redo: FilmRedo;
+  changes: string[];
+}
+
+const filmUrl = (id: string, action = "") => `${BASE}/film/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
+
+function postJson(url: string, body?: unknown): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/** The film, its history, the playable spec and the Inspector's field choices. */
+export async function getFilm(id: string): Promise<FilmResponse> {
+  return json(await fetch(filmUrl(id)));
+}
+
+/** Save edits as a new version. Throws the server's message when an edit is not allowed. */
+export async function editFilm(
+  id: string,
+  body: { edits: FilmEdit[]; source?: "user" | "ai"; summary?: string },
+): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "edit"), body));
+}
+
+/** Ask the Editor model for changes to one beat or the whole video. */
+export async function askFilm(id: string, target: FilmTarget, request: string): Promise<FilmProposal> {
+  return json(await postJson(filmUrl(id, "ask"), { target, request }));
+}
+
+export async function undoFilm(id: string): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "undo")));
+}
+
+export async function redoFilm(id: string): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "redo")));
 }
 
 export async function getJob(id: string): Promise<Job> {
