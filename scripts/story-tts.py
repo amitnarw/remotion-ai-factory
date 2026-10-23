@@ -83,7 +83,18 @@ KITTEN_DEFAULT_VOICE = "Matthew"
 KITTEN_BANNED = {"Bella"}
 
 
+def use_all_cores():
+    """Torch defaults to half the cores on Windows; Kitten 2 runs ~2.5x faster on all of them."""
+    try:
+        import torch  # noqa: PLC0415
+
+        torch.set_num_threads(os.cpu_count() or 4)
+    except Exception:
+        pass
+
+
 def run_kitten(job, out_dir):
+    use_all_cores()
     from kittenml import KittenTTS  # noqa: E402
 
     model = KittenTTS("KittenML/kitten-tts-2")
@@ -119,6 +130,7 @@ def run_kitten(job, out_dir):
 
 
 def run_voxcpm(job, out_dir):
+    use_all_cores()
     try:
         from voxcpm import VoxCPM  # noqa: E402
     except Exception as e:

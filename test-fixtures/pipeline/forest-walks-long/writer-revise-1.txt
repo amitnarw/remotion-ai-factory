@@ -1,0 +1,1 @@
+{"edits": [{"beat": "b4", "say": "By noon they reach the edge of the farms."}, {"beat": "b10", "say": "The valley it left behind waits for something new."}]}

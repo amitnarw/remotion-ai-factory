@@ -2,7 +2,6 @@ import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import { join, basename } from "path";
 import fs from "fs";
-import { spawnSync } from "child_process";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
 const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { keyUrlFor, actionable } from "./error-hints";
@@ -12,13 +11,19 @@ import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registr
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
 import { ROLE_DEFS, ROLE_NAMES, pickRoleModel } from "../src/generator/ai/roles";
+import { resolveRoleModels } from "../src/generator/pipeline/llm";
+import { canReassemble, reassemble } from "../src/generator/pipeline/run";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
 import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription } from "../src/generator/voices";
 import { resolveTtsPython } from "../src/generator/tts-python";
+import { cacheKey, synthesizeLines } from "../src/generator/tts";
+import { registerFilmRoutes } from "./film";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Editor (Phase 4): versioned edits, "Ask AI", undo/redo.
+registerFilmRoutes(app);
 
 // ---------- Providers ----------
 /** Model role assignments: which provider/model each pipeline step uses. */
@@ -298,7 +303,11 @@ app.post("/api/plan", async (req, res) => {
   for (const [k, v] of Object.entries(savedEnv)) process.env[k] = v;
   const config = loadAiConfig();
   const provName = provider ?? config.defaultProvider ?? "gateway";
-  if (provName === "offline") {
+  // Test mode: recorded fixtures stand in for every model, so no key or model is needed.
+  const fixtures = !!process.env.FACTORY_LLM_FIXTURES;
+  if (fixtures) {
+    console.log(`[plan] FACTORY_LLM_FIXTURES is set: using recorded fixtures, skipping provider checks`);
+  } else if (provName === "offline") {
     if (!buildFamilySpec(premise)) {
       return res.status(400).json({
         error:
@@ -355,9 +364,41 @@ app.post("/api/plan", async (req, res) => {
       jobId: busy.id,
     });
   }
+  // Every pipeline role must have a working key (roles without their own
+  // model use the writer's).
+  if (!fixtures && provName !== "offline") {
+    const roleModels = resolveRoleModels(["writer", "director", "sound", "critic"], {
+      provider: typeof body.provider === "string" ? body.provider : undefined,
+      model: typeof body.model === "string" ? body.model : undefined,
+    });
+    for (const [role, rm] of Object.entries(roleModels)) {
+      const pc = config.providers?.[rm.provider];
+      if (!pc) {
+        return res.status(400).json({ error: `the ${role} role uses provider "${rm.provider}", which is not configured`, fix: "Fix it in Providers → Model roles" });
+      }
+      if (pc.apiKeyEnv && rm.provider !== "gateway" && !savedEnv[pc.apiKeyEnv]) {
+        return res.status(400).json({
+          error: `API key not set for provider "${rm.provider}" (used by the ${role} role)`,
+          fix: `Save your key in the Providers tab — create one at ${keyUrlFor(rm.provider)}`,
+        });
+      }
+      if (!rm.model) {
+        return res.status(400).json({ error: `no model chosen for the ${role} role`, fix: "Choose one in Providers → Model roles" });
+      }
+    }
+  }
+
   const job = createJob(premise, provName, model);
   job.engine = "plan";
-  if (body.audio) (job as any).audio = body.audio;
+  (job as any).explicitModel = typeof body.provider === "string" || typeof body.model === "string";
+  if (body.audio) {
+    (job as any).audio = body.audio;
+    // Voice comes first in the pipeline, so the plan needs the voice settings too.
+    const rel = `output/plan-${job.id}-audio.json`;
+    fs.mkdirSync(join(ROOT, "output"), { recursive: true });
+    fs.writeFileSync(join(ROOT, rel), JSON.stringify(body.audio, null, 2));
+    (job as any).audioFile = rel;
+  }
   if (settings) (job as any).settings = settings;
   runJob(job, { noRender: true });
   res.json({ jobId: job.id });
@@ -389,6 +430,34 @@ app.get("/api/spec/:jobId", (req, res) => {
       error: `the plan file for "${job.specId}" is missing on disk`,
       fix: "Write the idea again from Step 1",
     });
+  }
+});
+
+/**
+ * Give a character a different voice and rebuild the plan from its saved stage
+ * files (no model calls). Kitten lines are synthesized again (cached), others
+ * are re-estimated; the render measures everything anyway.
+ */
+app.post("/api/plan/:specId/recast", async (req, res) => {
+  const { specId } = req.params;
+  const { name, voice } = req.body as { name?: string; voice?: string };
+  if (!/^[a-z0-9-]+$/.test(specId) || !name || !voice) {
+    return res.status(400).json({ error: "specId, character name and voice are required" });
+  }
+  if (!canReassemble(specId)) {
+    return res.status(404).json({ error: `plan "${specId}" has no saved stages`, fix: "Write the plan again" });
+  }
+  try {
+    const planPath = join(ROOT, "output", specId, "plan.json");
+    const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
+    plan.audio = plan.audio ?? {};
+    plan.audio.dialogs = { ...(plan.audio.dialogs ?? {}), voices: { ...(plan.audio.dialogs?.voices ?? {}), [name]: voice } };
+    fs.writeFileSync(planPath, JSON.stringify(plan, null, 2));
+    const { spec, warnings } = await reassemble(specId, "plan");
+    fs.writeFileSync(join(ROOT, "output", `${specId}-spec.json`), JSON.stringify(spec, null, 2));
+    res.json({ spec, warnings });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
 });
 
@@ -563,44 +632,47 @@ app.get("/api/jobs/:id/events", (req, res) => {
 });
 
 // ---------- Voice sample (audition) ----------
-app.post("/api/voice-sample", (req, res) => {
+/**
+ * Voice audition. Goes through the same cache as the render (so a voice heard
+ * once is instant next time) and runs the engine without blocking the server:
+ * on a CPU, Kitten 2 needs ~30 s to load and ~40-50 s per line.
+ */
+/** Audition syntheses in progress, by cache key. */
+const sampleJobs = new Map<string, Promise<string>>();
+app.post("/api/voice-sample", async (req, res) => {
   const body = req.body as { engine?: string; voice?: string; voiceDesc?: string; text?: string };
-  const engine = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
-  const text = body.text || "Hey there! This is my real voice. Let's make something amazing together.";
-  const tmpDir = join(ROOT, "output", "_voice-samples");
-  fs.mkdirSync(tmpDir, { recursive: true });
-  const id = `sample-${Date.now()}`;
-  const outDir = join(tmpDir, id);
-  fs.mkdirSync(outDir, { recursive: true });
-  const job = {
-    engine,
-    outDir,
-    lines: [{
-      id: "s",
-      text,
-      voice: body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm"),
-      voiceDesc: engine === "voxcpm2" ? voxDescription(body.voice || "narrator-calm", body.voiceDesc) : undefined,
-    }],
-  };
-  const jobPath = join(outDir, "job.json");
-  fs.writeFileSync(jobPath, JSON.stringify(job, null, 2));
-  const python = resolveTtsPython(engine) ?? "";
-  if (!python || !fs.existsSync(python)) {
+  const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
+  if (!resolveTtsPython(engine)) {
     return res.status(400).json({ error: "engine not installed", fix: "Install it from the Setup tab first" });
   }
-  const r = spawnSync(python, [join(ROOT, "scripts", "story-tts.py"), jobPath, "--engine", engine], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
-    timeout: 120000,
-  });
-  const wavPath = join(outDir, "s.wav");
-  if (r.status !== 0 || !fs.existsSync(wavPath)) {
-    return res.status(500).json({ error: "sample generation failed", detail: (r.stderr || r.stdout || "").slice(-500) });
+  const text = body.text || "Hey there! This is my real voice. Let's make something amazing together.";
+  const voice = body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm");
+  const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, body.voiceDesc) : undefined;
+  const key = cacheKey({ engine, voice, voiceDesc, text });
+  try {
+    // One synthesis per distinct sample: a second click on the same voice waits
+    // for the first, and each sample gets its own job folder, so two auditions
+    // never share (or overwrite) a job file. Samples stay out of public/.
+    let job = sampleJobs.get(key);
+    if (!job) {
+      const id = `_sample-${key.slice(0, 12)}`;
+      const line = { id: "sample", text, at: 0, engine, voice, voiceDesc, kind: "narration" as const };
+      job = synthesizeLines([line], id, { publish: false })
+        .then((m) => m.lines[0].file)
+        .finally(() => {
+          sampleJobs.delete(key);
+          fs.rmSync(join(ROOT, "output", `${id}-voice`), { recursive: true, force: true });
+        });
+      sampleJobs.set(key, job);
+    }
+    const wavPath = await job;
+    if (!fs.existsSync(wavPath)) throw new Error("the engine produced no file");
+    res.setHeader("Content-Type", "audio/wav");
+    // The cache is under .cache/; sendFile refuses dot-folders unless told otherwise.
+    res.sendFile(wavPath, { dotfiles: "allow" });
+  } catch (e) {
+    res.status(500).json({ error: "sample generation failed", detail: (e instanceof Error ? e.message : String(e)).slice(-500) });
   }
-  res.setHeader("Content-Type", "audio/wav");
-  res.sendFile(wavPath);
 });
 app.get("/api/videos", (_req, res) => {
   const dir = join(ROOT, "output");

@@ -6,10 +6,11 @@
  * Driven from spec.statPanel.beats; values/zoom/bpm blend toward the active
  * beat over ~0.9s so every escalation reads as a change happening on screen.
  */
-import { useCurrentFrame } from "remotion";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import type { StatPanelSpec } from "../../generator/spec.schema";
 import { statIndexAt, statBpmAt, statSubAt, statUnitAt, statValueAt, statZoomAt } from "../../generator/statPanel";
+import { SAFE_AREA, frameShape, hudScale } from "../../generator/layout";
 
 /** One ECG-like pulse waveform cycle: baseline with P bump, QRS spike, T bump. */
 function ecgY(phase: number): number {
@@ -33,13 +34,25 @@ function pulsePath(bpm: number, width: number, height: number, scrollCycles: num
   return points.join(" ");
 }
 
+/** Short enough for the card: 7 -> "7", 12.5 -> "12.5", 1048 -> "1,048", 1048576 -> "1.05M". */
+export function formatStat(value: number): string {
+  const compact = (v: number, suffix: string) => `${Number(v.toPrecision(3))}${suffix}`;
+  if (value >= 1e9) return compact(value / 1e9, "B");
+  if (value >= 1e6) return compact(value / 1e6, "M");
+  if (value >= 10000) return compact(value / 1e3, "K");
+  if (value >= 10) return Math.round(value).toLocaleString("en-US");
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
 export const StatHud: React.FC<{ panel?: StatPanelSpec; fps?: number }> = ({ panel, fps = 30 }) => {
   const frame = useCurrentFrame();
+  const { width, height } = useVideoConfig();
   const t = frame / fps;
   if (!panel) return null;
 
   const unit = statUnitAt(panel);
   const value = statValueAt(panel, t);
+  const shown = formatStat(value);
   const sub = statSubAt(panel, t);
   const bpm = Math.round(statBpmAt(panel, t));
   const idx = statIndexAt(panel, t);
@@ -54,8 +67,12 @@ export const StatHud: React.FC<{ panel?: StatPanelSpec; fps?: number }> = ({ pan
     <div
       style={{
         position: "absolute",
-        top: 96,
-        left: 56,
+        // Designed on a 1080-wide portrait frame; scaled and kept inside the
+        // safe area for each frame shape (src/generator/layout.ts).
+        top: SAFE_AREA[frameShape(width, height)].top * height,
+        left: SAFE_AREA[frameShape(width, height)].left * width,
+        transform: `scale(${hudScale(width, height)})`,
+        transformOrigin: "top left",
         width: 470,
         zIndex: 20,
         pointerEvents: "none",
@@ -88,14 +105,16 @@ export const StatHud: React.FC<{ panel?: StatPanelSpec; fps?: number }> = ({ pan
       >
         <span
           style={{
-            fontSize: value >= 100 ? 92 : 116,
+            // Shrink with the text so long numbers stay inside the card.
+            fontSize: shown.length + unit.length <= 3 ? 116 : shown.length + unit.length <= 5 ? 92 : 72,
             fontWeight: 900,
             color: "#101828",
             lineHeight: 1.02,
             fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
           }}
         >
-          {value >= 10 ? Math.round(value) : value.toFixed(1).replace(/\.0$/, "")}
+          {shown}
           {unit}
         </span>
       </div>

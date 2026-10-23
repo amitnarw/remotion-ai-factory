@@ -18,10 +18,10 @@
  * Nothing here plays audio. Each file is converted with the bundled ffmpeg and
  * measured with loudnorm (integrated loudness and true peak) only.
  */
-import { spawnSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { basename, extname, join } from "path";
 import AdmZip from "adm-zip";
+import { runFfmpeg, measureLoudness, FFMPEG } from "../src/generator/ffmpeg";
 
 const ROOT = process.cwd();
 const LIB = join(ROOT, "public", "library");
@@ -36,7 +36,10 @@ interface Entry {
   kind: Kind;
   /** Path under public/, e.g. "library/sfx/kenney-impact-hit.wav". */
   file: string;
+  /** Words from the file's own name (what the sound is). */
   tags: string[];
+  /** The pack or folder it came from (where it is from, not what it is). */
+  pack: string;
   durSec: number;
   lufs: number | null;
   truePeakDb: number | null;
@@ -59,14 +62,20 @@ const ONLY = new Set((value("only") ?? "kenney,oga,bigsoundbank,freepd").split("
 
 /* ---------------- helpers ---------------- */
 
-/** The bundled ffmpeg (Remotion ships it), else FFMPEG_PATH, else PATH. */
-function resolveFfmpeg(): string {
-  if (process.env.FFMPEG_PATH && existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
-  const platform = process.platform === "win32" ? "win32-x64-msvc" : `${process.platform}-${process.arch}`;
-  const bundled = join(ROOT, "node_modules", "@remotion", `compositor-${platform}`, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
-  return existsSync(bundled) ? bundled : "ffmpeg";
+/**
+ * Words that describe one file, from its own name: "impactSoft_heavy_000.ogg"
+ * -> ["impact", "soft", "heavy"]. Pack names are NOT added here: a pack holds
+ * many different sounds, so tagging every file with the pack's theme made a
+ * "whoosh" search return computer noises and doors.
+ */
+function nameWords(fileName: string): string[] {
+  const base = basename(fileName).replace(/\.[a-z0-9]+$/i, "");
+  const spaced = base
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Za-z])/g, "$1 $2");
+  return [...new Set(spaced.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !/^\d+$/.test(w)))];
 }
-const FFMPEG = resolveFfmpeg();
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "clip";
@@ -93,11 +102,6 @@ async function cachedDownload(url: string, name: string): Promise<string> {
   return dest;
 }
 
-function run(argv: string[]): { ok: boolean; stderr: string } {
-  const r = spawnSync(FFMPEG, argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  return { ok: r.status === 0, stderr: r.stderr ?? "" };
-}
-
 /** Convert one source file to the library format for its kind. */
 function convert(src: string, dest: string, kind: Kind): boolean {
   mkdirSync(join(dest, ".."), { recursive: true });
@@ -105,19 +109,7 @@ function convert(src: string, dest: string, kind: Kind): boolean {
   const out = isMusic
     ? ["-ac", "2", "-ar", "48000", "-c:a", "libmp3lame", "-b:a", "128k", dest]
     : ["-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", dest];
-  return run(["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vn", ...out]).ok;
-}
-
-/** Integrated loudness (LUFS), true peak (dBTP) and duration, measured with loudnorm. */
-function measure(file: string): { durSec: number; lufs: number | null; truePeakDb: number | null } {
-  // Pad with silence first: loudnorm returns nothing for clips under a few seconds. Silence is gated out of integrated loudness, so the reading is unchanged.
-  const r = run(["-hide_banner", "-i", file, "-af", "apad=pad_dur=5,loudnorm=print_format=json", "-f", "null", "-"]);
-  const dur = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(r.stderr);
-  const durSec = dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0;
-  const json = /\{\s*"input_i"[\s\S]*?\}/.exec(r.stderr);
-  if (!json) return { durSec, lufs: null, truePeakDb: null };
-  const m = JSON.parse(json[0]) as { input_i: string; input_tp: string };
-  return { durSec, lufs: Number(m.input_i), truePeakDb: Number(m.input_tp) };
+  return runFfmpeg(["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vn", ...out]).ok;
 }
 
 /* ---------------- sources ---------------- */
@@ -126,20 +118,20 @@ const entries: Entry[] = [];
 
 function addEntry(e: Omit<Entry, "file" | "durSec" | "lufs" | "truePeakDb">, dest: string) {
   const rel = dest.slice(join(ROOT, "public").length + 1).replace(/\\/g, "/");
-  const m = measure(dest);
+  const m = measureLoudness(dest);
   entries.push({ ...e, file: rel, ...m });
 }
 
 async function kenney(): Promise<void> {
-  const packs: Array<{ slug: string; kind: Kind; tags: string[] }> = [
-    { slug: "interface-sounds", kind: "sfx", tags: ["ui", "click", "interface"] },
-    { slug: "impact-sounds", kind: "sfx", tags: ["impact", "hit", "thud"] },
-    { slug: "rpg-audio", kind: "sfx", tags: ["rpg", "footsteps", "foley", "cloth"] },
-    { slug: "sci-fi-sounds", kind: "sfx", tags: ["sci-fi", "laser", "space", "whoosh"] },
-    { slug: "casino-audio", kind: "sfx", tags: ["coins", "casino", "money", "cash"] },
-    { slug: "digital-audio", kind: "sfx", tags: ["digital", "zap", "power-up"] },
-    { slug: "ui-audio", kind: "sfx", tags: ["ui", "pop", "switch"] },
-    { slug: "music-jingles", kind: "stinger", tags: ["jingle", "stinger", "music"] },
+  const packs: Array<{ slug: string; kind: Kind }> = [
+    { slug: "interface-sounds", kind: "sfx" },
+    { slug: "impact-sounds", kind: "sfx" },
+    { slug: "rpg-audio", kind: "sfx" },
+    { slug: "sci-fi-sounds", kind: "sfx" },
+    { slug: "casino-audio", kind: "sfx" },
+    { slug: "digital-audio", kind: "sfx" },
+    { slug: "ui-audio", kind: "sfx" },
+    { slug: "music-jingles", kind: "stinger" },
   ];
   for (const pack of packs) {
     if (!ONLY.has("kenney")) return;
@@ -161,7 +153,7 @@ async function kenney(): Promise<void> {
           if (!convert(srcTmp, dest, pack.kind)) continue;
         }
         addEntry(
-          { id, kind: pack.kind, tags: [...pack.tags, ...slugify(basename(item.entryName)).split("-")], source: `Kenney ${pack.slug}`, license: "CC0 1.0", url: `https://kenney.nl/assets/${pack.slug}` },
+          { id, kind: pack.kind, tags: nameWords(item.entryName), pack: `kenney-${pack.slug}`, source: `Kenney ${pack.slug}`, license: "CC0 1.0", url: `https://kenney.nl/assets/${pack.slug}` },
           dest,
         );
         n += 1;
@@ -188,7 +180,7 @@ async function oga(): Promise<void> {
       if (FORCE || !existsSync(dest)) {
         if (!convert(srcTmp, dest, "sfx")) continue;
       }
-      addEntry({ id, kind: "sfx", tags: ["sfx", "retro", ...slugify(basename(item.entryName)).split("-")], source: "OpenGameArt 100 CC0 SFX", license: "CC0 1.0", url }, dest);
+      addEntry({ id, kind: "sfx", tags: nameWords(item.entryName), pack: "oga-100-cc0", source: "OpenGameArt 100 CC0 SFX", license: "CC0 1.0", url }, dest);
       n += 1;
     }
     console.log(`[oga] ${n} files`);
@@ -206,11 +198,13 @@ async function bigsoundbank(): Promise<void> {
       const page = await getText(item.page);
       if (!/Free and Royalty Free/i.test(page)) throw new Error("page is not marked 'Free and Royalty Free'");
       const src = await cachedDownload(`https://bigsoundbank.com/UPLOAD/mp3/${item.id}.mp3`, `${id}.mp3`);
-      const dest = join(LIB, item.kind === "music" ? "music" : "ambience", `${id}.mp3`);
+      // Folder and format follow the kind: beds and music as mp3, one-shots as wav.
+      const long = item.kind === "music" || item.kind === "ambience";
+      const dest = join(LIB, item.kind, `${id}.${long ? "mp3" : "wav"}`);
       if (FORCE || !existsSync(dest)) {
         if (!convert(src, dest, item.kind)) throw new Error("conversion failed");
       }
-      addEntry({ id, kind: item.kind, tags: item.tags, source: "BigSoundBank", license: "CC0 1.0 (page: Free and Royalty Free)", url: item.page }, dest);
+      addEntry({ id, kind: item.kind, tags: item.tags, pack: "bigsoundbank", source: "BigSoundBank", license: "CC0 1.0 (page: Free and Royalty Free)", url: item.page }, dest);
       console.log(`[bigsoundbank] ${id} ok`);
     } catch (e) {
       console.warn(`[bigsoundbank] ${id} skipped: ${(e as Error).message}`);
@@ -249,7 +243,8 @@ async function freepd(): Promise<void> {
           if (FORCE || !existsSync(dest)) {
             if (!convert(src, dest, "music")) throw new Error("conversion failed");
           }
-          addEntry({ id, kind: "music", tags: [...FREEPD_FOLDERS[folder], ...slugify(title).split("-")], source: "FreePD (archive.org mirror)", license: "Public domain (FreePD dedication)", url }, dest);
+          // A FreePD folder IS a mood, so its mood words describe every track in it.
+          addEntry({ id, kind: "music", tags: [...FREEPD_FOLDERS[folder], ...nameWords(title)], pack: `freepd-${folder}`, source: "FreePD (archive.org mirror)", license: "Public domain (FreePD dedication)", url }, dest);
         } catch (e) {
           console.warn(`[freepd] ${name} skipped: ${(e as Error).message}`);
         }
@@ -265,7 +260,7 @@ async function freepd(): Promise<void> {
 
 async function main() {
   mkdirSync(LIB, { recursive: true });
-  if (!existsSync(FFMPEG) && FFMPEG === "ffmpeg") console.warn("[audio] bundled ffmpeg not found; using ffmpeg from PATH");
+  if (FFMPEG === "ffmpeg") console.warn("[audio] bundled ffmpeg not found; using ffmpeg from PATH");
   await kenney();
   await oga();
   await bigsoundbank();

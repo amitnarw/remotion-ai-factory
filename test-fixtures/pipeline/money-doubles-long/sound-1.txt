@@ -1,0 +1,1 @@
+{"music": [{"start": "b1", "mood": "upbeat"}, {"start": "b6", "mood": "epic"}], "beds": [{"start": "b1", "end": "b6", "sound": "street_murmur", "level": 0.5}, {"start": "b6", "end": null, "sound": "space_cosmic_wind", "level": 0.4}], "hits": [{"beat": "b3", "at": "start", "sound": "coins"}, {"beat": "b6", "at": "start", "sound": "whoosh"}]}

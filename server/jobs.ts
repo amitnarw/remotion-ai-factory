@@ -178,10 +178,16 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
   } else {
     args.push(job.premise);
     if (opts?.noRender) args.push("--no-render");
-    if (job.provider) args.push("--provider", job.provider);
-    if (job.model) args.push("--model", job.model);
+    // Only a provider/model the request named explicitly; otherwise every
+    // pipeline role uses its own assignment from Providers -> Model roles.
+    if ((job as any).explicitModel !== false) {
+      if (job.provider) args.push("--provider", job.provider);
+      if (job.model) args.push("--model", job.model);
+    }
     const settings = (job as any).settings;
     if (settings) args.push("--settings-json", JSON.stringify(settings));
+    const audioFile = (job as any).audioFile;
+    if (audioFile) args.push("--audio-file", audioFile);
   }
   const child = spawn("npx", ["--no-install", "tsx", ...args], {
     cwd: ROOT,
@@ -190,7 +196,24 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     // loader and reads process.env directly.
   });
   job.child = child;
+  // "@@STAGE <name>" lines from the pipeline drive the stage pills. Output
+  // arrives in chunks that can split a line, so keep the unfinished tail.
+  const PLAN_PROGRESS: Record<string, number> = { writer: 10, voice: 30, director: 50, sound: 70, critic: 80, assemble: 90 };
+  let pending = "";
+  const handleStageMarkers = (text: string) => {
+    pending += text;
+    const lines = pending.split(/\r?\n/);
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      const m = /^@@STAGE\s+(\w+)/.exec(line.trim());
+      if (!m) continue;
+      setStage(job, m[1]);
+      if (job.engine === "plan" && PLAN_PROGRESS[m[1]] !== undefined) job.progress = Math.max(job.progress, PLAN_PROGRESS[m[1]]);
+      broadcast(job.id, { type: "progress", progress: job.progress, stage: job.stage, etaSec: job.etaSec });
+    }
+  };
   const handleOutput = (text: string) => {
+    handleStageMarkers(text);
     // Strip ANSI color escapes (Remotion prints colored output) so the
     // dashboard log console doesn't show raw escape garbage.
     // eslint-disable-next-line no-control-regex

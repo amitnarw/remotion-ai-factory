@@ -7,13 +7,8 @@
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import "./fonts";
-import {
-  CaptionLook,
-  FONT_STACKS,
-  POSITION_PCT,
-  hexToRgba,
-  resolveCaptionStyle,
-} from "../../generator/caption-style";
+import { CaptionLook, FONT_STACKS, hexToRgba, resolveCaptionStyle } from "../../generator/caption-style";
+import { captionCentrePct, captionScale, centredTextMargin, textOutline } from "../../generator/layout";
 
 interface CaptionItem {
   text: string;
@@ -50,7 +45,7 @@ function markKeywords(text: string, keywords: string[] | undefined): Array<{ wor
 
 export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style }) => {
   const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
+  const { width, height } = useVideoConfig();
   const seconds = frame / fps;
   const active = captions.find((c) => seconds >= c.from && seconds <= c.to);
   if (!active) return null;
@@ -61,7 +56,9 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
       ? { ...resolveCaptionStyle(style), font: "serif", italic: true, uppercase: false, weight: 400 }
       : resolveCaptionStyle(style);
 
-  const scale = width / 1080;
+  // Larger on phones (9:16), placed clear of the platform UI (src/generator/layout.ts).
+  const scale = captionScale(width, height);
+  const margin = centredTextMargin(width, height) * 100;
   const duration = Math.max(0.01, active.to - active.from);
   const local = Math.max(0, seconds - active.from);
   const enter = Math.min(1, local / 0.25);
@@ -93,9 +90,9 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
     <div
       style={{
         position: "absolute",
-        top: `calc(${POSITION_PCT[look.position] + look.offsetPct}%)`,
-        left: 0,
-        right: 0,
+        top: `calc(${captionCentrePct(look.position, width, height) + look.offsetPct}%)`,
+        left: `${margin}%`,
+        right: `${margin}%`,
         display: "flex",
         justifyContent: "center",
         zIndex: 20,
@@ -106,7 +103,7 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
         style={{
           transform: blockTransform,
           opacity: blockOpacity,
-          maxWidth: "92%",
+          maxWidth: "100%",
           textAlign: "center",
           fontFamily: FONT_STACKS[look.font],
           fontWeight: look.font === "archivo-black" ? 400 : look.weight,
@@ -115,22 +112,25 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
           lineHeight: 1.2,
           color: look.color,
           letterSpacing: look.uppercase ? 0.5 : 0,
-          textShadow: look.shadow ? `0 ${2 * scale}px ${6 * scale}px rgba(0,0,0,0.45)` : "none",
+          // Bold looks get a thin dark outline so they read over any scene; light ones a soft shadow.
+          textShadow: look.shadow ? textOutline(scale, look.weight >= 700 && look.background === "none" ? "outline" : "soft") : "none",
           ...box,
         }}
       >
         {words.map((w, i) => (
-          <span
-            key={`${i}-${w.word}`}
-            style={{
-              color: w.hit ? look.highlight : look.color,
-              fontWeight: w.hit ? 900 : undefined,
-              opacity: wordVisible(i) ? 1 : 0,
-              marginRight: i < words.length - 1 ? "0.25em" : 0,
-            }}
-          >
-            {w.word}
-          </span>
+          // A real space between words, so a long caption wraps between words.
+          <React.Fragment key={`${i}-${w.word}`}>
+            {i > 0 && " "}
+            <span
+              style={{
+                color: w.hit ? look.highlight : look.color,
+                fontWeight: w.hit ? 900 : undefined,
+                opacity: wordVisible(i) ? 1 : 0,
+              }}
+            >
+              {w.word}
+            </span>
+          </React.Fragment>
         ))}
         {active.sub && (
           <div

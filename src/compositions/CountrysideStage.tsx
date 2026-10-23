@@ -15,16 +15,20 @@
  *   worldEvents: water-rise (if river added later), lights-out
  */
 import { useMemo, useRef, useEffect } from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import { statValueAt } from "../generator/statPanel";
+import type { Subject } from "../generator/camera/solve";
+import type { ShotSize } from "../generator/camera/shot";
+import { statScaleAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
 import { Birds } from "./Birds";
 import { keepMistBase, driftMist } from "./mist";
+import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { clearestFacing, restoreRigLens, type Blocker } from "./ForestStage";
 
 /** Per-TOD look for countryside (mirrors ASSET_TOD pattern). */
 const COUNTRYSIDE_TOD: Record<
@@ -413,6 +417,9 @@ function DirtRoad({ points, col, width = 5 }: { points: Array<[number, number]>;
       const q = Math.floor(i / 2) * 4;
       return i % 2 === 0 ? [q, q + 1, q + 2] : [q + 1, q + 3, q + 2];
     }).flat());
+    // A lit material without normals shades NaN: the road came out black, and
+    // the bloom pass spreads NaN pixels over the whole frame.
+    g.computeVertexNormals();
     return g;
   }, [points, width]);
 
@@ -497,12 +504,171 @@ function MistLayer({ active, night }: { active: boolean; night: boolean }) {
   return <points geometry={geo} material={mat} />;
 }
 
+/**
+ * The countryside's own camera (used when no director's shot is active): a
+ * slow orbit round the village, pushed out on the stat beats. A pure function
+ * of the frame.
+ */
+function CountrysideCameraRig({ spec }: { spec: ShotSpec }) {
+  const frame = useCurrentFrame();
+  const { camera } = useThree();
+  const panel = spec.statPanel ?? null;
+  const t = frame / 30;
+  const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.12 : 1;
+  useFrame(() => {
+    restoreRigLens(camera);
+    const baseR = 45;
+    const angle = t * 0.04;
+    const x = Math.sin(angle) * baseR;
+    const z = Math.cos(angle) * baseR - 20;
+    const y = 8 + Math.sin(t * 0.15) * 0.5;
+    camera.position.set(x * zoom, y, z * zoom);
+    camera.lookAt(0, 1.5, -10);
+  });
+  return null;
+}
+
+type CountryLayout = {
+  houses: Array<{ x: number; z: number; rot: number; scale: number }>;
+  barn: { x: number; z: number; rot: number; scale: number };
+  windmill: { x: number; z: number; rot: number; scale: number };
+  haystacks: Array<{ x: number; z: number; scale: number; rot: number }>;
+  roadPoints: Array<[number, number]>;
+};
+
+/** Owner ids of the props, for the clearance check. */
+const OWN = { barn: 10, windmill: 11, hay: 20 };
+
+/**
+ * Sizes in world metres. House and Barn scale their geometry by `scale` AND
+ * their group by `scale` (so sizes go with scale²); Windmill and Haystack
+ * scale once.
+ */
+function countryBlockers(L: CountryLayout): Blocker[] {
+  const out: Blocker[] = [];
+  L.houses.forEach((h, i) => {
+    const s2 = h.scale * h.scale;
+    out.push({ kind: "column", x: h.x, z: h.z, r: 3.8 * s2, top: 6.4 * s2, owner: i });
+  });
+  const b2 = L.barn.scale * L.barn.scale;
+  out.push({ kind: "column", x: L.barn.x, z: L.barn.z, r: 6.1 * b2, top: 9 * b2, owner: OWN.barn });
+  const w = L.windmill.scale;
+  out.push({ kind: "column", x: L.windmill.x, z: L.windmill.z, r: 2.2 * w, top: 13 * w, owner: OWN.windmill });
+  out.push({ kind: "ball", x: L.windmill.x, y: 12.5 * w, z: L.windmill.z, r: 9 * w, owner: OWN.windmill });
+  L.haystacks.forEach((h, i) => out.push({ kind: "column", x: h.x, z: h.z, r: 1.5 * h.scale, top: 5.1 * h.scale, owner: OWN.hay + i }));
+  return out;
+}
+
+/** The ridge's front layers (same seeds as MountainRidge in mountains.tsx). */
+function ridgeHills(specId: string, bounds: { x0: number; x1: number; z0: number }): Subject {
+  const layer = (n: number) => {
+    const z = bounds.z0 - n * 35 - seeded(specId, `ridge-${n}-z`, 0) * 20;
+    const peaks: Array<{ x: number; h: number }> = [];
+    for (let x = bounds.x0 - 20; x < bounds.x1 + 20; x += 12) peaks.push({ x, h: seeded(specId, `ridge-${n}-${x}`, 0) * 12 + 4 });
+    return { z, baseY: 5 + n * 8, peaks };
+  };
+  const front = layer(0);
+  const back = layer(1);
+  // The highest front peak near the middle of the view.
+  const peak = front.peaks.filter((p) => Math.abs(p.x) <= 40).sort((a, b) => b.h - a.h)[0] ?? { x: 0, h: 10 };
+  const behind = Math.max(...back.peaks.filter((p) => Math.abs(p.x - peak.x) <= 18).map((p) => back.baseY + p.h), 0);
+  const top = Math.max(front.baseY + peak.h, behind);
+  return { center: [peak.x, top / 2, front.z - 10], radius: 12, height: top, facing: 0, ground: 0 };
+}
+
+const COUNTRY_CLOSE = ["CU", "MS", "FS", "WS"] as const;
+const COUNTRY_WIDE = ["FS", "WS"] as const;
+
+/**
+ * What the camera can frame in the countryside (KIT_SUBJECTS.countryside),
+ * measured from the seeded layout. Buildings face their real front (door,
+ * rotor) unless another building is in the way, then their clearest side.
+ * Everything here is static, so the anchors ignore t.
+ */
+export function countrysideAnchors(L: CountryLayout, specId: string, aspect: number): Anchors {
+  const blockers = countryBlockers(L);
+  const anchors: Anchors = {};
+  const keep = (name: string, s: Subject) => {
+    anchors[name] = () => s;
+  };
+  /** The front (and the back, for a two-sided prop) first; turning away from it costs a little. */
+  const pickSide = (base: Subject, sizes: readonly ShotSize[], skip: number[], front: number, alsoBack: boolean) => {
+    const turns: Array<[number, number]> = [[0, 0], [Math.PI / 6, 1], [-Math.PI / 6, 1], [Math.PI / 2, 3], [-Math.PI / 2, 3]];
+    const fronts = alsoBack ? [front, front + Math.PI] : [front];
+    let best = { facing: front, cost: Infinity };
+    for (const f0 of fronts) {
+      for (const [turn, penalty] of turns) {
+        const f = f0 + turn;
+        const cost = clearestFacing(base, sizes, aspect, blockers, new Set(skip), f, [f]).cost + penalty;
+        if (cost < best.cost) best = { facing: f, cost };
+      }
+    }
+    return best;
+  };
+
+  // house: the farmhouse that films most cleanly from its door side; nearer
+  // the default camera (south, +z) breaks ties.
+  let best = Infinity;
+  L.houses.forEach((h, i) => {
+    const s2 = h.scale * h.scale;
+    const base: Subject = { center: [h.x, 3.2 * s2, h.z], radius: 3.6 * s2, height: 6.4 * s2, ground: 0 };
+    const pick = pickSide(base, COUNTRY_CLOSE, [i], h.rot, false);
+    const value = pick.cost - 0.02 * h.z;
+    if (value < best) {
+      best = value;
+      keep("house", { ...base, facing: pick.facing });
+    }
+  });
+
+  // barn: doors on both long sides; its roof peak is 9 scale² up.
+  const b2 = L.barn.scale * L.barn.scale;
+  const barnBase: Subject = { center: [L.barn.x, 4.5 * b2, L.barn.z], radius: 5.5 * b2, height: 9 * b2, ground: 0 };
+  keep("barn", { ...barnBase, facing: pickSide(barnBase, COUNTRY_CLOSE, [OWN.barn], L.barn.rot, true).facing });
+
+  // windmill: rotor hub 12.5 m up, blades 9 m long, turning in the plane that
+  // faces rot (and rot + π). Close shots frame the top of a subject, so its
+  // height stops at 16 m: a close-up then holds the hub, not the empty sky the
+  // blade tips sweep (21.5 m); the radius keeps the whole rotor wide.
+  const w = L.windmill.scale;
+  const millBase: Subject = { center: [L.windmill.x, 8 * w, L.windmill.z], radius: 9 * w, height: 16 * w, ground: 0 };
+  keep("windmill", { ...millBase, facing: pickSide(millBase, COUNTRY_CLOSE, [OWN.windmill], L.windmill.rot, true).facing });
+
+  // fields: a stretch of the crop strips clear of the farm (CropStrips covers
+  // x -76..71 in two rows, z -110..-50 and -46..14), from its clearest side.
+  best = Infinity;
+  for (const [x, z] of [[-52, -2], [56, 4], [-48, -84], [44, -84]] as const) {
+    const base: Subject = { center: [x, 0.3, z], radius: 12, height: 1.5, ground: 0 };
+    // Prefer the camera beyond the field, looking back over it at the farm.
+    const pick = clearestFacing(base, COUNTRY_WIDE, aspect, blockers, new Set(), Math.atan2(x, z + 15));
+    const value = pick.cost - 0.01 * z;
+    if (value < best) {
+      best = value;
+      keep("fields", { ...base, facing: pick.facing });
+    }
+  }
+
+  // road: its near end (first two segments), seen down its length towards the
+  // village, or back out from the village.
+  const [[ax, az], [bx, bz], [ccx, ccz]] = L.roadPoints;
+  const roadBase: Subject = { center: [(ax + ccx) / 2, 0.3, (az + ccz) / 2], radius: 8, height: 1.2, ground: 0 };
+  const along = Math.atan2(ax - bx, az - bz);
+  const roadPick = clearestFacing(roadBase, COUNTRY_WIDE, aspect, blockers, new Set(), along, [along, along + 0.35, along - 0.35, along + Math.PI]);
+  keep("road", { ...roadBase, facing: roadPick.facing });
+
+  // hills: the mountain ridge on the horizon.
+  keep("hills", ridgeHills(specId, { x0: -120, x1: 120, z0: -100 }));
+
+  // scene: the village green and the farm round it, from the south like the rig.
+  const sceneBase: Subject = { center: [0, 4, -15], radius: 10, height: 9, ground: 0 };
+  const scenePick = clearestFacing(sceneBase, COUNTRY_WIDE, aspect, blockers, new Set(), 0, [0, 0.5, -0.5, 1, -1]);
+  keep("scene", { ...sceneBase, facing: scenePick.facing });
+  return anchors;
+}
+
 export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
   const frame = useCurrentFrame();
   const active = scene ?? spec.scenes[0];
-  const panel = spec.statPanel ?? null;
   const t = frame / 30;
-  const zoom = panel ? 1 + (statValueAt(panel, t) - 1) * 0.12 : 1;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = COUNTRYSIDE_TOD[tod] ?? COUNTRYSIDE_TOD.afternoon;
@@ -512,22 +678,6 @@ export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: Scen
   useEffect(() => {
     threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
   }, [look.fog, look.fogDensity, threeScene]);
-
-  // Camera: slow orbit around the village center with gentle push on beats
-  const { camera } = useThree();
-  const cam = useMemo(() => {
-    const baseR = 45;
-    const angle = t * 0.04;
-    const x = Math.sin(angle) * baseR;
-    const z = Math.cos(angle) * baseR - 20;
-    const y = 8 + Math.sin(t * 0.15) * 0.5;
-    return { x, y, z, lookAtX: 0, lookAtZ: -10 };
-  }, [t]);
-
-  useFrame(() => {
-    camera.position.set(cam.x * zoom, cam.y, cam.z * zoom);
-    camera.lookAt(cam.lookAtX, 1.5, cam.lookAtZ);
-  });
 
   // Procedural layout seeded by spec.id
   const layout = useMemo(() => {
@@ -581,8 +731,18 @@ export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: Scen
     return { houses, barn, windmill, haystacks, roadPoints, fences, cropBounds };
   }, [spec.id]);
 
+  // Subjects for the director's shots (only measured when the spec has shots).
+  const { width, height } = useVideoConfig();
+  const aspect = width / Math.max(1, height);
+  const hasShots = (spec.shots?.length ?? 0) > 0;
+  const anchors = useMemo(
+    (): Anchors => (hasShots ? countrysideAnchors(layout, spec.id, aspect) : {}),
+    [hasShots, layout, spec.id, aspect],
+  );
+
   return (
     <group>
+      <ShotCamera spec={spec} anchors={anchors} fallback={<CountrysideCameraRig spec={spec} />} />
       <GradientSkyDome top={look.sky[0]} bottom={look.sky[1]} />
       <hemisphereLight
         color={look.hemi[0]}

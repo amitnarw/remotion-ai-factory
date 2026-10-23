@@ -11,6 +11,10 @@
  * Escalation beats (spec.statPanel) drive the camera zoom (1x → 16x) and parts
  * of the crowd look up at every beat. Missing models degrade to procedural
  * stand-ins (shared GlbSuspense machinery), never a crash.
+ *
+ * Camera: while a director's shot (spec.shots, Phase 3) is on screen, the shot
+ * solver frames one of the anchors in streetAnchors(); otherwise the operator
+ * rig (CameraRig) films exactly as before.
  */
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
@@ -19,7 +23,7 @@ import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import { statZoomAt, statValueAt } from "../generator/statPanel";
+import { statZoomAt, statScaleAt } from "../generator/statPanel";
 import {
   CITY_BUILDINGS,
   CITY_DETAILS,
@@ -37,6 +41,8 @@ import { GlbSuspense, useGltfPaint } from "./glb";
 import { Starfield } from "./SpaceStage";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { getActiveTodLook, TodLookTable } from "./tod";
+import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import type { Subject } from "../generator/camera/solve";
 
 /* ------------------------------------------------------------------ */
 /*  Deterministic helpers                                              */
@@ -487,14 +493,14 @@ interface Placement {
   tint: string;
 }
 
-interface BuildingSlotLayout {
+export interface BuildingSlotLayout {
   variants: IndexedAsset[];
   near: Record<string, Placement[]>;
   far: Record<string, Placement[]>;
   awnings: Array<{ x: number; z: number; color: string }>;
 }
 
-function BuildingSlots(specId: string, accentName: string): BuildingSlotLayout {
+export function BuildingSlots(specId: string, accentName: string): BuildingSlotLayout {
   const nearSlots: Placement[] = [];
   const farSlots: Placement[] = [];
   for (let k = 0; k < 12; k++) {
@@ -654,6 +660,10 @@ function GlbSingleModel({
 /*  Café strip: chairs + tables + parasols on the right sidewalk        */
 /* ------------------------------------------------------------------ */
 
+/** Café tables: x on the right sidewalk, one station per z. */
+const CAFE_X = 6.6;
+const CAFE_STATIONS = [-8.5, -13.0, -17.5, -22.0, -26.5];
+
 function CafeStrip({ specId, accent }: { specId: string; accent: string }) {
   const usableChairs = ["chairmoderncushion", "chairrounded", "chaircushion", "chair$", "chairmodernframecushion"]
     .map((key) => firstMatch(SEATING, new RegExp(`_${key.replace("$", "$")}`)))
@@ -661,16 +671,15 @@ function CafeStrip({ specId, accent }: { specId: string; accent: string }) {
   const table = firstMatch(SEATING, /_tableround$|_table$/);
   const parasol = firstMatch(CITY_DETAILS, /parasol/);
 
-  const stations = [-8.5, -13.0, -17.5, -22.0, -26.5];
   const palette = ACCENTS[accent] ?? ACCENTS.classic;
   return (
     <group>
-      {stations.map((z, i) => {
+      {CAFE_STATIONS.map((z, i) => {
         const seed = S(specId, `cafe-${i}`);
         const ch = usableChairs[i % Math.max(1, usableChairs.length)];
         return (
           <group key={i} position={[0, 0, z]}>
-            {table && <GlbSingle file={table.file} x={6.6} z={0} y={0.19} rotY={0.2 + random(seed) * 0.4} h={0.72} tint="#f5e3b8" tintStrength={0.5} />}
+            {table && <GlbSingle file={table.file} x={CAFE_X} z={0} y={0.19} rotY={0.2 + random(seed) * 0.4} h={0.72} tint="#f5e3b8" tintStrength={0.5} />}
             {ch && (
               <>
                 <GlbSingle file={ch.file} x={5.85} z={0.3} y={0.19} rotY={Math.PI / 2 + 0.5} h={0.9} tint="#ffffff" tintStrength={0.35} />
@@ -678,7 +687,7 @@ function CafeStrip({ specId, accent }: { specId: string; accent: string }) {
               </>
             )}
             {parasol && (
-              <GlbSingle file={parasol.file} x={6.6} z={0} y={0.18} rotY={random(seed) * 6.28} h={1.9 + random(seed) * 0.35} tint={i % 2 ? palette[0] : palette[2]} tintStrength={0.8} />
+              <GlbSingle file={parasol.file} x={CAFE_X} z={0} y={0.18} rotY={random(seed) * 6.28} h={1.9 + random(seed) * 0.35} tint={i % 2 ? palette[0] : palette[2]} tintStrength={0.8} />
             )}
           </group>
         );
@@ -797,10 +806,10 @@ interface CarDef {
   scale: number;
 }
 
-/** Traffic: per-lane roster with EQUAL speed + evenly staggered starts, so
- *  spacing is preserved forever (cars can never catch up or clip through).
- *  Facing: car GLBs natively face +z, so toward-camera = rotY 0. */
-function TrafficLoop({ specId, vehicleCount }: { specId: string; vehicleCount?: number }) {
+/** The moving traffic: per-lane roster with EQUAL speed + evenly staggered
+ *  starts, so spacing is preserved forever (cars can never catch up or clip
+ *  through). Shared by TrafficLoop and the camera anchors. */
+function movingCars(specId: string, vehicleCount?: number): CarDef[] {
   const taxi = firstMatch(VEHICLES, /car_kit_taxi/) ?? firstMatch(VEHICLES, /taxi/);
   const van = firstMatch(VEHICLES, /car_kit_van/);
   const sedan = firstMatch(VEHICLES, /car_kit_sedan_/);
@@ -836,10 +845,28 @@ function TrafficLoop({ specId, vehicleCount }: { specId: string; vehicleCount?: 
   const total = vehicleCount ?? 6;
   const nearLane = Math.ceil(total / 2);
   const farLane = total - nearLane;
-  const cars = [
+  return [
     ...roster.filter((c) => c.lane === -1).slice(0, nearLane),
     ...roster.filter((c) => c.lane === 1).slice(0, farLane),
   ];
+}
+
+/** Where a moving car is at time t (seconds). Car GLBs natively face +z, so
+ *  toward-camera = rotY 0. */
+function carPos(def: CarDef, t: number): { x: number; z: number; rotY: number } {
+  const len = 90;
+  const raw = def.z0 + def.speed * t;
+  const z = def.lane === -1 ? wrap(raw, len, -78) : wrap(len - raw, len, -78);
+  return { x: def.lane === -1 ? -2.25 : 2.25, z, rotY: def.lane === -1 ? 0 : Math.PI };
+}
+
+/** Traffic: the moving roster (movingCars) + a few cars parked at the curbs. */
+function TrafficLoop({ specId, vehicleCount }: { specId: string; vehicleCount?: number }) {
+  const van = firstMatch(VEHICLES, /car_kit_van/);
+  const sedan = firstMatch(VEHICLES, /car_kit_sedan_/);
+  const suv = firstMatch(VEHICLES, /car_kit_suv_/);
+  const polyCar = VEHICLES.find((v) => v.id === "poly_car");
+  const cars = movingCars(specId, vehicleCount);
 
   const parked: CarDef[] = [];
   if (sedan) parked.push({ file: sedan.file, lane: 1, z0: -12, speed: 0, tint: "#e3ddcf", scale: 1.0 });
@@ -861,12 +888,9 @@ function TrafficLoop({ specId, vehicleCount }: { specId: string; vehicleCount?: 
 
 function MovingCar({ def, specId }: { def: CarDef; specId: string; index: number }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
-  const len = 90;
-  const raw = def.z0 + def.speed * t;
-  const z = def.lane === -1 ? wrap(raw, len, -78) : wrap(len - raw, len, -78);
+  const pos = carPos(def, frame / 30);
   return (
-    <group position={[def.lane === -1 ? -2.25 : 2.25, 0.02, z]} rotation={[0, def.lane === -1 ? 0 : Math.PI, 0]}>
+    <group position={[pos.x, 0.02, pos.z]} rotation={[0, pos.rotY, 0]}>
       <CarBody def={def} specId={specId} />
     </group>
   );
@@ -964,48 +988,52 @@ function walkerPos(def: WalkerDef, t: number): { x: number; z: number; rotY: num
   return { x: def.x + sway, z, rotY };
 }
 
+/** The crowd: sidewalk strolls + foreground walkers. Shared by Walkers and the
+ *  camera anchors, so the camera follows exactly the person on screen. */
+function walkerDefs(specId: string, variants: IndexedAsset[], crowdCount?: number): WalkerDef[] {
+  if (variants.length === 0) return [];
+  const out: WalkerDef[] = [];
+  // AI-tunable crowd size (default 18 = 14 sidewalk + 4 crossing)
+  const sidewalkN = Math.max(2, Math.round((crowdCount ?? 18) * 0.78));
+  const crossN = Math.max(2, (crowdCount ?? 18) - sidewalkN);
+  // sidewalk strolls near the curbs (visible through the frame)
+  for (let i = 0; i < sidewalkN; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    out.push({
+      file: variants[i % variants.length].file,
+      side,
+      x: side * (5.3 + random(S(specId, `w-x-${i}`)) * 1.1),
+      z0: -84 + random(S(specId, `w-z-${i}`)) * 106,
+      speed: 1.25 + random(S(specId, `w-s-${i}`)) * 0.6,
+      phase: random(S(specId, `w-p-${i}`)) * 6.28,
+      scaleH: 1.6 + random(S(specId, `w-h-${i}`)) * 0.22,
+      tint: TINTS[(i * 5) % TINTS.length],
+      alertWallet: random(S(specId, `w-w-${i}`)) > 0.45,
+      index: i,
+    });
+  }
+  // foreground walkers crossing near the camera: big, reference-like presence
+  for (let i = 0; i < crossN; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    out.push({
+      file: variants[(i + 3) % variants.length].file,
+      side,
+      x: side * (2.6 + random(S(specId, `wf-x-${i}`)) * 1.1),
+      z0: 2 + random(S(specId, `wf-z-${i}`)) * 14,
+      speed: 1.35 + random(S(specId, `wf-s-${i}`)) * 0.45,
+      phase: random(S(specId, `wf-p-${i}`)) * 6.28,
+      scaleH: 1.66 + random(S(specId, `wf-h-${i}`)) * 0.2,
+      tint: TINTS[(i * 3 + 2) % TINTS.length],
+      alertWallet: random(S(specId, `wf-w-${i}`)) > 0.4,
+      index: 20 + i,
+    });
+  }
+  return out;
+}
+
 function Walkers({ specId, alertTimes, crowdCount }: { specId: string; alertTimes: number[]; crowdCount?: number }) {
   const variants = useMemo(() => pickUnique(S(specId, "wv"), walkerPool(), 6), [specId]);
-  const walkers: WalkerDef[] = useMemo(() => {
-    if (variants.length === 0) return [];
-    const out: WalkerDef[] = [];
-    // AI-tunable crowd size (default 18 = 14 sidewalk + 4 crossing)
-    const sidewalkN = Math.max(2, Math.round((crowdCount ?? 18) * 0.78));
-    const crossN = Math.max(2, (crowdCount ?? 18) - sidewalkN);
-    // sidewalk strolls near the curbs (visible through the frame)
-    for (let i = 0; i < sidewalkN; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      out.push({
-        file: variants[i % variants.length].file,
-        side,
-        x: side * (5.3 + random(S(specId, `w-x-${i}`)) * 1.1),
-        z0: -84 + random(S(specId, `w-z-${i}`)) * 106,
-        speed: 1.25 + random(S(specId, `w-s-${i}`)) * 0.6,
-        phase: random(S(specId, `w-p-${i}`)) * 6.28,
-        scaleH: 1.6 + random(S(specId, `w-h-${i}`)) * 0.22,
-        tint: TINTS[(i * 5) % TINTS.length],
-        alertWallet: random(S(specId, `w-w-${i}`)) > 0.45,
-        index: i,
-      });
-    }
-    // foreground walkers crossing near the camera: big, reference-like presence
-    for (let i = 0; i < crossN; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      out.push({
-        file: variants[(i + 3) % variants.length].file,
-        side,
-        x: side * (2.6 + random(S(specId, `wf-x-${i}`)) * 1.1),
-        z0: 2 + random(S(specId, `wf-z-${i}`)) * 14,
-        speed: 1.35 + random(S(specId, `wf-s-${i}`)) * 0.45,
-        phase: random(S(specId, `wf-p-${i}`)) * 6.28,
-        scaleH: 1.66 + random(S(specId, `wf-h-${i}`)) * 0.2,
-        tint: TINTS[(i * 3 + 2) % TINTS.length],
-        alertWallet: random(S(specId, `wf-w-${i}`)) > 0.4,
-        index: 20 + i,
-      });
-    }
-    return out;
-  }, [specId, variants, crowdCount]);
+  const walkers: WalkerDef[] = useMemo(() => walkerDefs(specId, variants, crowdCount), [specId, variants, crowdCount]);
 
   return (
     <group>
@@ -1193,6 +1221,231 @@ function PetWalker({ specId }: { specId: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Camera anchors (Phase 3): what the director's shots can frame       */
+/*                                                                      */
+/*  One anchor per KIT_SUBJECTS["street-block"] name, measured from the  */
+/*  layout code above (same rosters, same formulas) and a pure function  */
+/*  of t in seconds, like everything else here. `facing` is the side the */
+/*  camera should see: the street is filmed down its axis from +z, and   */
+/*  things on a sidewalk turn a little toward the road, so the solver's  */
+/*  auto sides (front, ±35°) stay over the open street, clear of the     */
+/*  trees, lamps and building rows.                                      */
+/* ------------------------------------------------------------------ */
+
+const SIDEWALK_TOP = 0.18;
+const ROAD_TOP = 0.02;
+
+/**
+ * The time window of the run of back-to-back shots on `name` that holds t
+ * (or starts within a second after t: a follow camera samples its subject a
+ * moment back). A run films ONE car or walker, picked for the whole window,
+ * so the anchor never jumps from one mover to another inside a shot.
+ */
+function subjectRun(spec: ShotSpec, name: string, t: number): [number, number] {
+  const shots = spec.shots ?? [];
+  let i = shots.findIndex((s) => s.subject === name && t >= s.from && t < s.to);
+  if (i < 0) i = shots.findIndex((s) => s.subject === name && s.from > t && s.from - t <= 1);
+  if (i < 0) return [t, t];
+  let a = i;
+  let b = i;
+  while (a > 0 && shots[a - 1].subject === name && shots[a].from - shots[a - 1].to < 0.05) a--;
+  while (b + 1 < shots.length && shots[b + 1].subject === name && shots[b + 1].from - shots[b].to < 0.05) b++;
+  return [shots[a].from, shots[b].to];
+}
+
+/** The mover best placed for a window: stays inside [zMin, zMax] and does not
+ *  wrap round its loop the whole time, with its mid-window z closest to zGoal. */
+function pickMover<T>(
+  items: T[], zAt: (d: T, t: number) => number, win: [number, number], zGoal: number, zMin: number, zMax: number,
+): T | null {
+  const [a, b] = win;
+  const steps = Math.max(1, Math.ceil((b - a) / 0.25));
+  let best: T | null = null;
+  let bestScore = Infinity;
+  for (const d of items) {
+    let score = Math.abs(zAt(d, (a + b) / 2) - zGoal);
+    let prev = zAt(d, a);
+    for (let i = 0; i <= steps; i++) {
+      const z = zAt(d, a + ((b - a) * i) / steps);
+      if (Math.abs(z - prev) > 5) score += 1000; // wrapped round the loop
+      if (z < zMin || z > zMax) score += 100;
+      prev = z;
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = d;
+    }
+  }
+  return best;
+}
+
+interface HeroBox {
+  /** Centre of the row across the sidewalk (x) and its two ends (z). */
+  x: number;
+  zNear: number;
+  zFar: number;
+  halfW: number;
+  top: number;
+  ground: number;
+}
+
+/** Bounds of the HeroProps row for an amount — the same layout maths. */
+function heroBox(spec: ShotSpec, amount: number): HeroBox | null {
+  const hp = spec.heroProp;
+  if (!hp || hp.style === "none") return null;
+  const left = !hp.anchor || hp.anchor.includes("left");
+  const plaza = hp.anchor?.startsWith("plaza");
+  const x = (left ? -1 : 1) * (plaza ? 0.85 : 4.95);
+  const ground = plaza ? ROAD_TOP : SIDEWALK_TOP;
+  const zBase = -5.0;
+  const n = Math.max(1, Math.min(16, Math.round(amount)));
+  const row = (i: number): number => zBase - i * 2.15;
+  switch (hp.style) {
+    case "coin-stacks": // 4-6 coins per stack (the loose coin beside each, 0.55 m
+      // roadward and 0.85 m toward +z, only widens the box: centred on the stacks)
+      return { x, zNear: row(0) + 0.2, zFar: row(n - 1) - 0.4, halfW: 0.74, top: 0.0875 + 0.056 * (3 + Math.min(2, n - 1)), ground };
+    case "cash-bundles":
+      return { x, zNear: row(0) + 0.35, zFar: row(n - 1) - 0.35, halfW: 0.42, top: 0.22 + 0.17 * Math.min(2, n), ground };
+    case "gold-bars":
+      return { x, zNear: row(0) + 0.25, zFar: row(n - 1) - 0.25, halfW: 0.3, top: 0.17 + 0.15 * (Math.min(3, n) - 1), ground };
+    case "bill-columns": {
+      const count = Math.max(3, Math.min(5, n));
+      const h = Math.min(4.2, 0.5 + amount * 0.34);
+      return { x, zNear: zBase + 0.3, zFar: zBase - (count - 1) * 2.55 - 0.3, halfW: 0.4, top: 0.17 + (Math.ceil(h / 0.18) - 1) * 0.18, ground };
+    }
+    case "water-puddles": {
+      const r = (0.85 + 0.88) * amount;
+      return { x, zNear: row(0) - 1.1 + r, zFar: row(4) - 1.1 - r, halfW: 0.5 + r, top: ground + 0.05, ground };
+    }
+    case "ice-crystals": {
+      const s = (0.55 + 0.42) * amount;
+      return { x, zNear: row(0) - 1.0 + s, zFar: row(4) - 1.0 - s, halfW: 0.45 + s, top: 1.55 * s, ground };
+    }
+    case "orb-pedestal": {
+      const r = 0.24 + Math.min(1, amount / 16) * 0.5;
+      const half = Math.max(0.3, r);
+      return { x, zNear: zBase - 2 + half, zFar: zBase - 2 - half, halfW: half, top: 1.15 + 2 * r, ground };
+    }
+    default:
+      return null;
+  }
+}
+
+/** The hero row at t. A beat changes the row at once; the bounds ease over the
+ *  beat's first 0.9 s, so a camera on the hero re-frames instead of jumping. */
+function heroBoxAt(spec: ShotSpec, t: number): HeroBox | null {
+  const now = heroAmountAt(spec, t);
+  if (!now) return null;
+  const box = heroBox(spec, now.amount);
+  if (!box) return null;
+  let start = -Infinity;
+  for (const b of spec.statPanel?.beats ?? []) if (b.t <= t) start = Math.max(start, b.t);
+  const u = (t - start) / 0.9;
+  if (u >= 1) return box;
+  const was = heroAmountAt(spec, start - 1e-3);
+  const prev = was ? heroBox(spec, was.amount) : null;
+  if (!prev) return box;
+  const f = 1 - Math.pow(1 - u, 3);
+  const mix = (a: number, b: number) => a + (b - a) * f;
+  return {
+    x: box.x, ground: box.ground,
+    zNear: mix(prev.zNear, box.zNear), zFar: mix(prev.zFar, box.zFar), halfW: mix(prev.halfW, box.halfW), top: mix(prev.top, box.top),
+  };
+}
+
+/**
+ * The street-block subjects (KIT_SUBJECTS["street-block"]) as camera anchors.
+ * Static subjects are measured once; moving ones (a car, a walker, the
+ * growing hero row) are evaluated at t from the same formulas that draw them.
+ */
+export function streetAnchors(
+  spec: ShotSpec, layout: BuildingSlotLayout, street?: { crowdCount?: number; vehicleCount?: number },
+): Anchors {
+  const near = Object.values(layout.near).flat();
+  const far = Object.values(layout.far).flat();
+  const mean = (xs: number[], d: number) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : d);
+  const nearH = mean(near.map((p) => p.height), 12);
+  // towers seen above the near rows when looking down the street
+  const towerH = mean(far.filter((p) => p.z < -8 && p.z > -60).map((p) => p.height), 24);
+
+  // scene: the street from the crosswalk to the block's middle, both shop rows
+  const scene: Subject = { center: [0, nearH * 0.45, -22], radius: 6, height: nearH, facing: 0, ground: 0 };
+  // skyline: the band of tower tops down the street axis
+  const skyline: Subject = { center: [0, towerH - 4, -40], radius: 2.6, height: 8, facing: 0, ground: 0 };
+  // crosswalk: the zebra (x -3.9..3.9, z 3.1..5.7) and the people on it
+  const crosswalk: Subject = { center: [0, 0.85, 4.4], radius: 4.2, height: 1.7, facing: 0, ground: 0 };
+  // café: the station nearest the camera (table, two chairs at x 5.85/7.35,
+  // people up to ~1.8 m, a ~1.6 m parasol canopy reaching ~2.45 m); the rest
+  // of the terrace recedes behind it. A sphere round several stations is
+  // longer than a medium shot's distance and put the camera inside the first
+  // parasol. The box is the seated zone up to the canopy's lower edge (1.8 m):
+  // close sizes frame a subject's top, and the canopy's top filled the frame.
+  // Seen from the road side, half-turned toward +z, where nothing stands in front.
+  const cafe: Subject = {
+    center: [CAFE_X - 0.1, (SIDEWALK_TOP + 1.8) / 2, CAFE_STATIONS[0]],
+    radius: 1.4,
+    height: 1.8 - SIDEWALK_TOP,
+    facing: -0.7,
+    ground: SIDEWALK_TOP,
+  };
+
+  const cars = movingCars(spec.id, street?.vehicleCount).filter((c) => c.lane === -1);
+  const walkers = walkerDefs(spec.id, pickUnique(S(spec.id, "wv"), walkerPool(), 6), street?.crowdCount)
+    // sidewalk strollers on the left walk toward the camera (+z), so the
+    // camera can lead them with the street behind
+    .filter((w) => w.side === -1 && Math.abs(w.x) > 5);
+
+  return {
+    scene: () => scene,
+    skyline: () => skyline,
+    crosswalk: () => crosswalk,
+    cafe: () => cafe,
+    hero: (t) => {
+      const b = heroBoxAt(spec, t);
+      // no hero prop in the story: the café table nearest the camera
+      if (!b) return cafe;
+      // Tiny props (coins, bars: a few cm above the pavement) get a 1.2 m
+      // framing box whose top sits 0.12 m above them: the solver's close
+      // sizes frame the TOP of a subject (sized for people), so this lands
+      // ECU/CU/MS on the props instead of on a 3 cm sliver of coin.
+      const visible = b.top - b.ground;
+      const tiny = visible < 0.6;
+      const height = tiny ? 1.2 : visible;
+      const top = tiny ? (b.top + b.ground) / 2 + 0.12 : b.top;
+      // The lead stretch of the row (up to ~8 m: the first four stacks); a
+      // longer row recedes behind it down the sidewalk as a leading line. A
+      // sphere round a 32 m row would send a wide shot 70 m out, behind the
+      // shop rows.
+      const halfLen = Math.min(4, (b.zNear - b.zFar) / 2);
+      return {
+        center: [b.x, top - height / 2, b.zNear - halfLen],
+        radius: Math.max(0.35, Math.hypot(halfLen, b.halfW)),
+        height,
+        // a little toward the road; not 0.45+, where each stack's loose coin
+        // (0.55 m roadward, 0.85 m toward +z) sits right in front of the lens
+        facing: b.x < -0.5 ? 0.2 : b.x > 0.5 ? -0.2 : 0,
+        ground: b.ground,
+      };
+    },
+    // traffic: one car of the near lane (it drives toward the camera)
+    traffic: (t) => {
+      const run = subjectRun(spec, "traffic", t);
+      const car = pickMover(cars, (c, tt) => carPos(c, tt).z, [run[0] - 0.5, run[1]], -12, -60, 4);
+      if (!car) return { center: [-2.25, 0.9, -10], radius: 6, height: 1.8, facing: 0.3, ground: 0 };
+      const p = carPos(car, t);
+      return { center: [p.x, ROAD_TOP + 0.9 * car.scale, p.z], radius: 2.2 * car.scale, height: 1.8 * car.scale, facing: p.rotY + 0.2, ground: 0 };
+    },
+    walker: (t) => {
+      const run = subjectRun(spec, "walker", t);
+      const w = pickMover(walkers, (d, tt) => walkerPos(d, tt).z, [run[0] - 0.5, run[1]], -9, -40, 1);
+      if (!w) return { center: [5.5, SIDEWALK_TOP + 0.85, -11], radius: 0.4, height: 1.7, facing: -0.6, ground: SIDEWALK_TOP };
+      const p = walkerPos(w, t);
+      return { center: [p.x, 0.19 + w.scaleH / 2, p.z], radius: 0.4, height: w.scaleH, facing: p.rotY + 0.5, ground: SIDEWALK_TOP };
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Camera operator — films like a human, never a frozen tripod         */
 /*                                                                      */
 /*  Pure function of (frame, zoom, beats): every value is derived from   */
@@ -1343,11 +1596,18 @@ export function StreetStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType
 
   // Hero position for follow-chase camera
   const heroPos = hp && hp.style !== "none" ? { x: poiRaw, z: -5 } : null;
+  // director's shots (spec.shots) frame these subjects; without a shot the
+  // operator rig above films as before
+  const anchors = useMemo(() => streetAnchors(spec, layout, street), [spec, layout, street]);
 
   return (
     <group>
       <SkyAndLight zoomT={zoom} tod={tod} lightsOut={lightsOut} />
-      <CameraRig zoomT={zoom} beats={beats} style={style} poiX={poiRaw} duration={D} heroPos={heroPos} />
+      <ShotCamera
+        spec={spec}
+        anchors={anchors}
+        fallback={<CameraRig zoomT={zoom} beats={beats} style={style} poiX={poiRaw} duration={D} heroPos={heroPos} />}
+      />
       <Ground />
       {/* the story's subject prop, escalated on the stat beats */}
       <HeroProps spec={spec} />
@@ -1454,14 +1714,14 @@ function heroAmountAt(spec: ShotSpec, t: number): { amount: number; growth: "mul
     }
     // across the whole video (or backwards on the panel values)
     if (panel) {
-      const v = statValueAt(panel, t);
+      const v = statScaleAt(panel, t);
       return { amount: Math.max(0.04, Math.min(1, 1 / Math.max(1, v))), growth: "vanish" as const };
     }
     const D = Math.max(...spec.scenes.map((s) => s.to));
     return { amount: Math.max(0.04, Math.min(1, 1 - t / Math.max(1, D - 1))), growth: "vanish" as const };
   }
   if (panel) {
-    const v = statValueAt(panel, t);
+    const v = statScaleAt(panel, t);
     return { amount: Math.max(1, v), growth: "multiply" as const };
   }
   const D2 = Math.max(...spec.scenes.map((s) => s.to));
@@ -1605,7 +1865,9 @@ function HeroProps({ spec }: { spec: ShotSpec }) {
     );
   }
 
-  return <group>{stacks}</group>;
+  // Sidewalk props stand ON the sidewalk (its top is 0.18 m up; they were
+  // built from y = 0, so one coin showed ~8 cm and a single bar vanished).
+  return <group position={[0, plaza ? 0 : SIDEWALK_TOP, 0]}>{stacks}</group>;
 }
 
 /** Procedural stand-in used when a building variant GLB isn't installed. */

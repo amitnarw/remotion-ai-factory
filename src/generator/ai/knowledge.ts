@@ -194,7 +194,7 @@ WORLD + PRODUCTION GUIDE — you are the DIRECTOR. Choose with these exact tools
    - countryside / forest / river / ocean: also accept scene.cast entries
      from the ANIMAL_CAST_IDS list (rigged wildlife with Walk/Gallop/Idle/
      Eating animations) for wildlife/nature premises. Example:
-     { asset: "poly_deer", count: 3, action: "graze", zone: "midground" }.
+     { asset: "poly_deer", count: 3, action: "idle", zone: "midground" }.
    - A story MAY use 2-3 scenes tiling time (a CUT = location/time change,
      videos open at t=0 with the most striking setting). Scenes sharing one
      kit must differ in look.timeOfDay or accent so every shot feels new.

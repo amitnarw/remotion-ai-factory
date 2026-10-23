@@ -92,15 +92,6 @@ export function resolveCaptionStyle(input?: CaptionStyleInput | null): CaptionLo
   return { ...BASE, ...preset, ...explicit } as CaptionLook;
 }
 
-/** Vertical centre of the caption block, as a % of the frame height. */
-export const POSITION_PCT: Record<(typeof CAPTION_POSITIONS)[number], number> = {
-  top: 12,
-  upper: 30,
-  middle: 50,
-  lower: 68,
-  bottom: 88,
-};
-
 /** CSS font stacks. The bundled fonts are loaded in hud/fonts.ts. */
 export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
   inter: "'Inter', system-ui, sans-serif",

@@ -1,8 +1,27 @@
 [
-  {
-    "id": "0127",
-    "page": "https://bigsoundbank.com/thunder-1-s0127.html",
-    "kind": "ambience",
-    "tags": ["thunder", "storm", "weather", "rumble"]
-  }
+  { "id": "0572", "page": "https://bigsoundbank.com/whoosh-1-s0572.html", "kind": "sfx", "tags": ["whoosh", "swoosh"] },
+  { "id": "0573", "page": "https://bigsoundbank.com/whoosh-2-s0573.html", "kind": "sfx", "tags": ["whoosh", "swoosh"] },
+  { "id": "1795", "page": "https://bigsoundbank.com/whoosh-3-s1795.html", "kind": "sfx", "tags": ["whoosh", "swoosh"] },
+  { "id": "1796", "page": "https://bigsoundbank.com/whoosh-4-s1796.html", "kind": "sfx", "tags": ["whoosh", "swoosh"] },
+  { "id": "3113", "page": "https://bigsoundbank.com/thunder-2-s3113.html", "kind": "sfx", "tags": ["thunder", "storm"] },
+  { "id": "3114", "page": "https://bigsoundbank.com/thunder-3-s3114.html", "kind": "sfx", "tags": ["thunder", "storm"] },
+  { "id": "0124", "page": "https://bigsoundbank.com/rain-and-storm-s0124.html", "kind": "ambience", "tags": ["rain", "storm"] },
+  { "id": "1289", "page": "https://bigsoundbank.com/rain-on-concrete-s1289.html", "kind": "ambience", "tags": ["rain", "city"] },
+  { "id": "0904", "page": "https://bigsoundbank.com/forest-wind-in-the-trees-s0904.html", "kind": "ambience", "tags": ["wind", "forest", "trees"] },
+  { "id": "0152", "page": "https://bigsoundbank.com/strong-wind-2-s0152.html", "kind": "ambience", "tags": ["wind", "storm"] },
+  { "id": "2372", "page": "https://bigsoundbank.com/cheerful-street-s2372.html", "kind": "ambience", "tags": ["street", "city", "crowd"] },
+  { "id": "1713", "page": "https://bigsoundbank.com/little-parisian-street-s1713.html", "kind": "ambience", "tags": ["street", "city"] },
+  { "id": "2762", "page": "https://bigsoundbank.com/city-center-1-s2762.html", "kind": "ambience", "tags": ["city", "crowd"] },
+  { "id": "3030", "page": "https://bigsoundbank.com/parisian-crossing-1-s3030.html", "kind": "ambience", "tags": ["traffic", "road", "city"] },
+  { "id": "0122", "page": "https://bigsoundbank.com/highway-s0122.html", "kind": "ambience", "tags": ["traffic", "road", "highway"] },
+  { "id": "0222", "page": "https://bigsoundbank.com/awakening-birds-s0222.html", "kind": "ambience", "tags": ["birds", "morning"] },
+  { "id": "1348", "page": "https://bigsoundbank.com/forest-2-s1348.html", "kind": "ambience", "tags": ["forest", "birds"] },
+  { "id": "0266", "page": "https://bigsoundbank.com/sea-waves-s0266.html", "kind": "ambience", "tags": ["waves", "sea", "ocean"] },
+  { "id": "0265", "page": "https://bigsoundbank.com/beach-small-waves-s0265.html", "kind": "ambience", "tags": ["waves", "beach", "sea"] },
+  { "id": "0267", "page": "https://bigsoundbank.com/sea-waves-and-seagulls-s0267.html", "kind": "ambience", "tags": ["waves", "seagulls", "sea", "ocean"] },
+  { "id": "1020", "page": "https://bigsoundbank.com/field-cricket-s1020.html", "kind": "ambience", "tags": ["crickets", "insects", "night"] },
+  { "id": "0110", "page": "https://bigsoundbank.com/campaign-at-night-1-s0110.html", "kind": "ambience", "tags": ["night", "countryside"] },
+  { "id": "2754", "page": "https://bigsoundbank.com/mountain-stream-1-s2754.html", "kind": "ambience", "tags": ["stream", "river", "water"] },
+  { "id": "0864", "page": "https://bigsoundbank.com/brooklet-s0864.html", "kind": "ambience", "tags": ["stream", "river"] },
+  { "id": "0097", "page": "https://bigsoundbank.com/countryside-s0097.html", "kind": "ambience", "tags": ["countryside", "birds", "wind"] }
 ]

@@ -19,20 +19,20 @@ export const ROLE_DEFS = [
   {
     name: "director",
     label: "Director",
-    description: "Chooses shots, camera moves, angles, transitions and scene looks.",
-    usedFrom: "Phase 2",
+    description: "Chooses the worlds, time of day, weather, camera style and on-screen devices. (Shot-by-shot camera comes in Phase 3.)",
+    usedFrom: "now",
   },
   {
     name: "sound",
     label: "Sound designer",
     description: "Picks music, sound effects and ambience for each beat.",
-    usedFrom: "Phase 2",
+    usedFrom: "now",
   },
   {
     name: "critic",
     label: "Critic",
-    description: "Reviews the plan against a retention checklist and asks for fixes.",
-    usedFrom: "Phase 2",
+    description: "Optional review pass: flags weak beats and the writer rewrites them (turn on 'AI review pass').",
+    usedFrom: "now",
   },
   {
     name: "vision",

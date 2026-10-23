@@ -28,6 +28,17 @@ export function statValueAt(panel: StatPanelSpec, t: number): number {
   return parseFloat(panel.beats[idx].value);
 }
 
+/**
+ * How big the world should react at time t: the active beat's `scale` (1..16,
+ * set by the assembler) or, for older specs without one, the value itself.
+ * The HUD shows the value; the stages size things by this, so a value like
+ * "1000000" can't blow the planet, ocean or street props out of the frame.
+ */
+export function statScaleAt(panel: StatPanelSpec, t: number): number {
+  const beat = panel.beats[activeIndex(panel, t)];
+  return beat.scale ?? statValueAt(panel, t);
+}
+
 /** Suffix unit string ("x" renders "16x"). */
 export function statUnitAt(panel: StatPanelSpec): string {
   return panel.unit ?? "x";

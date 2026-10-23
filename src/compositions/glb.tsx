@@ -17,6 +17,14 @@ import { useThree } from "@react-three/fiber";
 
 const GLB_LOAD_ERRORS = new Set<string>();
 
+/**
+ * Model gates retry: a fetch that fails mid-render (seen: net::ERR_NETWORK_CHANGED
+ * when the laptop's network switched) can leave the GLTF loader hanging, and the
+ * gate then times out. Remotion reloads the tab and tries the frame again
+ * instead of failing the whole video.
+ */
+const MODEL_GATE = { timeoutInMilliseconds: 60000, retries: 2 };
+
 // One render gate per model file: the still/frame capture must wait until
 // every GLB is resolved. Released on success (useGltfPaint) and on failure
 // (boundary catch).
@@ -28,7 +36,7 @@ function gateModelLoad(file: string) {
   // re-created on a later re-render, or the new handle would leak forever
   // (renders stall with "model loading" never cleared).
   if (PENDING_MODEL_GATES.has(file) || RELEASED_MODEL_GATES.has(file)) return;
-  const handle = delayRender(`3D model loading: ${file}`, { timeoutInMilliseconds: 60000 });
+  const handle = delayRender(`3D model loading: ${file}`, MODEL_GATE);
   PENDING_MODEL_GATES.set(file, handle);
 }
 
@@ -78,7 +86,7 @@ function useModelStatus(file: string): ModelStatus {
       setStatus(known);
       return;
     }
-    const handle = delayRender(`model check: ${file}`, { timeoutInMilliseconds: 60000 });
+    const handle = delayRender(`model check: ${file}`, MODEL_GATE);
     let cancelled = false;
     fetch(staticFile(file), { cache: "no-store" })
       .then(async (res) => {

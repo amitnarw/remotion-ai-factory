@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CaptionStyleSchema } from "./caption-style";
+import { ShotSchema } from "./camera/shot";
 
 /**
  * Shot spec schema — the single contract that drives the whole video.
@@ -17,6 +18,9 @@ export const SfxCueSchema = z.object({
   to: z.number().nullable().optional(),
   /** "ramp-up" | "ramp-down" | "hold" */
   volume: z.enum(["ramp-up", "ramp-down", "hold"]).optional(),
+  /** Set by audio-resolve: the library file, and its loudness gain. */
+  file: z.string().optional(),
+  gain: z.number().optional(),
 });
 
 export const EventSchema = z.object({
@@ -36,6 +40,9 @@ export const CaptionSchema = z.object({
   keyword: z.array(z.string()).optional().default([]),
   /** Optional speaker for character dialog lines. */
   speaker: z.string().optional(),
+  /** Per-word timings (seconds) from the timeline. Word-by-word animations use
+   *  them; without them the caption's time is shared evenly across its words. */
+  words: z.array(z.object({ text: z.string(), from: z.number(), to: z.number() })).optional(),
   /** Look of the caption plate: "bold" = uppercase sans, "serif-italic" =
    *  the lowerc-case serif italic narration look (e.g. "Normal eyes. 20/20."). */
   style: z.enum(["bold", "serif-italic"]).optional(),
@@ -58,6 +65,9 @@ export const StatBeatSchema = z.object({
   zoom: z.number().min(1),
   sub: z.string(),
   bpm: z.number().min(40).max(220),
+  /** World reaction 1..16 (planet size, water level, prop count). Set by the
+   *  assembler; the HUD still shows `value`. Absent = use the value (old specs). */
+  scale: z.number().min(1).max(16).optional(),
 });
 
 export const StatPanelSchema = z.object({
@@ -196,6 +206,8 @@ export const SettingsSchema = z
     quality: z.enum(["draft", "final"]).default("final"),
     /** Caption look (preset + overrides); see caption-style.ts. */
     captions: CaptionStyleSchema.optional(),
+    /** Run the AI critic pass (one extra model call, off by default). */
+    critic: z.boolean().optional(),
   })
   .superRefine((s, ctx) => {
     if (s.targetDuration === undefined) return;
@@ -223,6 +235,91 @@ export function maxDurationFor(format: VideoFormat): number {
   return format === "16:9" ? 600 : 90;
 }
 
+/**
+ * The video's length in seconds. A planned video (it has a story) ends where
+ * its timeline ends, since the timeline already holds the closing tail. Older
+ * template specs hold 2 s after the last scene (0.25 s when every scene is the
+ * street block).
+ */
+export function videoSeconds(spec: ShotSpec): number {
+  const last = Math.max(...spec.scenes.map((s) => s.to));
+  if (spec.story) return last;
+  const streetOnly = spec.scenes.every((s) => s.kit === "street-block" || s.scene === "street-block");
+  return streetOnly ? last + 0.25 : last + 2;
+}
+
+/**
+ * The story behind a planned video (Phase 2 pipeline). Beats are the unit the
+ * AI roles refer to; the assembler turns them into seconds. Stored in the spec
+ * so the render can reuse the planned voice lines and the editor can show them.
+ */
+export const StoryLineSchema = z.object({
+  id: z.string(),
+  /** "narrator" or a character name. */
+  who: z.string(),
+  text: z.string(),
+  /** Start in seconds and measured or estimated duration, set by the timeline. */
+  at: z.number().optional(),
+  dur: z.number().optional(),
+  estimated: z.boolean().optional(),
+});
+
+export const StoryBeatSchema = z.object({
+  id: z.string(),
+  from: z.number().optional(),
+  to: z.number().optional(),
+  say: z.string().optional(),
+  see: z.string().optional(),
+  pace: z.enum(["quick", "normal", "linger"]).optional(),
+  stress: z.string().optional(),
+  lines: z.array(StoryLineSchema).optional(),
+});
+
+export const StoryCharacterSchema = z.object({
+  name: z.string(),
+  gender: z.enum(["male", "female", "any"]).optional(),
+  age: z.enum(["child", "adult", "old"]).optional(),
+  look: z.string().optional(),
+  /** Cast voice: Kitten preset id or VoxCPM preset/description. */
+  voice: z.string().optional(),
+});
+
+export const StorySchema = z.object({
+  title: z.string().optional(),
+  mood: z.string().optional(),
+  hook: z.string().optional(),
+  characters: z.array(StoryCharacterSchema).default([]),
+  beats: z.array(StoryBeatSchema).default([]),
+});
+export type Story = z.infer<typeof StorySchema>;
+
+/**
+ * One camera shot on the timeline (Phase 3): the director's shot for a beat,
+ * timed by the assembler. Stages that know the subject frame it with the
+ * camera solver (src/generator/camera/solve.ts); others keep their own rig.
+ */
+export const SpecShotSchema = ShotSchema.extend({
+  from: z.number(),
+  to: z.number(),
+  /** The beat it films ("hook", "b3"...). */
+  beat: z.string().optional(),
+});
+export type SpecShot = z.infer<typeof SpecShotSchema>;
+
+/**
+ * How one scene hands over to the next (Phase 3), centred on the cut at `t`.
+ * dip-black / dip-white fade through a colour; flash is a few white frames;
+ * whip turns the camera fast through the cut. Plain cuts need no entry.
+ */
+export const TRANSITION_TYPES = ["dip-black", "dip-white", "flash", "whip"] as const;
+export const SpecTransitionSchema = z.object({
+  t: z.number(),
+  type: z.enum(TRANSITION_TYPES),
+  /** Total length in seconds, half before the cut and half after. */
+  dur: z.number().min(0.05).max(2),
+});
+export type SpecTransition = z.infer<typeof SpecTransitionSchema>;
+
 export const ShotSpecSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -231,6 +328,12 @@ export const ShotSpecSchema = z.object({
   height: z.number().default(1920),
   palette: z.string().default("pastelDay"),
   settings: SettingsSchema.optional(),
+  /** Planned story (Phase 2). Absent for offline templates and older specs. */
+  story: StorySchema.optional(),
+  /** Camera shots in time order (Phase 3). Absent: each stage films with its own rig. */
+  shots: z.array(SpecShotSchema).optional(),
+  /** Scene-to-scene transitions (Phase 3). Absent: hard cuts. */
+  transitions: z.array(SpecTransitionSchema).optional(),
   hook: z.object({
     text: z.string(),
     keywordHighlight: z.array(z.string()).optional().default([]),
@@ -275,6 +378,9 @@ export const ShotSpecSchema = z.object({
             from: z.number(),
             to: z.number().nullable().optional(),
             vol: z.number().optional(),
+            file: z.string().optional(),
+            gain: z.number().optional(),
+            loop: z.boolean().optional(),
             /** restart=true: restart the file at bed from-time instead of
              *  slicing mid-file (keeps heartbeat beats phase-aligned when
              *  the tempo changes between segments). */
@@ -282,7 +388,26 @@ export const ShotSpecSchema = z.object({
           }),
         )
         .optional(),
-      music: z.any().optional(),
+      /** Background music. Written by audio-resolve (mood -> library file). */
+      music: z
+        .array(
+          z.object({
+            mood: z.string().optional(),
+            file: z.string().optional(),
+            gain: z.number().optional(),
+            from: z.number(),
+            to: z.number().nullable().optional(),
+            loop: z.boolean().optional(),
+            fadeIn: z.number().optional(),
+            fadeOut: z.number().optional(),
+          }),
+        )
+        .nullable()
+        .optional(),
+      /** Whoosh at each scene cut. */
+      transitions: z
+        .array(z.object({ t: z.number(), file: z.string().optional(), gain: z.number().optional() }))
+        .optional(),
       /** Generated voice tracks (narration/dialogs). Written by the render
        *  pipeline's TTS stage; consumed by CompositionAudio. */
       voiceFiles: z
@@ -293,6 +418,7 @@ export const ShotSpecSchema = z.object({
             at: z.number(),
             dur: z.number().optional(),
             kind: z.enum(["narration", "dialog"]).default("narration"),
+            gain: z.number().optional(),
           }),
         )
         .optional(),

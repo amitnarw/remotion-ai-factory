@@ -14,15 +14,18 @@
  *   riverConfig: { hasWaterfall: boolean, flowDir: "x" | "z", length: number, width: number }
  */
 import { useMemo, useEffect } from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import { statValueAt } from "../generator/statPanel";
+import type { Subject } from "../generator/camera/solve";
+import { statScaleAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { WaterSurface, GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
 import { keepMistBase, driftMist } from "./mist";
+import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { clearestFacing, restoreRigLens, type Blocker } from "./ForestStage";
 
 interface RiverConfig {
   hasWaterfall: boolean;
@@ -275,12 +278,102 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
   return <group position={[x, 0, z]}><points geometry={geo} material={mat} /></group>;
 }
 
+/**
+ * The river's own camera (used when no director's shot is active): it travels
+ * along the flow, pushed out on the stat beats. A pure function of the frame.
+ */
+function RiverCameraRig({ spec, length, flowDir }: { spec: ShotSpec; length: number; flowDir: RiverConfig["flowDir"] }) {
+  const frame = useCurrentFrame();
+  const { camera } = useThree();
+  const panel = spec.statPanel ?? null;
+  const t = frame / 30;
+  const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.08 : 1;
+  useFrame(() => {
+    restoreRigLens(camera);
+    const flowProgress = (t * 2) % length; // moves along river
+    const baseX = flowDir === "x" ? -length / 2 + flowProgress : 0;
+    const baseZ = flowDir === "z" ? -length / 2 + flowProgress : -10;
+    const angle = flowDir === "x" ? 0 : Math.PI / 2;
+    const x = baseX + Math.sin(t * 0.02) * 3;
+    const y = 8 + Math.sin(t * 0.1) * 0.5;
+    const z = baseZ + Math.cos(t * 0.02) * 2;
+    camera.position.set(x * zoom, y, z * zoom);
+    camera.lookAt(baseX + Math.sin(angle) * 20, 1.5, baseZ + Math.cos(angle) * 20);
+  });
+  return null;
+}
+
+/**
+ * What the camera can frame by the river (KIT_SUBJECTS.river), measured from
+ * the stage's layout. The water is always a strip along z (WaterSurface is
+ * width x length); the rocks line its banks along flowDir; the waterfall
+ * stands at the +z end with its pool on the downstream (-z) side. The water
+ * rises with the stat beats, so "river" follows the level over time.
+ * `level(t)` is the water height at time t.
+ */
+export function riverAnchors(
+  cfg: { width: number; length: number; flowDir: RiverConfig["flowDir"]; waterfallHeight?: number },
+  rocks: Array<{ x: number; z: number; scale: number }>,
+  level: (t: number) => number,
+  aspect: number,
+): Anchors {
+  const { width, length, flowDir } = cfg;
+  const anchors: Anchors = {};
+  const ground = 0.1; // the bank plane
+
+  // scene: the valley from upstream, looking down the river to the mountains (-z).
+  const scene: Subject = { center: [0, 3, -20], radius: 10, height: 8, facing: 0, ground };
+  anchors.scene = () => scene;
+
+  // river: a stretch of open water downstream of the banks' crossing strip.
+  anchors.river = (t) => {
+    const y = level(t);
+    return { center: [0, y + 0.2, -Math.min(40, length * 0.25)], radius: width / 2 + 2, height: 1.2, facing: 0, ground: Math.max(ground, y) };
+  };
+
+  // waterfall: the falling sheet (0.8 x width wide), seen from its pool.
+  const fall = cfg.waterfallHeight;
+  if (fall) {
+    const subject: Subject = { center: [0, fall / 2, length / 2 - 1], radius: width * 0.4 + 1.5, height: fall, facing: Math.PI, ground };
+    anchors.waterfall = () => subject;
+  }
+
+  // rocks: the tightest cluster away from the river's ends, seen from across
+  // the water (turned along the flow), on the side clear of other rocks.
+  const along = (r: { x: number; z: number }) => (flowDir === "z" ? r.z : r.x);
+  const across = (r: { x: number; z: number }) => (flowDir === "z" ? r.x : r.z);
+  const middle = rocks.filter((r) => Math.abs(along(r)) < length * 0.35);
+  let best: { members: typeof rocks; score: number } | null = null;
+  for (const r of middle.length ? middle : rocks) {
+    const members = rocks.filter((o) => Math.hypot(o.x - r.x, o.z - r.z) < 5);
+    const score = members.length + members.reduce((a, o) => a + o.scale, 0) * 0.3 - Math.abs(along(r)) * 0.01;
+    if (!best || score > best.score) best = { members, score };
+  }
+  if (best) {
+    const m = best.members;
+    const cx = m.reduce((a, o) => a + o.x, 0) / m.length;
+    const cz = m.reduce((a, o) => a + o.z, 0) / m.length;
+    const top = Math.max(...m.map((o) => 0.3 + 1.5 * o.scale));
+    const radius = Math.max(1.5, ...m.map((o) => Math.hypot(o.x - cx, o.z - cz) + o.scale));
+    const side = Math.sign(across({ x: cx, z: cz })) || 1;
+    // Facing: towards the far bank (the river's centre line), turned 30° along the flow.
+    const toWater = flowDir === "z" ? Math.atan2(-side, 0) : Math.atan2(0, -side);
+    const turn = side * (Math.PI / 6);
+    const base: Subject = { center: [cx, top / 2, cz], radius, height: top, ground };
+    const own = new Set(m.map((o) => rocks.indexOf(o)));
+    const blockers: Blocker[] = rocks.map((o, i) => ({ kind: "ball", x: o.x, y: 0.3 + 0.5 * o.scale, z: o.z, r: o.scale, owner: i }));
+    const facing = clearestFacing(base, ["CU", "MS", "FS", "WS"], aspect, blockers, own, toWater + turn, [toWater + turn, toWater - turn, toWater]).facing;
+    const subject: Subject = { ...base, facing };
+    anchors.rocks = () => subject;
+  }
+  return anchors;
+}
+
 export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
   const frame = useCurrentFrame();
   const active = scene ?? spec.scenes[0];
   const panel = spec.statPanel ?? null;
   const t = frame / 30;
-  const zoom = panel ? 1 + (statValueAt(panel, t) - 1) * 0.08 : 1;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = RIVER_TOD[tod] ?? RIVER_TOD.afternoon;
@@ -294,34 +387,14 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
     width: 12,
   }) as RiverConfig;
 
-  const { camera, scene: threeScene } = useThree();
+  const { scene: threeScene } = useThree();
   useEffect(() => {
     threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
   }, [look.fog, look.fogDensity, threeScene]);
 
-  // Camera: follows the river flow
-  const cam = useMemo(() => {
-    const flowProgress = (t * 2) % riverConfig.length; // moves along river
-    const baseX = riverConfig.flowDir === "x" ? -riverConfig.length / 2 + flowProgress : 0;
-    const baseZ = riverConfig.flowDir === "z" ? -riverConfig.length / 2 + flowProgress : -10;
-    const angle = riverConfig.flowDir === "x" ? 0 : Math.PI / 2;
-    return {
-      x: baseX + Math.sin(t * 0.02) * 3,
-      y: 8 + Math.sin(t * 0.1) * 0.5,
-      z: baseZ + Math.cos(t * 0.02) * 2,
-      lookAtX: baseX + Math.sin(angle) * 20,
-      lookAtZ: baseZ + Math.cos(angle) * 20,
-    };
-  }, [t, riverConfig.length, riverConfig.flowDir]);
-
-  useFrame(() => {
-    camera.position.set(cam.x * zoom, cam.y, cam.z * zoom);
-    camera.lookAt(cam.lookAtX, 1.5, cam.lookAtZ);
-  });
-
   // River level animation (stat beats can raise water level)
   const baseLevel = 0;
-  const level = panel ? baseLevel + (statValueAt(panel, t) - 1) * 0.3 : baseLevel;
+  const level = panel ? baseLevel + (statScaleAt(panel, t) - 1) * 0.3 : baseLevel;
 
   // River rocks along banks
   const riverRocks = useMemo(() => {
@@ -341,8 +414,29 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
     return rocks;
   }, [spec.id, riverConfig.flowDir, riverConfig.length, riverConfig.width]);
 
+  // Subjects for the director's shots (only measured when the spec has shots).
+  const { width, height } = useVideoConfig();
+  const aspect = width / Math.max(1, height);
+  const hasShots = (spec.shots?.length ?? 0) > 0;
+  const fallHeight = riverConfig.hasWaterfall ? riverConfig.waterfallHeight : undefined;
+  const anchors = useMemo((): Anchors => {
+    if (!hasShots) return {};
+    const levelAt = (tt: number) => (panel ? baseLevel + (statScaleAt(panel, tt) - 1) * 0.3 : baseLevel);
+    return riverAnchors(
+      { width: riverConfig.width, length: riverConfig.length, flowDir: riverConfig.flowDir, waterfallHeight: fallHeight },
+      riverRocks,
+      levelAt,
+      aspect,
+    );
+  }, [hasShots, panel, riverConfig.width, riverConfig.length, riverConfig.flowDir, fallHeight, riverRocks, aspect]);
+
   return (
     <group>
+      <ShotCamera
+        spec={spec}
+        anchors={anchors}
+        fallback={<RiverCameraRig spec={spec} length={riverConfig.length} flowDir={riverConfig.flowDir} />}
+      />
       <GradientSkyDome top={look.sky[0]} bottom={look.sky[1]} />
       <hemisphereLight
         color={look.hemi[0]}

@@ -109,8 +109,18 @@ export function resolveModel(
   const apiKey = provCfg.apiKeyEnv ? process.env[provCfg.apiKeyEnv] : undefined;
   const hasKey = provCfg.apiKeyEnv ? Boolean(apiKey) : true; // no key needed (ollama)
 
-  // Determine the model id to use.
-  const model = modelId ?? provCfg.models?.[0] ?? config.defaultModel ?? "";
+  // Determine the model id to use. Never the first entry of the provider's
+  // list: that list is alphabetical, so it silently picked an arbitrary model.
+  const model = modelId ?? config.defaultModel ?? "";
+  if (!model) {
+    return {
+      provider: name,
+      model: "",
+      reference: null,
+      hasKey,
+      error: `No model chosen for provider "${name}". Choose a model for the Writer in Providers → Model roles (or pass --model).`,
+    };
+  }
 
   // Build the AI SDK model reference — dispatch on `package` (not name), so
   // "ollama" / "openrouter" / any custom OpenAI-compatible provider work.

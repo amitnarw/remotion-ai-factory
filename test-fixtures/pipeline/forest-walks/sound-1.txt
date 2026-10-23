@@ -1,0 +1,1 @@
+{"music": [{"start": "b1", "mood": "ambient"}, {"start": "b4", "mood": "tense"}], "beds": [{"start": "b1", "end": "b4", "sound": "forest_birds", "level": 0.45}, {"start": "b4", "end": null, "sound": "wind_city", "level": 0.3}], "hits": [{"beat": "b3", "at": "start", "sound": "footsteps"}, {"beat": "b5", "at": "start", "sound": "impact_wood"}]}

@@ -21,7 +21,9 @@ import { useCurrentFrame, random } from "remotion";
 import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import { statValueAt } from "../generator/statPanel";
+import { statScaleAt } from "../generator/statPanel";
+import { solveShot, type Subject as Framed } from "../generator/camera/solve";
+import { ShotCamera, activeShot, type Anchors } from "./camera/ShotCamera";
 import { ThreeCanvas } from "@remotion/three";
 
 /* ------------------------------------------------------------------ */
@@ -208,14 +210,105 @@ function planetScale(value: number): number {
   return Math.max(1, Math.pow(value, 0.55));
 }
 
+/** Where the companion moon (earth, mars) is at t: one orbit every ~12.6 s,
+ *  widening with the planet. Shared by the mesh and the camera anchors. */
+function companionAt(t: number, scale: number): [number, number, number] {
+  const r = 2.35 * Math.min(2.2, scale);
+  return [Math.cos(t * 0.5) * r, 0.55, Math.sin(t * 0.5) * r];
+}
+const COMPANION_RADIUS = 0.26;
+
+/** Outer radius of the planet incl. its atmosphere rim, at a scale. */
+const rimRadius = (scale: number) => (scale + 0.05) * 1.05;
+
+/** Highest relief of each world over its unit sphere (buildPlanetMesh's
+ *  largest displacement), plus a hair. */
+const RELIEF_MAX: Record<Subject, number> = { earth: 1.17, moon: 1.03, mars: 1.1 };
+
+/**
+ * The space subjects (KIT_SUBJECTS.space) as pure functions of t, mirroring
+ * the meshes: the planet grows with the stat beats exactly as it is drawn.
+ * Facing (the side the camera films) is held for a whole shot and turned away
+ * from the companion moon at the shot's middle, so the moon swings behind the
+ * planet instead of across the lens.
+ */
+export function spaceAnchors(spec: ShotSpec, world: Subject): Anchors {
+  const panel = spec.statPanel ?? null;
+  const scaleAt = (t: number) => planetScale(panel ? statScaleAt(panel, t) : 1);
+  const facingAt = (t: number) => {
+    const shot = activeShot(spec, t);
+    const mid = shot ? (shot.from + shot.to) / 2 : t;
+    if (world === "moon") return orbitAngles(mid).az; // no companion: film from where the orbit rig would
+    const [mx, , mz] = companionAt(mid, 1);
+    return Math.atan2(mx, mz) + Math.PI;
+  };
+  const planet = (t: number): Framed => {
+    const r = rimRadius(scaleAt(t));
+    return { center: [0, 0, 0], radius: r, height: 2 * r, facing: facingAt(t) };
+  };
+  return {
+    // the planet with its moon's orbit around it
+    scene: (t) => {
+      const s = scaleAt(t);
+      const r = rimRadius(s);
+      const reach = world === "moon" ? r : Math.max(r, 2.35 * Math.min(2.2, s) + COMPANION_RADIUS);
+      return { center: [0, 0, 0], radius: reach, height: 2 * r, facing: facingAt(t) };
+    },
+    planet,
+    // the polar cap: a slab over the top of the planet (0.59..1.19 × scale),
+    // so close shots, which frame a slab's top part, aim just above the cap
+    // and look across it with the curved limb and black sky in the top
+    // quarter of the frame. `ground` is the highest relief, so whatever side
+    // or angle the director picks, the lens stays above the sphere.
+    surface: (t) => {
+      const s = scaleAt(t);
+      return {
+        center: [0, s * 0.89, 0],
+        radius: 0.3 * s,
+        height: 0.6 * s,
+        facing: facingAt(t),
+        ground: s * RELIEF_MAX[world],
+      };
+    },
+    // the sky above the planet: wide shots keep the planet small and low in
+    // frame, close ones frame only stars. Capped so an EWS of a grown planet
+    // keeps the lens well inside the star shell (radius 380+).
+    stars: (t) => {
+      const r = rimRadius(scaleAt(t));
+      const reach = Math.min(2.6 * r, 7);
+      return { center: [0, 1.4 * r, 0], radius: reach, height: 2 * reach, facing: facingAt(t) };
+    },
+  };
+}
+
+/** Where the director's camera sits (azimuth / elevation round the planet),
+ *  mirroring ShotCamera; null while no shot films (the orbit rig does). */
+function solvedViewAt(spec: ShotSpec, anchors: Anchors, t: number, aspect: number): { az: number; el: number } | null {
+  const shot = activeShot(spec, t);
+  const anchor = shot ? anchors[shot.subject] ?? anchors.scene : undefined;
+  if (!shot || !anchor) return null;
+  const seconds = Math.max(0.1, shot.to - shot.from);
+  const pose = solveShot(shot, anchor(t), {
+    aspect,
+    u: (t - shot.from) / seconds,
+    seconds,
+    seed: `${shot.beat ?? shot.from}`,
+    lagged: shot.move === "follow" ? anchor(t - 0.35) : undefined,
+  });
+  const [x, y, z] = pose.position;
+  return { az: Math.atan2(x, z), el: Math.atan2(y, Math.hypot(x, z)) };
+}
+
 function OrbitRig({ value }: { value: number }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
 
   useFrame(() => {
     const cam = camera as THREE.PerspectiveCamera;
-    if (cam.far < 2600) {
-      cam.far = 2600;
+    // the camera object outlives shots and stages: restore this rig's lens
+    // whenever a director's shot (or another stage) changed it
+    if (cam.far < 2600 || cam.fov !== 46 || cam.near !== 0.05) {
+      cam.far = Math.max(cam.far, 2600);
       cam.near = 0.05;
       cam.fov = 46;
       cam.updateProjectionMatrix();
@@ -253,18 +346,23 @@ export function SpaceStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const active = scene ?? spec.scenes[0];
   const subject = (active?.subject ?? "earth") as Subject;
   const panel = spec.statPanel ?? null;
-  const value = panel ? statValueAt(panel, t) : 1;
+  const value = panel ? statScaleAt(panel, t) : 1;
   const look = PLANETS[subject];
 
   // the story's escalation literally inflates the world on the beats
   const scale = planetScale(value);
   const planet = useMemo(() => buildPlanetMesh(subject, random(`pl-${subject}`) * 100), [subject]);
+  // what the director's shots can frame (spec.shots); without shots the orbit rig films
+  const anchors = useMemo(() => spaceAnchors(spec, subject), [spec, subject]);
+  const size = useThree((s) => s.size);
+  const view = solvedViewAt(spec, anchors, t, size.width / Math.max(1, size.height));
+  const companion = companionAt(t, scale);
 
   return (
     <group>
-      <SpaceLight subject={subject} t={t} />
+      <SpaceLight subject={subject} t={t} view={view} />
       <Starfield opacity={0.95} />
-      <OrbitRig value={value} />
+      <ShotCamera spec={spec} anchors={anchors} fallback={<OrbitRig value={value} />} />
       {/* planet at the origin, growing on every beat */}
       <group rotation={[0.35, t * 0.12, 0.18]}>
         <primitive object={planet} scale={[scale, scale, scale]} />
@@ -284,15 +382,9 @@ export function SpaceStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       </group>
       {/* companion moon for earth/mars — sells the "world in space" read */}
       {subject !== "moon" && (
-        <group
-          position={[
-            Math.cos(t * 0.5) * 2.35 * Math.min(2.2, scale),
-            0.55,
-            Math.sin(t * 0.5) * 2.35 * Math.min(2.2, scale),
-          ]}
-        >
+        <group position={companion}>
           <mesh>
-            <sphereGeometry args={[0.26, 24, 18]} />
+            <sphereGeometry args={[COMPANION_RADIUS, 24, 18]} />
             <meshStandardMaterial color="#b9b9c1" roughness={1} metalness={0} flatShading />
           </mesh>
         </group>
@@ -301,7 +393,7 @@ export function SpaceStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   );
 }
 
-function SpaceLight({ subject, t }: { subject: Subject; t: number }) {
+function SpaceLight({ subject, t, view }: { subject: Subject; t: number; view: { az: number; el: number } | null }) {
   const { scene } = useThree();
   useMemo(() => {
     scene.background = new THREE.Color(subject === "moon" ? "#04060e" : "#050810");
@@ -311,9 +403,10 @@ function SpaceLight({ subject, t }: { subject: Subject; t: number }) {
     };
   }, [scene, subject]);
   // sun rides the camera orbit: ~31° right of the camera, ~33° above it, so
-  // the viewer always sees a lit limb + terminator (pure function of t)
+  // the viewer always sees a lit limb + terminator (pure function of t).
+  // While a director's shot films, it rides that camera instead.
   const sun: [number, number, number] = (() => {
-    const { az, el } = orbitAngles(t);
+    const { az, el } = view ?? orbitAngles(t);
     const sAz = az + 0.55;
     const sEl = el + 0.58;
     const d = 95;

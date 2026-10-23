@@ -30,6 +30,9 @@ import { RiverStage } from "../RiverStage";
 import { InteriorStage } from "../InteriorStage";
 import { ThreeCanvas } from "@remotion/three";
 import { CityScene } from "../scenes/CityScene";
+import { TransitionOverlay, whipBlur } from "../TransitionOverlay";
+import { CinematicLook } from "../look/CinematicLook";
+import { lookFor } from "../../generator/look-choice";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
 
 type SceneKey = "city" | "first-person";
@@ -63,70 +66,6 @@ interface WhatIfVideoProps {
   previewFrame?: number;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Cinematic texture overlays (pure HTML/CSS, zero dependencies)      */
-/* ------------------------------------------------------------------ */
-
-/** Film grain: animated SVG noise (feTurbulence) overlaid at low opacity,
- *  with a very soft color grade so blacks look crushed and highlights warm. */
-function FilmGrain() {
-  // The noise pattern is re-seeded from the frame number, so every frame gets
-  // a different grain that is still identical on every re-render. (The old
-  // CSS spin animation ran on wall-clock time and was not frame-accurate.)
-  const frame = useCurrentFrame();
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 25,
-        pointerEvents: "none",
-        mixBlendMode: "overlay",
-        opacity: 0.12,
-        filter: `contrast(1.08) saturate(1.04)`,
-      }}
-    >
-      <svg width="100%" height="100%" style={{ display: "block" }}>
-        <defs>
-          <filter id="grain" x="0" y="0" width="100%" height="100%">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.9"
-              numOctaves="3"
-              stitchTiles="stitch"
-              seed={frame % 97}
-            />
-            <feComponentTransfer>
-              <feFuncR type="linear" slope="0.6" intercept="0.7" />
-              <feFuncG type="linear" slope="0.6" intercept="0.7" />
-              <feFuncB type="linear" slope="0.6" intercept="0.7" />
-            </feComponentTransfer>
-          </filter>
-        </defs>
-        <rect width="100%" height="100%" filter="url(#grain)" />
-      </svg>
-    </div>
-  );
-}
-
-/** Vignette: darkens corners and top/bottom edges so the street stays
- *  centered and the frame reads like a lens-captured shot. */
-function Vignette() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 26,
-        pointerEvents: "none",
-        background: `radial-gradient(circle at 50% 55%, transparent 30%, rgba(0,0,0,0.35) 75%, rgba(0,0,0,0.55) 100%)`,
-        mixBlendMode: "multiply",
-        opacity: 0.55,
-      }}
-    />
-  );
-}
-
 export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   spec,
   previewFrame,
@@ -157,7 +96,8 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       <ThreeCanvas
         width={width}
         height={height}
-        style={{ width, height }}
+        // A whip pan blurs the picture at its fastest moment.
+        style={{ width, height, filter: whipBlur(spec.transitions, timeSec) > 0.3 ? `blur(${(whipBlur(spec.transitions, timeSec) * width) / 1080}px)` : undefined }}
         // Shadow maps: the stages already mark lights and meshes castShadow,
         // but without this flag every one of those is ignored.
         shadows
@@ -200,14 +140,22 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
             <ambientLight intensity={0.5} />
           </>
         )}
+        {/* The grade (Phase 3): tone mapping, bloom, colour, grain and vignette,
+            chosen per scene from its time of day and the story's mood. Grain is
+            kept light: per-frame grain makes the H.264 file far larger. */}
+        <CinematicLook
+          preset={lookFor(activeScene, spec.story?.mood)}
+          quality={spec.settings?.quality === "draft" ? "draft" : "final"}
+          grain={0.3}
+        />
       </ThreeCanvas>
+
+      {/* Scene-to-scene dips and flashes */}
+      <TransitionOverlay transitions={spec.transitions} />
 
       {/* Stat-panel escalation HUD + zoom vignette */}
       <ZoomVignette panel={spec.statPanel} fps={fps} />
       <StatHud panel={spec.statPanel} fps={fps} />
-      {/* Cinematic texture: subtle film grain + edge vignette (always on). */}
-      <FilmGrain />
-      <Vignette />
 
       {/* Hook card */}
       <Hook
@@ -224,6 +172,9 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
           label={spec.timer.label}
           startFrame={secToFrame(spec.timer.startT, fps)}
           endFrame={secToFrame(spec.timer.endT, fps)}
+          fps={fps}
+          // Below the counter card when a video has both.
+          offsetY={spec.statPanel ? 300 : 0}
         />
       )}
 

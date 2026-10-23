@@ -16,9 +16,12 @@ import { useMemo, useRef, useEffect } from "react";
 import { useCurrentFrame } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { ShotSpec, SceneType } from "../generator/spec.schema";
+import type { ShotSpec, SceneType, CastEntry } from "../generator/spec.schema";
+import type { Subject } from "../generator/camera/solve";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
+import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { restoreRigLens } from "./ForestStage";
 
 /** Per-TOD look for interior. */
 const INTERIOR_TOD: Record<
@@ -409,6 +412,61 @@ function Character({ x, z, rot, scale, shirtCol, action }: {
   );
 }
 
+/**
+ * The room's own camera (used when no director's shot is active): a slow
+ * orbit round the room centre. A pure function of the frame.
+ */
+function InteriorCameraRig() {
+  const frame = useCurrentFrame();
+  const { camera } = useThree();
+  const t = frame / 30;
+  useFrame(() => {
+    restoreRigLens(camera);
+    const angle = t * 0.03;
+    const radius = 4.5;
+    camera.position.set(Math.sin(angle) * radius, 1.6 + Math.sin(t * 0.1) * 0.1, Math.cos(angle) * radius + 1);
+    camera.lookAt(0, 1.0, 0);
+  });
+  return null;
+}
+
+/** Where a cast member stands, per zone (as placed in InteriorStage). */
+function castSpot(zone: CastEntry["zone"]): { x: number; z: number } {
+  return zone === "foreground" ? { x: -1, z: 2 } : zone === "midground" ? { x: 0.5, z: 0.5 } : { x: 1.5, z: -1 };
+}
+
+/** Sitting poses for the cast actions (the rest stand). */
+const SITTING = new Set(["sit", "kneel", "read"]);
+
+/**
+ * What the camera can frame in the room (KIT_SUBJECTS.interior), from the
+ * fixed furniture layout below. The room spans x and z -4..4 and y 0..3; the
+ * furniture faces +z, the open side the stage's own camera films from.
+ * "person" is the first cast member (absent without a cast). All static.
+ */
+export function interiorAnchors(cast: CastEntry[]): Anchors {
+  const fixed = (s: Subject) => () => s;
+  const anchors: Anchors = {
+    scene: fixed({ center: [0, 1.5, 0], radius: 4, height: 3, facing: 0, ground: 0 }),
+    // Window: 2.5 x 2.0 m pane centred 1.2 m up at z -3.02 (frame 0.1 m round it).
+    window: fixed({ center: [0, 1.2, -3.02], radius: 1.4, height: 2.2, facing: 0, ground: 0 }),
+    // Sofa: 2.2 m wide, back 1.11 m high, at (-2, -1.5), seat facing +z.
+    sofa: fixed({ center: [-2, 0.56, -1.5], radius: 1.15, height: 1.11, facing: 0, ground: 0 }),
+    // Floor lamp: 2.15 m tall at (-2.8, -1.2), by the sofa's end; seen a little from the room side.
+    lamp: fixed({ center: [-2.8, 1.08, -1.2], radius: 0.4, height: 2.15, facing: 0.35, ground: 0 }),
+    // Table: the big one, 2.5 x 1.5 m top 0.75 m up at (-1.2, 0.5).
+    table: fixed({ center: [-1.2, 0.4, 0.5], radius: 1.45, height: 0.8, facing: 0, ground: 0 }),
+  };
+  const who = cast[0];
+  if (who) {
+    // Character at scale 0.9: head top 1.64 m standing, 1.34 m sitting (unscaled).
+    const { x, z } = castSpot(who.zone);
+    const h = 0.9 * (SITTING.has(who.action ?? "") ? 1.34 : 1.64);
+    anchors.person = fixed({ center: [x, h / 2, z], radius: 0.3, height: h, facing: 0, ground: 0 });
+  }
+  return anchors;
+}
+
 export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
   const frame = useCurrentFrame();
   const active = scene ?? spec.scenes[0];
@@ -418,36 +476,23 @@ export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneTy
   const look = INTERIOR_TOD[tod] ?? INTERIOR_TOD.afternoon;
   const night = tod === "night";
 
-  const { camera, scene: threeScene } = useThree();
+  const { scene: threeScene } = useThree();
   useEffect(() => {
     threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
   }, [look.fog, look.fogDensity, threeScene]);
 
-  // Camera: slow orbit around room center
-  const cam = useMemo(() => {
-    const angle = t * 0.03;
-    const radius = 4.5;
-    return {
-      x: Math.sin(angle) * radius,
-      y: 1.6 + Math.sin(t * 0.1) * 0.1,
-      z: Math.cos(angle) * radius + 1,
-      lookAtX: 0,
-      lookAtY: 1.0,
-      lookAtZ: 0,
-    };
-  }, [t]);
-
-  useFrame(() => {
-    camera.position.set(cam.x, cam.y, cam.z);
-    camera.lookAt(cam.lookAtX, cam.lookAtY, cam.lookAtZ);
-  });
-
   // Cast from spec
   const cast = active?.cast ?? [];
+
+  // Subjects for the director's shots (only built when the spec has shots).
+  const hasShots = (spec.shots?.length ?? 0) > 0;
+  const anchors = useMemo((): Anchors => (hasShots ? interiorAnchors(cast) : {}), [hasShots, cast]);
   const lampOn = night && !lightsOut; // lamp on at night unless lights-out
 
   return (
     <group>
+      <ShotCamera spec={spec} anchors={anchors} fallback={<InteriorCameraRig />} />
+      
       {/* Room box */}
       <mesh position={[0, 1.5, 0]} rotation={[0, Math.PI/2, 0]} receiveShadow>
         {/* Floor */}
@@ -512,9 +557,7 @@ export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneTy
 
       {/* Cast characters from spec */}
       {cast.map((c, i) => {
-        const pos = c.zone === "foreground" ? { x: -1, z: 2 } :
-                    c.zone === "midground" ? { x: 0.5, z: 0.5 } :
-                    { x: 1.5, z: -1 };
+        const pos = castSpot(c.zone);
         // Map spec action to Character action
         const act = c.action as string;
         const action = act === "sit" ? "sit" :
