@@ -100,7 +100,11 @@ export function gainFor(entry: Pick<LibraryEntry, "kind" | "lufs" | "truePeakDb"
   const target = TARGET_LUFS[entry.kind] ?? -20;
   let db = target - entry.lufs;
   db = Math.max(-24, Math.min(12, db));
-  if (entry.truePeakDb !== null && entry.truePeakDb + db > -1) db = -1 - entry.truePeakDb;
+  // Ceiling per cue at -5 dBTP (was -1): several cues play simultaneously, and
+  // file peaks near -1 summed past 0 dBTP in an assembled mix (found by the
+  // money-doubles 16:9 milestone render: pre-master mix peaked at +0.77 dBTP,
+  // which forced loudnorm into dynamic mode and left it short of -14).
+  if (entry.truePeakDb !== null && entry.truePeakDb + db > -5) db = -5 - entry.truePeakDb;
   return Math.pow(10, db / 20);
 }
 
@@ -201,8 +205,9 @@ export function resolveAudio(input: ShotSpec, seed: string): { spec: ShotSpec; r
     const m = measureLoudness(abs);
     const target = TARGET_LUFS[vf.kind === "dialog" ? "dialog" : "narration"];
     let db = m.lufs === null ? 0 : Math.max(-12, Math.min(12, target - m.lufs));
-    // Same ceiling as the library: never let a loud line push its peaks above -1 dBTP.
-    if (m.truePeakDb !== null && m.truePeakDb + db > -1) db = -1 - m.truePeakDb;
+    // Same ceiling as the library (see gainFor): never let a loud line push
+    // its peaks above -4 dBTP, so stacked cues keep headroom.
+    if (m.truePeakDb !== null && m.truePeakDb + db > -4) db = -4 - m.truePeakDb;
     return { ...vf, gain: Math.pow(10, db / 20) };
   });
 

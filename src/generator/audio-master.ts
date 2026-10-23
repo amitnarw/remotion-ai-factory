@@ -74,11 +74,15 @@ export function masterAudio(file: string): MasterResult {
   if (!runFfmpeg(["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-vn", "-ar", "48000", "-c:a", "pcm_s24le", wav]).ok) {
     return fail("could not extract the mix");
   }
-  // 2. Loudnorm until it settles.
-  for (let round = 0; round < 3 && !settled(measureLoudness(wav)); round++) {
+  // 2. Loudnorm until it settles. Dynamic passes undershoot a little each time
+  //    when the input is very dynamic (found on the real-plan 16:9 renders:
+  //    -18 → -16 → -15.3 in three rounds); convergence needs more rounds.
+  for (let round = 0; round < 6 && !settled(measureLoudness(wav)); round++) {
     if (!loudnormWav(wav, next)) return fail("mastering pass failed");
     rmSync(wav, { force: true });
     renameSync(next, wav);
+    const m = measureLoudness(wav);
+    console.log(`[audio] master round ${round + 1}: ${m.lufs?.toFixed(1)} LUFS, ${m.truePeakDb?.toFixed(1)} dBTP`);
   }
   // 3. One AAC encode with the picture copied.
   const encoded = runFfmpeg([
