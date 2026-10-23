@@ -125,45 +125,73 @@ export function planLines(story: WriterStory, audio: AudioConfig): PlannedLine[]
   return out;
 }
 
-/**
- * Words per second before anything is measured. Kitten 2 measured on the dev
- * laptop: 2.32 words/s over 9 lines (Bruno and Rosie). VoxCPM is a guess.
- */
-const DEFAULT_WPS: Record<Engine, number> = { kitten2: 2.3, voxcpm2: 2.6 };
+/** A speech-rate model: fixed per-line overhead (synthesis lead-in, tail and
+ *  the trim's allowed pause) plus the pure word rate. One aggregate number
+ *  cannot distinguish them, so a cache full of short hook lines dragged the
+ *  old single wps down (found on 2026-10-24: 115 short Bruno lines took the
+ *  aggregate to 1.76 and inflated every estimate). */
+export interface SpeechModel {
+  /** Fixed seconds per line. */
+  overhead: number;
+  /** Pure words per second over the overhead. */
+  wps: number;
+}
+
+const DEFAULT_MODEL: Record<Engine, SpeechModel> = {
+  kitten2: { overhead: 0.8, wps: 2.3 },
+  voxcpm2: { overhead: 0.8, wps: 2.6 },
+};
 
 /**
- * Words per second of the real voices, from the cache's metadata (lines of
- * this engine, plus older entries that did not record one); the default until
- * 5 lines are known.
+ * The speech-rate model of the real voices, from the cache's metadata (this
+ * engine's lines plus older entries that did not record one). A least-squares
+ * line over dur ≈ overhead + words/wps, on entries long enough to be
+ * overhead-independent; the default until 5 usable lines are known.
  */
-export function calibratedWps(engine: Engine = "kitten2"): number {
-  if (!existsSync(CACHE_DIR)) return DEFAULT_WPS[engine];
-  let words = 0;
-  let secs = 0;
-  let samples = 0;
+export function calibratedModel(engine: Engine = "kitten2"): SpeechModel {
+  if (!existsSync(CACHE_DIR)) return DEFAULT_MODEL[engine];
+  const pts: Array<{ w: number; d: number }> = [];
   for (const f of readdirSync(CACHE_DIR)) {
     if (!f.endsWith(".json")) continue;
     try {
       const m = JSON.parse(readFileSync(join(CACHE_DIR, f), "utf8")) as { dur?: number; words?: number; engine?: string };
       if (m.engine && m.engine !== engine) continue;
-      if (m.words && m.dur && m.dur > 0.3) {
-        words += m.words;
-        secs += m.dur;
-        samples += 1;
+      if (m.words && m.dur && m.dur >= 1.2) {
+        const wps = m.words / m.dur;
+        // Outliers: a mis-measured line or a voice that babbles would bend the fit.
+        if (wps > 1.4 && wps < 4.5) pts.push({ w: m.words, d: m.dur });
       }
     } catch {
       /* skip unreadable metadata */
     }
   }
-  if (samples < 5 || secs <= 0) return DEFAULT_WPS[engine];
-  return Math.min(4, Math.max(1.6, words / secs));
+  if (pts.length < 5) return DEFAULT_MODEL[engine];
+  const n = pts.length;
+  const S = (sel: (p: { w: number; d: number }) => number) => pts.reduce((a, p) => a + sel(p), 0);
+  const sx = S((p) => p.w), sy = S((p) => p.d), sxx = S((p) => p.w * p.w), sxy = S((p) => p.w * p.d);
+  const den = n * sxx - sx * sx;
+  if (den <= 0) return DEFAULT_MODEL[engine];
+  // The slope is SECONDS PER WORD; invert it for the rate.
+  const secPerWord = (n * sxy - sx * sy) / den;
+  if (!(secPerWord > 0)) return DEFAULT_MODEL[engine];
+  const wps = Math.min(4.5, Math.max(1.6, 1 / secPerWord));
+  // Intercept of dur = overhead + secPerWord * words (in the slope's units).
+  const overhead = Math.min(1.5, Math.max(0, (sy - secPerWord * sx) / n));
+  return { overhead, wps };
 }
 
-/** Seconds a line takes to say, estimated from its words (and a little per sentence pause). */
-export function estimateDuration(text: string, wps: number): number {
+/** The engine's pure word rate (kept for the writer's word budget). */
+export function calibratedWps(engine: Engine = "kitten2"): number {
+  return calibratedModel(engine).wps;
+}
+
+/** Seconds a line takes to say: the model (or a bare rate) plus a little per sentence pause. */
+export function estimateDuration(text: string, model: SpeechModel | number): number {
+  const wps = typeof model === "number" ? model : model.wps;
+  const overhead = typeof model === "number" ? 0 : model.overhead;
   const words = text.split(/\s+/).filter(Boolean).length;
   const pauses = (text.match(/[,;:]/g) ?? []).length * 0.15;
-  return Math.max(0.6, words / wps + pauses);
+  return Math.max(0.6, overhead + words / wps + pauses);
 }
 
 /**
@@ -177,7 +205,7 @@ export async function voiceLines(
   mode: "plan" | "render",
 ): Promise<{ lines: PlannedLine[]; warnings: string[] }> {
   const warnings: string[] = [];
-  const wps: Record<Engine, number> = { kitten2: calibratedWps("kitten2"), voxcpm2: calibratedWps("voxcpm2") };
+  const models: Record<Engine, SpeechModel> = { kitten2: calibratedModel("kitten2"), voxcpm2: calibratedModel("voxcpm2") };
   // Plan time estimates by default: on a CPU even Kitten 2 takes ~40-50 s per
   // line, so voicing a whole plan would take many minutes. FACTORY_PLAN_TTS=1
   // synthesizes Kitten lines at plan time (useful on a fast machine). The
@@ -202,7 +230,9 @@ export async function voiceLines(
     }
   }
   if (estimated.length > 0) {
-    const engines = [...new Set(estimated.map((l) => l.engine))].map((e) => `${e} at ${wps[e].toFixed(2)} words/s`).join(", ");
+    const engines = [...new Set(estimated.map((l) => l.engine))]
+      .map((e) => `${e} at ${models[e].wps.toFixed(2)} words/s + ${models[e].overhead.toFixed(2)}s/line`)
+      .join(", ");
     warnings.push(
       `${estimated.length} line(s) were timed from word counts (${engines}), not measured. The render measures them and re-times the video.`,
     );
@@ -211,7 +241,7 @@ export async function voiceLines(
     warnings,
     lines: lines.map((l) => {
       const d = durations.get(l.id);
-      return d ? { ...l, dur: d.dur, file: d.file, estimated: false } : { ...l, dur: estimateDuration(l.text, wps[l.engine]), estimated: true };
+      return d ? { ...l, dur: d.dur, file: d.file, estimated: false } : { ...l, dur: estimateDuration(l.text, models[l.engine]), estimated: true };
     }),
   };
 }
