@@ -10,7 +10,14 @@
  */
 import { z } from "zod";
 
-export const CAPTION_PRESET_NAMES = ["bold-pop", "clean", "documentary", "neon", "minimal"] as const;
+export const CAPTION_PRESET_NAMES = [
+  "reference",
+  "bold-pop",
+  "clean",
+  "documentary",
+  "neon",
+  "minimal",
+] as const;
 export const CAPTION_POSITIONS = ["top", "upper", "middle", "lower", "bottom"] as const;
 export const CAPTION_FONTS = ["inter", "archivo-black", "serif"] as const;
 export const CAPTION_ANIMATIONS = ["none", "fade", "pop", "slide-up", "word-reveal"] as const;
@@ -75,7 +82,11 @@ const BASE: CaptionLook = {
   animation: "fade",
 };
 
+// Phase 7 reference bar (quality-refs/): serif italic white captions with a
+// soft shadow and the keyword highlighted in gold (#d4af37 range), the default
+// look; the hook renders with the same one so it reads as a serif title.
 export const CAPTION_PRESETS: Record<(typeof CAPTION_PRESET_NAMES)[number], Partial<CaptionLook>> = {
+  reference: { font: "serif", weight: 400, italic: true, uppercase: false, size: 46, color: "#ffffff", highlight: "#d4af37", shadow: true, animation: "fade" },
   "bold-pop": { font: "inter", weight: 800, uppercase: true, size: 44, highlight: "#3b82f6", animation: "pop" },
   clean: { font: "inter", weight: 700, uppercase: false, size: 40, highlight: "#facc15", animation: "fade" },
   documentary: { font: "serif", weight: 400, italic: true, uppercase: false, size: 46, highlight: "#f5d68a", shadow: true, animation: "fade" },
@@ -85,7 +96,7 @@ export const CAPTION_PRESETS: Record<(typeof CAPTION_PRESET_NAMES)[number], Part
 
 /** Full look from an optional, partial user style: preset, then overrides. */
 export function resolveCaptionStyle(input?: CaptionStyleInput | null): CaptionLook {
-  const preset = CAPTION_PRESETS[input?.preset ?? "bold-pop"];
+  const preset = CAPTION_PRESETS[input?.preset ?? "reference"];
   const explicit = Object.fromEntries(
     Object.entries(input ?? {}).filter(([k, v]) => k !== "preset" && v !== undefined),
   );

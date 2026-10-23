@@ -19,6 +19,7 @@ import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 const PRESET_LABELS: Record<(typeof CAPTION_PRESET_NAMES)[number], string> = {
+  reference: "Reference serif",
   "bold-pop": "Bold pop",
   clean: "Clean",
   documentary: "Documentary serif",
@@ -63,7 +64,7 @@ export function CaptionPanel({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_200px]">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Look">
-            <Select value={value.preset ?? "bold-pop"} onValueChange={(p) => onChange({ preset: p as CaptionStyleInput["preset"] })}>
+            <Select value={value.preset ?? "reference"} onValueChange={(p) => onChange({ preset: p as CaptionStyleInput["preset"] })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {CAPTION_PRESET_NAMES.map((p) => (

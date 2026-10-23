@@ -76,7 +76,7 @@ const OCEAN_TOD: Record<
   golden:    { sky: ["#f7a95f", "#f5dec6"], hemi: 0.8,  amb: 0.5,  dirI: 2.0,  dirColor: "#ffce8f", dirPos: [-60, 16, -110] },
   overcast:  { sky: ["#9fb4c8", "#cfd6dd"], hemi: 1.05, amb: 0.55, dirI: 0.6,  dirColor: "#e8eefc", dirPos: [20, 60, -40] },
   dawn:      { sky: ["#ffc08a", "#6a7099"], hemi: 0.65, amb: 0.5,  dirI: 0.95, dirColor: "#ffcfa3", dirPos: [-50, 14, -110] },
-  night:     { sky: ["#16223a", "#27364f"], hemi: 0.45, amb: 0.35, dirI: 0.55, dirColor: "#b9d0ff", dirPos: [-45, 55, -70] },
+  night:     { sky: ["#16223a", "#27364f"], hemi: 0.62, amb: 0.5,  dirI: 0.85, dirColor: "#b9d0ff", dirPos: [-45, 55, -70] },
 };
 
 /** Stat-beat value → how far the water climbs. Calibrated against the world

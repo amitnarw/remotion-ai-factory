@@ -1,6 +1,8 @@
 /**
- * Hook.tsx — the opening premise card ("What if gravity disappeared...").
- * Same caption look as the captions; keyword highlighting uses React spans.
+ * Hook.tsx — the opening premise title ("What if gravity disappeared..."), overlaid on
+ * the live scene (no card). It follows the resolved caption look: the default
+ * "reference" preset renders it as a serif title with the keyword in gold and a
+ * soft shadow (Phase 7, quality-refs/). Keyword highlighting uses React spans.
  * The size fits the text into at most 3 lines inside the safe area.
  */
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -54,13 +56,13 @@ export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFr
           boxSizing: "border-box",
           maxWidth: "100%",
           fontFamily: FONT_STACKS[look.font],
-          fontWeight: look.font === "archivo-black" ? 400 : 800,
+          fontWeight: look.font === "archivo-black" ? 400 : Math.max(look.weight, 700),
           fontStyle: look.italic ? "italic" : "normal",
           fontSize,
           color: look.color,
           textAlign: "center",
           lineHeight: 1.18,
-          textShadow: look.shadow ? textOutline(scale, "outline") : "none",
+          textShadow: look.shadow ? textOutline(scale, look.font === "serif" ? "soft" : "outline") : "none",
         }}
       >
         {words.map((word, i) => {

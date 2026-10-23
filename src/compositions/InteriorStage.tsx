@@ -152,10 +152,10 @@ const INTERIOR_TOD: Record<
     fog: "#0a1018",
     fogDensity: 0.0,
     dirColor: "#a8b8d0",
-    dirIntensity: 0.15,
+    dirIntensity: 0.22,
     dirPos: [0, 5, 0],
-    hemi: ["#304058", "#101828", 0.25],
-    amb: 0.1,
+    hemi: ["#304058", "#101828", 0.35],
+    amb: 0.2,
     wall: "#2a2028",
     floor: "#1a1510",
     windowFrame: "#1a1510",
@@ -444,25 +444,29 @@ const SITTING = new Set(["sit", "kneel", "read"]);
  * furniture faces +z, the open side the stage's own camera films from.
  * "person" is the first cast member (absent without a cast). All static.
  */
+/** The room's camera box: walls sit at x, z +/-4 (and the ceiling at y 3), so
+ *  the lens stays a hand's width inside them (09-phase3-handoff.md 3.2). */
+const ROOM_BOUNDS = { minX: -3.6, maxX: 3.6, minZ: -3.6, maxZ: 3.6, maxY: 2.8 };
+
 export function interiorAnchors(cast: CastEntry[]): Anchors {
   const fixed = (s: Subject) => () => s;
   const anchors: Anchors = {
-    scene: fixed({ center: [0, 1.5, 0], radius: 4, height: 3, facing: 0, ground: 0 }),
+    scene: fixed({ center: [0, 1.5, 0], radius: 4, height: 3, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
     // Window: 2.5 x 2.0 m pane centred 1.2 m up at z -3.02 (frame 0.1 m round it).
-    window: fixed({ center: [0, 1.2, -3.02], radius: 1.4, height: 2.2, facing: 0, ground: 0 }),
+    window: fixed({ center: [0, 1.2, -3.02], radius: 1.4, height: 2.2, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
     // Sofa: 2.2 m wide, back 1.11 m high, at (-2, -1.5), seat facing +z.
-    sofa: fixed({ center: [-2, 0.56, -1.5], radius: 1.15, height: 1.11, facing: 0, ground: 0 }),
+    sofa: fixed({ center: [-2, 0.56, -1.5], radius: 1.15, height: 1.11, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
     // Floor lamp: 2.15 m tall at (-2.8, -1.2), by the sofa's end; seen a little from the room side.
-    lamp: fixed({ center: [-2.8, 1.08, -1.2], radius: 0.4, height: 2.15, facing: 0.35, ground: 0 }),
+    lamp: fixed({ center: [-2.8, 1.08, -1.2], radius: 0.4, height: 2.15, facing: 0.35, ground: 0, bounds: ROOM_BOUNDS }),
     // Table: the big one, 2.5 x 1.5 m top 0.75 m up at (-1.2, 0.5).
-    table: fixed({ center: [-1.2, 0.4, 0.5], radius: 1.45, height: 0.8, facing: 0, ground: 0 }),
+    table: fixed({ center: [-1.2, 0.4, 0.5], radius: 1.45, height: 0.8, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
   };
   const who = cast[0];
   if (who) {
     // Character at scale 0.9: head top 1.64 m standing, 1.34 m sitting (unscaled).
     const { x, z } = castSpot(who.zone);
     const h = 0.9 * (SITTING.has(who.action ?? "") ? 1.34 : 1.64);
-    anchors.person = fixed({ center: [x, h / 2, z], radius: 0.3, height: h, facing: 0, ground: 0 });
+    anchors.person = fixed({ center: [x, h / 2, z], radius: 0.3, height: h, facing: 0, ground: 0, bounds: ROOM_BOUNDS });
   }
   return anchors;
 }
@@ -489,10 +493,28 @@ export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneTy
   const anchors = useMemo((): Anchors => (hasShots ? interiorAnchors(cast) : {}), [hasShots, cast]);
   const lampOn = night && !lightsOut; // lamp on at night unless lights-out
 
+  // Real lighting (was: none at all, the room rendered black). The sun comes
+  // through the window at the TOD angle; a hemisphere and an ambient fill wash
+  // the walls so the room is readable at every hour. Pure function of the
+  // frame (lights-out drains the key light, like the other stages).
+  const sunRef = useRef<THREE.DirectionalLight>(null);
+  const hemiRef = useRef<THREE.HemisphereLight>(null);
+  const ambRef = useRef<THREE.AmbientLight>(null);
+  useFrame(() => {
+    if (sunRef.current) sunRef.current.intensity = look.dirIntensity * (lightsOut ? 0.04 : 1);
+    if (hemiRef.current) hemiRef.current.intensity = look.hemi[2] * (lightsOut ? 0.3 : 1);
+    if (ambRef.current) ambRef.current.intensity = look.amb * (lightsOut ? 0.4 : 1);
+  });
+
   return (
     <group>
       <ShotCamera spec={spec} anchors={anchors} fallback={<InteriorCameraRig />} />
-      
+
+      {/* Room lights (look.* per time of day, INTERIOR_TOD above) */}
+      <directionalLight ref={sunRef} color={look.dirColor} position={look.dirPos} intensity={look.dirIntensity} castShadow />
+      <hemisphereLight ref={hemiRef} color={look.hemi[0]} groundColor={look.hemi[1]} intensity={look.hemi[2]} />
+      <ambientLight ref={ambRef} intensity={look.amb} />
+
       {/* Room box */}
       <mesh position={[0, 1.5, 0]} rotation={[0, Math.PI/2, 0]} receiveShadow>
         {/* Floor */}
