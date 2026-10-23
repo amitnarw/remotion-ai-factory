@@ -83,13 +83,15 @@ export async function getJobSpec(jobId: string): Promise<SpecResponse> {
   return json(await fetch(`${BASE}/spec/${jobId}`));
 }
 
-/** Render an approved plan. This is the only way a spec becomes a video. */
-export async function renderSpec(specId: string, audio?: unknown): Promise<{ jobId: string }> {
+/** Render an approved plan. This is the only way a spec becomes a video.
+ *  `opts.chunked` renders via the chunked, cached renderer (src/generator/render).
+ *  Only the chunks an edit changed are rendered; the rest is reused. */
+export async function renderSpec(specId: string, audio?: unknown, opts?: { chunked?: boolean }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/render-spec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specId, audio }),
+      body: JSON.stringify({ specId, audio, chunked: opts?.chunked }),
     }),
   );
 }

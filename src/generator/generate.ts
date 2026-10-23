@@ -32,6 +32,7 @@ import { PLACES } from "../world/places";
 import { canReassemble, reassemble } from "./pipeline/run";
 import type { AudioConfig } from "./pipeline/voice";
 import { validateAssets } from "./asset-catalog";
+import { renderChunked, type ChunkStats } from "./render";
 
 const FFMPEG = join(
   process.cwd(),
@@ -72,6 +73,7 @@ function parseArgs(argv: string[]): {
   noRender: boolean;
   fromSpec: string | undefined;
   audioFile: string | undefined;
+  chunked: boolean;
   settings: Partial<VideoSettings>;
 } {
   const settings: Partial<VideoSettings> = {};
@@ -80,6 +82,7 @@ function parseArgs(argv: string[]): {
   let noRender = false;
   let fromSpec: string | undefined;
   let audioFile: string | undefined;
+  let chunked = false;
   const premiseParts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -93,6 +96,9 @@ function parseArgs(argv: string[]): {
       fromSpec = argv[++i];
     } else if (a === "--audio-file" && argv[i + 1]) {
       audioFile = argv[++i];
+    } else if (a === "--chunked") {
+      // Chunked, cached render (src/generator/render) instead of one `remotion render`.
+      chunked = true;
     } else if (a === "--format" && argv[i + 1]) {
       settings.format = argv[++i] as VideoSettings["format"];
     } else if (a === "--duration" && argv[i + 1]) {
@@ -114,7 +120,7 @@ function parseArgs(argv: string[]): {
       premiseParts.push(a);
     }
   }
-  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile, settings };
+  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile, chunked, settings };
 }
 
 /** The voice settings file the dashboard writes (narration / dialogs). */
@@ -154,7 +160,7 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model, noRender, fromSpec, audioFile, settings: rawSettings } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec, audioFile, chunked, settings: rawSettings } = parseArgs(process.argv.slice(2));
   const settingsCheck = SettingsSchema.safeParse(rawSettings);
   if (!settingsCheck.success) {
     console.error(
@@ -177,7 +183,7 @@ function main() {
         const valid = validateSpec(JSON.parse(readFileSync(abs, "utf8")));
         const premise = valid.title;
         console.log(`[render-only] ${id} — "${premise}" (${valid.scenes.length} scenes)`);
-        await renderOnly(valid, id, el, { audioFile });
+        await renderOnly(valid, id, el, { audioFile, chunked });
       } catch (error) {
         console.error("");
         console.error("═══ FAILED ═══");
@@ -233,7 +239,7 @@ function main() {
         return;
       }
 
-      await renderOnly(valid, id, el, { providerUsed, modelUsed, specPath, premise });
+      await renderOnly(valid, id, el, { providerUsed, modelUsed, specPath, premise, chunked });
     } catch (error) {
       const logPath = writeFailedLog(id, premise, error);
       console.error("");
@@ -254,7 +260,7 @@ async function renderOnly(
   planned: ShotSpec,
   id: string,
   el: () => string,
-  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string; audioFile?: string },
+  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string; audioFile?: string; chunked?: boolean },
 ): Promise<void> {
   let valid = planned;
   const premise = meta?.premise ?? valid.title;
@@ -321,7 +327,20 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
         `[audio] sfx ${ar.sfxLibrary} library / ${ar.sfxSynth} synth · beds ${ar.ambientLibrary} library / ${ar.ambientSynth} synth · ` +
           `music ${ar.music.map((m) => (m.file ? m.mood : `${m.mood} (none found)`)).join(", ") || "none"} · cuts ${ar.transitions} · voice ${ar.voiceLines}`,
       );
+      // Chunked, cached render: muted chunks + one audio pass, joined (see src/generator/render).
+      // The bundled CLI render below stays the default path.
+      let chunkStats: ChunkStats | undefined;
+      if (meta?.chunked) {
+        const r = await renderChunked(resolved.spec, id, {
+          quality: valid.settings?.quality ?? "final",
+          out,
+          log: (line: string) => console.log(line),
+        });
+        chunkStats = r.chunks;
+      }
+
       // Props go to a FILE — asset-driven specs exceed the Windows ~32KB command-line limit.
+      // (The chunked path passes inputProps over the Node API; the file stays for debugging.)
       const inputProps = JSON.stringify({ spec: resolved.spec });
       const propsPath = join(OUTPUT_DIR, `${id}-props.json`);
       writeFileSync(propsPath, inputProps);
@@ -329,6 +348,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
       // Fresh explicit bundle (step 3) so the render never serves stale code.
       // Per-id: two renders at once (milestone pool, parallel jobs) must not
       // write the same directory.
+      if (!meta?.chunked) {
       const bundleDir = join(process.cwd(), "out", `render-bundle-${id}`);
       const bundleCmd = join(process.cwd(), "node_modules", ".bin", "remotion.cmd");
       execFileSync(
@@ -375,6 +395,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
           FFMPEG_PATH: FFMPEG,
         },
       });
+      }
       console.log(`[5/5] Encode + mux finished at +${el()}`);
 
       const master = masterAudio(out);
@@ -416,6 +437,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
             // CC-BY credits: only the models THIS video used (Phase 6 step 1) —
             // landmarks standing in the world scenes' places.
             ...(creditsLines.length ? { credits: creditsLines } : {}),
+            ...(chunkStats ? { chunks: chunkStats } : {}),
             audio: { ...ar, master },
             generatedAt: new Date().toISOString(),
           },

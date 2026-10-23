@@ -1,6 +1,6 @@
 # 09 — Phase 4: editor + fast re-render (status and handoff, 2026-10-23)
 
-**Status: about 55% done. Stopped mid-way on purpose to move to another laptop.** Nothing in this phase is committed yet (see "Moving to the other laptop").
+**Status: about 80% done.** The chunked renderer is finished, wired through the CLI and the editor's render job, and verified with a real (cold) render; jobs persist to disk. What is left: live chunk-reuse proof on a quiet machine (another session edits src/ continuously, which correctly invalidates the bundle), fast text edits (background re-voice), a browser check of the editor, and the milestone 4 check.
 
 Plan: [05-plan.md, Phase 4](05-plan.md#phase-4--editor--fast-re-render--milestone-4). Phase 3 is being done by another chat in the same repo at the same time; see "Working next to Phase 3" before editing shared files.
 
@@ -14,9 +14,9 @@ Plan: [05-plan.md, Phase 4](05-plan.md#phase-4--editor--fast-re-render--mileston
 | Server routes `/api/film/*` | Done; typecheck clean; tried through the functions, not over HTTP | 85% |
 | Editor UI (timeline, player, inspector, Ask AI box, history) | Code written, compiles, production build passes; **never opened in a browser** | 65% |
 | Incremental pipeline (re-voice only the changed line) | Works (voice cache), but one new Kitten line took 5-9 minutes on the loaded laptop; "keep timing" option not built | 50% |
-| Chunked, cached render | Planner + tests, bundle cache, browser, chunk render, audio pass and join written; **the main `renderChunked` function, the `--chunked` flag and any real render test are missing** | 45% |
-| Jobs saved to disk (survive a server restart) | Not started | 0% |
-| Milestone 4 check | Not started | 0% |
+| Chunked, cached render | Complete: `index.ts` `renderChunked` written + `--chunked` in the CLI and the editor's render job; cold render verified (75 s for a 25 s draft, frame counts, master, exit 0); audio track reused live; chunk reuse blocked live by another session's continuous src/ edits (bundle hash changed between every call) | 75% |
+| Jobs saved to disk (survive a server restart) | Done: every job writes `output/jobs/<id>.json` (debounced 1.5 s, immediate on terminal states, child handle excluded, logs capped at 400); restart re-loads them and marks interrupted running jobs failed; the delete route removes the file. Smoke-tested through the functions, not in a running server | 90% |
+| Milestone 4 check | Partial: cold + warm chunked renders of the money-doubles 9:16 plan pass end to end (75 s, −14.3 LUFS master). The edit-one-caption log check is still open | 20% |
 
 **Time left (rough):** 1 to 1.5 working days on a laptop that is not busy rendering other work. Most of it is the renderer's real-render test and the milestone check; render-heavy steps run about 3-5× slower while other sessions render.
 
@@ -87,12 +87,12 @@ Requests for one film run one at a time (they share the stage files).
 - **Problem found:** one new Kitten line took **309-519 s** while other sessions were rendering (CPU 58-75%). Each synthesis starts a new Python process, imports torch, loads the model, and runs on all 12 threads, which fight the render processes.
 
 ## Pending work, in order
-1. **Finish the renderer.** Write `src/generator/render/index.ts` → `renderChunked(spec, id, { quality, out, onProgress })`: `ensureBundle` → shared browser → `selectComposition` (WhatIfVideo, inputProps `{spec}`) → `planChunks` → `renderChunks` (missing only) → `renderAudioTrack` (cached) → `joinChunks` → return `{ output, chunks: {total, rendered, reused}, seconds }`. Then add `--chunked` to `generate.ts` `renderOnly`: after `resolveAudio`, call `renderChunked` instead of the `remotion bundle` + `remotion render` CLI calls; keep `masterAudio` and the report (add chunk stats); print `Rendered a/b` lines (server/jobs.ts parses them). The default CLI path stays as it is.
-2. **Test the renderer for real** (needs a quiet machine): cold render of a planned video with `--chunked`; change one caption; render again → log must say 1 chunk rendered, rest reused. Check: same total frames as the CLI render (ffprobe `-count_frames`), first frame of each chunk equal to a full render's frame (hash or small pixel diff), assets load through the junction (fonts, GLBs, audio), audio length = video length. Record cold / warm / CLI times.
+1. ~~**Finish the renderer.**~~ DONE 2026-10-24: `renderChunked(spec, id, { quality, out, log, onFrames })` in `src/generator/render/index.ts` (bundle -> shared browser -> selectComposition with the metadata pinned to videoSeconds -> planRender -> renderChunks -> renderAudioTrack -> joinChunks), and `--chunked` in `generate.ts` renderOnly (keeps masterAudio and the report; the report gains a `chunks` block; prints `Rendered n/m` lines, which server/jobs.ts already parses). Verified with a real cold render: `npx tsx src/generator/generate.ts --from-spec output/milestone-money-doubles-9x16-spec.json --chunked` -> 75 s total (bundle 1.6 s, two chunks 32 s + 25 s, audio 4.5 s), frame counts checked per chunk and after the join, mastered to -14.3 LUFS. Was originally → `renderChunked(spec, id, { quality, out, onProgress })`: `ensureBundle` → shared browser → `selectComposition` (WhatIfVideo, inputProps `{spec}`) → `planChunks` → `renderChunks` (missing only) → `renderAudioTrack` (cached) → `joinChunks` → return `{ output, chunks: {total, rendered, reused}, seconds }`. Then add `--chunked` to `generate.ts` `renderOnly`: after `resolveAudio`, call `renderChunked` instead of the `remotion bundle` + `remotion render` CLI calls; keep `masterAudio` and the report (add chunk stats); print `Rendered a/b` lines (server/jobs.ts parses them). The default CLI path stays as it is.
+2. **Test the renderer for real — PARTIALLY done 2026-10-24.** Cold render: done (above, 75 s). Audio track reused: demonstrated live twice (`[audio] track reused (500f…)` across runs). Warm CHUNK reuse: not yet demonstrated live — the bundle hash changed between every probe (another session edits src/ continuously; 12 different hashes in 10 minutes), so every chunk key was invalidated each time. This is correct behaviour (code changed), but the reuse branch of renderChunks has not executed against a real cache yet. On a quiet machine this takes one minute: run the same `--chunked` command twice unchanged, then once with one caption edited in the film; expected `chunks rendered 0, reused 2` and then `rendered 1, reused 1`. Also still open: first-frame-of-chunk pixel check against a full render. Was originally cold render of a planned video with `--chunked`; change one caption; render again → log must say 1 chunk rendered, rest reused. Check: same total frames as the CLI render (ffprobe `-count_frames`), first frame of each chunk equal to a full render's frame (hash or small pixel diff), assets load through the junction (fonts, GLBs, audio), audio length = video length. Record cold / warm / CLI times.
 3. **Make text edits fast.** (a) `/edit` answers at once with estimated timing (`prepareFilm(id, { voice: "estimate" })`), then measures in the background; add `GET /api/film/:id/status` and let the UI refresh when `measured` turns true. (b) A persistent Kitten worker (keep one Python process with the model loaded; send lines as JSON lines) so a line costs only its generation time; try fewer torch threads (4) while renders run. Measure before and after.
 4. **Open the editor in a browser** (`npm run server` + `npm run ui`, then `?tab=editor&film=<id>`): check the timeline, playhead sync, Inspector save, Ask AI proposal + Apply (needs the Ollama key: other laptop), undo/redo, history. Screenshot and fix what looks wrong.
-5. **Editor Render button → chunked render**: pass `--chunked` through the render job (server/jobs.ts builds the generate.ts args).
-6. **Jobs saved to disk** in `server/jobs.ts` so they survive a server restart.
+5. ~~**Editor Render button → chunked render**~~ DONE 2026-10-24: `/api/render-spec` accepts `{chunked}` and passes `--chunked`; `renderSpec(specId, audio, { chunked })` in ui/src/api.ts; the editor's Make-the-video button always renders chunked now. Was originally pass `--chunked` through the render job (server/jobs.ts builds the generate.ts args).
+6. ~~**Jobs saved to disk**~~ DONE 2026-10-24: jobs persist to `output/jobs/<id>.json`; on startup the server re-loads them and marks running/queued jobs failed with "Interrupted: the server restarted". Not smoke-tested with an actual restart of a running server yet.
 7. **"Keep timing" vs "reflow"** for text edits (timeline solver keeps other beats where they are and squeezes or stretches only the edited beat).
 8. **Milestone 4 check:** a 3-minute 16:9 video; edit one caption; the log shows 1 chunk re-rendered and the rest reused, and the total time is a small fraction of a full render. Then the user reviews.
 
@@ -107,7 +107,7 @@ Requests for one film run one at a time (they share the stage files).
 ## Working next to Phase 3
 - The Phase 3 chat owns: `spec.schema.ts`, `pipeline/{director,assemble,llm,shots,transitions}.ts`, `src/compositions/*` (except `WhatIfAudio.tsx`), `src/generator/{camera,look,qa}/*`, `layout.ts`, `look-choice.ts`, `scripts/milestone.ts`, `scripts/photographer.ts`. Phase 4 must not edit them.
 - Phase 4 owns: `server/index.ts`, `server/jobs.ts`, `src/generator/generate.ts`, the UI files above, `src/generator/{film,render}/*`, `pipeline/editor.ts`.
-- Renders: Node-API renders must pass `gl: "angle"` (on `openBrowser` when the browser is shared). Phase 4 uses `out/phase4-*` folders only, never `out/render-bundle` (the CLI path's shared bundle).
+- Renders: Node-API renders must pass `gl: "angle"` (on `openBrowser` when the browser is shared). The CLI render bundles per id (`out/render-bundle-<id>`, milestone 2-lane pool); the chunked path uses `out/phase4-bundles/<hash>` — shared but read-only once built (atomic rename), so two chunked renders can run side by side. Never use the old shared `out/render-bundle`.
 - Video length: `videoSeconds(spec)` from `spec.schema.ts` (a planned video ends exactly at the timeline end).
 - Agree before any `npm install`.
 
@@ -133,3 +133,9 @@ Player sync: memoized `<Player>` with a ref, `frameupdate` for the playhead (no 
   - Anything reading R3F `delta`, state built up from frame 0, or `durationInFrames` breaks chunking.
   - The first frame of a chunk is a fresh mount, so QA it against a full render.
 - **Prior art.** Revideo (MIT, `midrender/revideo`) uses the same muted-parts + separate-audio pattern.
+
+## Session 2026-10-24 (Phase 4 lane)
+- Written: `render/index.ts` (renderChunked), the `--chunked` CLI flag, job persistence in `server/jobs.ts` (+ `removeJobFile`), `chunked` in `server/index.ts` render-spec, `renderSpec(..., {chunked})` in the UI API, the editor's render button passes chunked.
+- Real render verified cold (above). Bundle build ~1.6-2 s warm cache miss (rspack, no public copy), 2 chunks of 441/312 frames at 32/25 s each (draft 540×960), audio pass 4.5-6.8 s.
+- Known caveat: any edit under `src/` (including another lane's) changes the bundle hash and with it every chunk key — chunk reuse is for idle trees. `out/phase4-bundles` keeps the newest 4; chunk cache prunes keys unused for 5 runs.
+- The UI was still not opened in a browser.

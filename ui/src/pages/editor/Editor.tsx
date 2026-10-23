@@ -185,7 +185,8 @@ export default function Editor() {
     setRendering(true);
     try {
       // No audio override: the film's own voice settings are already in the spec.
-      const { jobId } = await renderSpec(filmId);
+      // Chunked render: only the chunks this edit session changed are re-rendered.
+      const { jobId } = await renderSpec(filmId, undefined, { chunked: true });
       setQuery({ tab: "generate", step: "3", job: jobId, plan: undefined, film: undefined });
     } catch (e) {
       toast.error(errorMessage(e));

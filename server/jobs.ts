@@ -44,12 +44,91 @@ const jobs = new Map<string, Job>();
 const sseClients = new Map<string, Set<ServerResponse>>();
 let jobIdCounter = 0;
 
+/* ------------------------------------------------------------------ */
+/*  Disk persistence — jobs survive a server restart                   */
+/* ------------------------------------------------------------------ */
+
+const JOBS_DIR = join(ROOT, "output", "jobs");
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const MAX_PERSISTED_LOGS = 400;
+
+function writeJobFile(job: Job): void {
+  try {
+    fs.mkdirSync(JOBS_DIR, { recursive: true });
+    // The child handle is process-bound and is never saved.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { child, ...rest } = job;
+    const logs = rest.logs?.length > MAX_PERSISTED_LOGS ? rest.logs.slice(-MAX_PERSISTED_LOGS) : rest.logs ?? [];
+    fs.writeFileSync(join(JOBS_DIR, `${job.id}.json`), JSON.stringify({ ...rest, logs }));
+  } catch {
+    /* persistence must never break the job */
+  }
+}
+
+/** Persist a job. Debounced by default (progress can change several times a second). */
+function persist(job: Job, immediate = false): void {
+  if (immediate) {
+    const t = saveTimers.get(job.id);
+    if (t) clearTimeout(t);
+    saveTimers.delete(job.id);
+    writeJobFile(job);
+    return;
+  }
+  if (saveTimers.has(job.id)) return;
+  saveTimers.set(
+    job.id,
+    setTimeout(() => {
+      saveTimers.delete(job.id);
+      writeJobFile(job);
+    }, 1500),
+  );
+}
+
+/** Remove a job's file (used when a job is deleted from the dashboard). */
+function deleteJobFile(id: string): void {
+  const t = saveTimers.get(id);
+  if (t) clearTimeout(t);
+  saveTimers.delete(id);
+  try { fs.rmSync(join(JOBS_DIR, `${id}.json`), { force: true }); } catch { /* ignore */ }
+}
+
+/** Load jobs written by a previous server run; an in-flight job was killed with it. */
+function loadJobsFromDisk(): void {
+  if (!fs.existsSync(JOBS_DIR)) return;
+  for (const f of fs.readdirSync(JOBS_DIR)) {
+    if (!/^[0-9]+-[0-9]+\.json$/.test(f)) continue;
+    let j: Job;
+    try {
+      j = JSON.parse(fs.readFileSync(join(JOBS_DIR, f), "utf8")) as Job;
+    } catch {
+      continue;
+    }
+    if (!j || typeof j.id !== "string" || jobs.has(j.id)) continue;
+    if (j.status === "running" || j.status === "queued") {
+      // The spawned CLI died with the server: mark it so the dashboard shows why.
+      j.status = "failed";
+      j.error = `${j.error ? j.error + "\n" : ""}Interrupted: the server restarted while this job was running. Run it again.`;
+      j.timeline = [...(j.timeline ?? []), { stage: "failed", startedAt: Date.now() }];
+      j.logs = [...(j.logs ?? []), "Server restarted — job lost."];
+    }
+    j.child = undefined;
+    j.logs ??= [];
+    j.timeline ??= [{ stage: j.stage ?? "script", startedAt: Date.now() }];
+    jobs.set(j.id, j);
+    sseClients.set(j.id, new Set());
+    const n = Number(j.id.split("-").pop());
+    if (Number.isFinite(n) && n > jobIdCounter) jobIdCounter = n;
+  }
+}
+loadJobsFromDisk();
+
 function setStage(job: Job, stage: string) {
   if (job.stage === stage) return;
   const cur = job.timeline[job.timeline.length - 1];
   if (cur && cur.endedAt == null) cur.endedAt = Date.now();
   job.stage = stage;
   job.timeline.push({ stage, startedAt: Date.now() });
+  persist(job);
 }
 
 function broadcast(jobId: string, data: unknown) {
@@ -80,11 +159,13 @@ export function createJob(premise: string, provider?: string, model?: string): J
   };
   jobs.set(id, job);
   sseClients.set(id, new Set());
+  persist(job, true);
   evictOldJobs();
   return job;
 }
 
 export function getJob(id: string): Job | undefined { return jobs.get(id); }
+export function removeJobFile(id: string): void { deleteJobFile(id); }
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
 export function cancelJob(id: string): boolean {
   const job = jobs.get(id);
@@ -92,6 +173,7 @@ export function cancelJob(id: string): boolean {
   try { job.child?.kill("SIGTERM"); } catch { /* ignore */ }
   job.status = "cancelled";
   job.error = "Cancelled by user";
+  persist(job, true);
   broadcast(job.id, { type: "failed", error: job.error });
   return true;
 }
@@ -115,6 +197,7 @@ function evictOldJobs() {
     }
     sseClients.delete(victim.id);
     jobs.delete(victim.id);
+    deleteJobFile(victim.id);
   }
 }
 
@@ -282,6 +365,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
         stage: job.stage,
         etaSec: job.etaSec,
       });
+      persist(job);
     }
   };
   child.stdout.on("data", (buf) => handleOutput(buf.toString()));
@@ -328,6 +412,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       try { c.end(); } catch { /* ignore */ }
     }
     sseClients.delete(job.id);
+    persist(job, true);
   });
 }
 

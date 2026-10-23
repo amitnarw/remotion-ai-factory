@@ -6,7 +6,7 @@ import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
 const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, getJob, getAllJobs, premiseSlug, runJob, cancelJob, subscribeSSE } from "./jobs";
+import { createJob, getJob, getAllJobs, premiseSlug, runJob, cancelJob, subscribeSSE, removeJobFile } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
@@ -463,7 +463,7 @@ app.post("/api/plan/:specId/recast", async (req, res) => {
 
 /** Render an approved plan's spec (never renders without this call). */
 app.post("/api/render-spec", (req, res) => {
-  const { specId, audio } = req.body as { specId?: string; audio?: unknown };
+  const { specId, audio, chunked } = req.body as { specId?: string; audio?: unknown; chunked?: boolean };
   if (!specId || !/^[a-z0-9-]+$/.test(specId)) {
     return res.status(400).json({ error: "specId required", fix: "Approve from the review screen" });
   }
@@ -502,6 +502,8 @@ app.post("/api/render-spec", (req, res) => {
   }
   const extra = ["--from-spec", specPathRel.replace(/\\/g, "/")];
   if (audio) extra.push("--audio-file", `output/${specId}-audio.json`);
+  // The editor's Make-the-video button renders through the chunked, cached renderer.
+  if (chunked) extra.push("--chunked");
   runJob(job, { extraArgs: extra });
   res.json({ jobId: job.id });
 });
@@ -767,6 +769,7 @@ app.get("/api/voices", (req, res) => {
 });
 
 app.delete("/api/jobs/:id", (req, res) => {
+  removeJobFile(req.params.id);
   const ok = cancelJob(req.params.id);
   if (!ok) return res.status(404).json({ error: "job not running or unknown" });
   res.json({ cancelled: true });
