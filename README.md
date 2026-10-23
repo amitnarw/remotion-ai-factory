@@ -1,50 +1,43 @@
-# AI Video Factory — "What If" Shorts Generator
+# AI Video Factory — "What If" video generator
 
-A 100% automated, production-ready pipeline that turns a single "what if" premise
-into an upload-ready vertical MP4 — no voiceover, just event-synced sound effects
-and ambient beds, in the style of @atomicwhatif / @IFOLOGYFILMS.
+Turns one "what if" premise into a finished low-poly 3D video: story, voices,
+worlds, captions, music and sound effects, mastered and ready to upload.
+Formats: 9:16 Shorts (15–90 s), 16:9 (up to 10 min) and 1:1.
 
 ## What it does
 
-Run one command:
+From the premise, a chain of AI roles (each can use its own model) builds the plan:
 
-```bash
-npm run generate -- "What if gravity disappeared for just 5 seconds?"
-```
+1. **Writer** — the story, beat by beat: narration, character lines, what is on screen.
+2. **Voice** — every line is spoken by KittenTTS 2 or VoxCPM2. The measured length of
+   each line sets the timing, so speech never overlaps and captions follow the voice.
+3. **Director** — picks the 3D world, time of day, weather, camera style, characters and
+   on-screen devices (counters, timers, props, world events) for each part of the story.
+4. **Sound designer** — music by mood, ambience beds, hits and whooshes, all from a free
+   CC0 library.
+5. **Assembler** — code (not the AI) turns all of it into exact frame times.
+6. **Render** — Remotion renders the 3D scenes and captions; the audio is mixed, ducked
+   under speech and mastered to -14 LUFS.
 
-The pipeline does everything itself — you never touch code, edit timelines, or
-mix audio:
-
-1. **Shot design** — premise → scene-by-scene timeline (shots, physics events,
-   captions, timer values) as a validated JSON spec.
-2. **3D scene** — low-poly pastel world built in React Three Fiber inside
-   Remotion's `<ThreeCanvas>`, rendered deterministically frame-by-frame.
-3. **HUD & captions** — "TIME WITHOUT ___" timer, uppercase fact captions with a
-   highlighted keyword, and the opening hook card — all HTML overlays locked to
-   the simulation clock.
-4. **Sound design** — SFX one-shots and ambient beds pinned to exact frames
-   (sync is arithmetic: `frame = t × fps`), so picture, caption, timer and audio
-   can never drift.
-5. **Render & encode** — Remotion renders the final 1080×1920 MP4 (H.264 + AAC).
-
-Output: an upload-ready MP4 in `output/` plus a JSON report.
+Every stage is saved, so small changes (a voice, a caption look) rebuild the video
+without asking the AI again.
 
 ## Quick start
 
+See **Setting up on a new machine** below first. Then:
+
 ```bash
-# 1. Install dependencies (already done on first setup)
-npm install
-
-# 2. Build the SFX library (one-time)
-npm run setup
-
-# 3. Generate a video
-npm run generate -- "What if gravity disappeared for just 5 seconds?"
-npm run generate -- "What if time stopped for just 5 seconds?"
-npm run generate -- "What if oxygen disappeared for just 5 seconds?"
+npm run server      # API on http://127.0.0.1:5178
+npm run ui          # dashboard on http://localhost:5177
 ```
 
-The final MP4 lands in `output/`. Upload it directly to YouTube Shorts.
+Or from the command line:
+
+```bash
+npm run generate -- "What if money doubled every 3 seconds?" --format 9:16 --duration 30
+```
+
+The finished MP4 lands in `output/`.
 
 ## Setting up on a new machine
 
@@ -97,7 +90,9 @@ Then, on the **Generate** tab:
    - **Quality:** *Draft* renders at half size for quick checks; *Final* is full size.
    - **Captions:** pick a look (bold pop, clean, documentary serif, neon, minimal pill), then adjust the position, font, size, colours, box and entry animation. The live preview shows the same caption the video will use.
    - **Voice:** narration and character voices are two separate switches. Each has its own engine (KittenTTS 2 or VoxCPM2). Use ▶ to listen before you choose. Lines you have already rendered are reused from a cache, so re-running a story is faster.
-2. **Write the plan.** The AI writes the scene plan. Nothing renders yet.
+   - **AI review pass** (optional): a critic flags weak beats and the writer rewrites them. One extra AI call.
+2. **Write the plan.** The AI works in stages, shown as pills: the **writer** writes the story beat by beat, the **voice** is generated (or estimated) so its real length sets the timing, the **director** picks the worlds and on-screen devices, the **sound designer** picks music, beds and hits, and everything is **put together** with exact timings. Nothing renders yet.
+   - The review screen's **Story** section lists every beat and line. Each character's voice can be auditioned (▶) and changed; changing it rebuilds the plan without calling the AI again.
 3. **Review and approve.** Check the plan, then approve to render. Progress and logs appear
    live. The finished video is in the Videos tab and in `output/`.
 
@@ -106,9 +101,10 @@ Then, on the **Generate** tab:
 Open the **Providers** tab, then **Model roles**. Each pipeline role can use a different
 provider and model:
 
-- **Writer** writes the story. This is the one used today.
-- **Director, Sound designer, Critic, Photographer, Editor** are listed now and take effect
-  as their phases land (see `docs/factory/PROGRESS.md`).
+- **Writer** writes the story. **You must choose a model for it**; nothing is picked silently.
+- **Director** and **Sound designer** are used on every plan; **Critic** only with the AI review pass.
+- A role with no model of its own uses the Writer's model.
+- **Photographer** and **Editor** take effect in later phases (see `docs/factory/PROGRESS.md`).
 
 A role left on *Default provider* uses the default. To list the models a provider offers,
 open its card and press **Get models** first. The choices are saved to `ai.config.json`.
@@ -125,20 +121,56 @@ npm run generate -- "<premise>" --from-spec output/<id>-spec.json               
 Flags: `--format 9:16|16:9|1:1`, `--duration <seconds>`, `--scenes 1..12`,
 `--quality draft|final`, `--provider`, `--model`, `--no-render`, `--from-spec`, `--audio-file`.
 
+### Testing without an AI key
+
+```bash
+npm test     # unit and pipeline tests on recorded model replies
+FACTORY_LLM_FIXTURES=test-fixtures/pipeline/money-doubles npx tsx src/generator/generate.ts "What if money doubled every 3 seconds?" --no-render --duration 25 --audio-file test-fixtures/pipeline/money-doubles/audio.json
+```
+
+On a machine with a key, `FACTORY_LLM_RECORD=test-fixtures/pipeline/<name>` saves every model reply so the run can be replayed anywhere.
+
+### Photographer check (one still per shot)
+
+```bash
+npx tsx scripts/photographer.ts <id>      # <id> as in output/<id>-spec.json or output/<id>-props.json
+```
+
+It renders the middle frame of every shot at half size and checks it by code: too dark, crushed or clipped, one flat colour filling the frame (a prop against the lens, a wall), or washed out. If you choose a **Photographer (vision)** model in Providers → Model roles, every still also gets neutral yes/no questions ("Is the wooden jetty clearly visible?", "Is any sea water visible?" after the oceans vanish). The model never sees the story, so it can't just agree with it. Results: `output/<id>/qa/qa.json` plus the stills.
+
+### Milestone check (3 premises × 3 formats)
+
+```bash
+npm run milestone -- --fixtures      # recorded replies, no AI key needed
+npm run milestone                    # your models from Providers → Model roles
+npm run milestone -- --only money-doubles --formats 9:16    # a subset
+```
+
+It plans, renders (draft) and measures each video. Nothing is played: length within ±10%
+of the target, overlapping speech, the longest silence (pass: 4 s or less), how many
+caption words fall inside the line that says them (pass: 95% or more), loudness
+(-14 ±1 LUFS, true peak -1 dBTP or lower, 48 kHz), and no voice line left as an
+estimate. It also saves a strip of 4 frames per video. Results:
+`output/milestone/report.md`. Needs KittenTTS 2 installed; on a CPU the first run
+takes over an hour (the voice cache makes later runs fast).
+
 ### Where the output goes
 
 - `output/<id>-<timestamp>.mp4`: the video.
-- `output/<id>-spec.json`: the plan (scenes, captions, events, settings). Edit and render with `--from-spec`.
+- `output/<id>-spec.json`: the plan (scenes, captions, events, settings, story). Render with `--from-spec`.
+- `output/<id>/`: each pipeline stage's output (story, voice, timeline, direction, sound, plan). The render re-times the video from the measured voice using these.
 - `output/<id>-report.json`: a summary of the run.
 - `output/FAILED-<id>.log`: the error, if a run fails.
 
 ### Known limits right now
 
 - The offline template premises have a fixed length and ignore `--duration`. The AI path honours it.
-- Landscape (16:9) renders at the right size, but the camera framing is still tuned for portrait.
-- Character voices use one default voice per engine. Per-character casting comes with the editor (a later phase).
+- Landscape (16:9) renders at the right size, but the camera framing is still tuned for portrait (Phase 3).
+- Character voices are cast automatically by gender and age. The Kitten preset genders are assumed from their names; audition and recast in the review screen's Story section.
+- KittenTTS 2 on a CPU is slow: about 30 s to load and 40–50 s per spoken line (measured on a 6-core, 12-thread i7-10850H laptop). A 25 s Short with 10 lines takes about 8 minutes of voice work the first time; the cache makes re-renders instant. At plan time the line lengths are estimated (set `FACTORY_PLAN_TTS=1` to synthesize them at plan time instead); the render always measures the real voice and re-times the video. If the real voice runs more than 10% over the chosen length, the render speeds it up a little (at most 1.15×, pitch kept) and says so in the log.
 - Voice settings were tuned by reading the code, not by listening. Judge the sound on your own machine and adjust in `scripts/story-tts.py`.
-- Sound effects and music are still synthesized. Real CC0 libraries come in a later phase.
+- Sound effects and music come from the free library (`npm run audio:library`): Kenney, OpenGameArt, BigSoundBank (25 checked ambience and whoosh clips) and FreePD music. Picks are made by file-name tags, not by listening.
+- Every finished video is mastered to -14 LUFS (the loudness YouTube Shorts plays at). Music and ambience duck under narration.
 
 ### Where the work is tracked
 
@@ -161,19 +193,9 @@ says what is done and what comes next. Read it before continuing the work on ano
 | light | "What if light disappeared for just 100 days?" |
 | sun-set | "What if the sun never set for 1,000 years?" |
 
-Add a new family by adding a template to `TEMPLATES` in
-`src/generator/generate.ts`. Arbitrary premises require an
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` and wiring `llm.ts` (LLM branch
-scaffolded, not yet implemented).
-
-## Output
-
-```
-output/
-├── whatif-<slug>-<timestamp>.mp4    ← upload-ready video
-├── <slug>-spec.json                 ← validated shot spec
-└── <slug>-report.json               ← generation report
-```
+These are used only when no AI provider is set up. They are fixed templates in
+`src/generator/build-family-spec.ts`. Any other premise needs an AI model (see
+**Choosing models for each step**).
 
 ## Tech stack (all version-matched via the official Remotion template)
 
@@ -190,45 +212,39 @@ output/
 
 ```
 src/
-  index.ts                      — registerRoot entry point
-  Root.tsx                      — two Compositions (WhatIfDemo, WhatIfVideo)
+  Root.tsx                      — compositions (WhatIfVideo, WhatIfAudio, world previews)
   generator/
-    generate.ts                 — CLI: premise → spec → render → MP4
-    spec.schema.ts              — zod shot-spec contract
-    timing.ts                   — sec↔frame conversion, ramps (shared by 3D/HUD/audio)
-    spec.example.gravity.json   — fixture spec
+    generate.ts                 — CLI: premise → plan → render → MP4
+    spec.schema.ts              — zod shot-spec contract (story, shots, captions, settings)
+    pipeline/                   — writer → voice → timeline → director → sound → critic → assemble
+    camera/                     — closed-form cinematic camera solver
+    qa/                         — photographer (per-shot still checks + optional vision model)
+    film/ · render/             — editor backend (edits, versions, undo) + chunked renderer
+    audio-resolve.ts · ...      — CC0 library picking, gains, mastering
   compositions/
-    WhatIfVideo/
-      index.tsx                 — master composition (3D + HUD + audio)
-      demo.tsx                  — hardcoded gravity preview
-      audio.tsx                 — <Audio> cue renderer from spec
-      hud/                      — Hook, TimerHUD, Captions (HTML overlays)
-      scenes/                   — 3D scene templates (R3F)
-        shared/primitives.tsx   — Person, Bird, Tree, Ground
-        CityScene.tsx           — low-poly city + pedestrians + birds
-        FirstPersonScene.tsx    — first-person POV + glass of water
-  scripts/
-    setup-sfx.ts                — builds the tagged SFX library (public/sfx/)
-public/
-  sfx/                          — synthesized SFX library + catalog
+    WhatIfVideo/                — master composition (3D + HUD + audio)
+    camera/ · look/             — ShotCamera wiring, cinematic grade (bloom/ACeS/grain)
+    *Stage.tsx                  — the 7 world kits (street, ocean, space, forest, ...)
+  world/                        — one-world engine (places, cities, roads, terrain, globe, actors)
+  server/ · ui/                 — Express API + dashboard (generate, providers, editor)
+scripts/                        — setup, audio library, assets, milestone, photographer
+docs/factory/                   — the 6-phase plan and progress (start here)
 ```
 
 ## Sound library
 
-`npm run setup` builds `public/sfx/` — a tagged WAV library (~9 sounds) synthesized
-in pure Node, plus `sfx.catalog.json` used by the auto sound-picker. For a
-production release, replace these with real CC0 field recordings
-(freesound.org, Kenney, opengameart.org) and re-run `npm run setup` to rebuild
-the catalog.
+`npm run audio:library` builds `public/library/` — 752 free CC0/FreePD files
+(625 sfx, 86 stingers, 40 music tracks, one ambience clip, re-measured LUFS per
+file) plus `audio-library.json`, the index the sound designer picks from. The
+old 9-sound synthesized `public/sfx/` set stays only as a fallback.
 
-## Docs & agent contract
+## Docs
 
-- `INSTRUCTIONS.md` — 1-page quickstart ("change nothing" guarantee)
-- `ai/SKILL.md` — full autonomous agent contract (pipeline, iteration budgets,
-  quality gates) — this is what an AI coding agent follows to run the factory
-  hands-free
-- `ai/PROMPTS.md` — shot-spec prompt templates + few-shot examples
-- `docs/factory/` — the factory rebuild: analysis, research, plan and progress
+- `docs/factory/README.md` — start here; index of the factory rebuild
+- `docs/factory/PROGRESS.md` — current status, what's done, the exact next step
+- `docs/factory/05-plan.md` — the agreed 6-phase plan
+- The old-era `ai/SKILL.md`, `ai/PROMPTS.md` and `INSTRUCTIONS.md` were removed
+  (superseded by the pipeline, dashboard and this README)
 
 ## License
 
