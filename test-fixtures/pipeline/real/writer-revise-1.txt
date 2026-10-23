@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b1","say":"Your dollar doubles twice."},{"beat":"b2","say":"Pockets gush thousands."},{"beat":"b4","say":"Vendor sells million-dollar sandwiches."},{"beat":"b5","say":"Bread: eighty trillion."},{"beat":"b6","say":"Everyone's a trillionaire; nobody is."},{"beat":"b7","say":"Money dies; bread buys songs."}]}

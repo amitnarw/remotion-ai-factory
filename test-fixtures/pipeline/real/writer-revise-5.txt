@@ -1,0 +1,1 @@
+{ "edits": [ { "beat": "b4", "say": "Accounts hit quadrillions. Banks freeze." }, { "beat": "b6", "say": "Firewood outvalues cash." }, { "beat": "b7", "say": "Bills dwarf skyscrapers." }, { "beat": "b8", "say": "Paper outweighs Earth." }, { "beat": "b9", "say": "Nine minutes: cash outweighs the universe." }, { "beat": "b10", "say": "The biggest fortune: worthless." } ] }

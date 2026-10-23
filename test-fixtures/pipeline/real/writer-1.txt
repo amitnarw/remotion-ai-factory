@@ -1,0 +1,61 @@
+{
+  "title": "The 3-Second Dollar",
+  "hook": "What if your money doubled every three seconds?",
+  "mood": "playful",
+  "characters": [
+    { "name": "Mara", "gender": "female", "age": "adult", "look": "street vendor with a red food cart" }
+  ],
+  "beats": [
+    {
+      "say": "Your single dollar becomes two, then four.",
+      "lines": [],
+      "see": "Close-up: a low-poly hand opens, one glowing dollar splits into two.",
+      "pace": "quick",
+      "stress": "four"
+    },
+    {
+      "say": "Ten seconds in, your pockets gush thousands.",
+      "lines": [],
+      "see": "Low-poly man on a city sidewalk, banknotes snowing from his coat.",
+      "pace": "quick",
+      "stress": "thousands"
+    },
+    {
+      "say": "But every wallet on Earth doubles too.",
+      "lines": [],
+      "see": "Wide street: every pedestrian's pockets glow and burst with cash.",
+      "pace": "normal",
+      "stress": "every"
+    },
+    {
+      "say": "The vendor marks sandwiches at one million.",
+      "lines": [
+        { "who": "Mara", "text": "Sandwich costs a million now, friend!" }
+      ],
+      "see": "Corner food cart, chalkboard price flips from five to one million.",
+      "pace": "quick",
+      "stress": "million"
+    },
+    {
+      "say": "Two minutes in, bread costs eighty trillion.",
+      "lines": [],
+      "see": "Bakery window: stacked loaves, price tags ballooning into the sky.",
+      "pace": "quick",
+      "stress": "trillion"
+    },
+    {
+      "say": "Everyone is a trillionaire, so nobody is.",
+      "lines": [],
+      "see": "Avenue buried in mountains of banknotes, towers barely peeking out.",
+      "pace": "linger",
+      "stress": "nobody"
+    },
+    {
+      "say": "Money dies; people trade bread for songs.",
+      "lines": [],
+      "see": "Sunlit park: a girl swaps bread for a busker's guitar song.",
+      "pace": "linger",
+      "stress": "dies"
+    }
+  ]
+}

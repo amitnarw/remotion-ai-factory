@@ -1,0 +1,80 @@
+{
+  "title": "The Walking Forest",
+  "hook": "What if the forest could walk?",
+  "mood": "epic",
+  "characters": [
+    {
+      "name": "Mara",
+      "gender": "female",
+      "age": "adult",
+      "look": "park ranger in a green jacket with binoculars"
+    },
+    {
+      "name": "Tom",
+      "gender": "male",
+      "age": "old",
+      "look": "farmer in overalls and a straw hat"
+    }
+  ],
+  "beats": [
+    {
+      "say": "Pines rip their roots free.",
+      "lines": [],
+      "see": "Low-poly pines yank gnarled roots from dark soil, dirt raining down.",
+      "pace": "quick",
+      "stress": "roots"
+    },
+    {
+      "say": "Whole groves stride downhill.",
+      "lines": [],
+      "see": "Hundreds of trees walk on root-legs toward a small town.",
+      "pace": "quick",
+      "stress": "downhill"
+    },
+    {
+      "say": "Ranger Mara sounds the alarm.",
+      "lines": [
+        {
+          "who": "Mara",
+          "text": "They're heading for town."
+        }
+      ],
+      "see": "Wooden watchtower at dawn; Mara with binoculars, marching treeline below.",
+      "pace": "quick",
+      "stress": "alarm"
+    },
+    {
+      "say": "Oaks cross the highway.",
+      "lines": [],
+      "see": "Giant oaks straddle cracked asphalt between abandoned cars.",
+      "pace": "quick",
+      "stress": "highway"
+    },
+    {
+      "say": "Whole cities evacuate overnight.",
+      "lines": [],
+      "see": "Gridlocked highways of cars fleeing a skyline as trees advance.",
+      "pace": "normal",
+      "stress": "evacuate"
+    },
+    {
+      "say": "They ignore the cities entirely.",
+      "lines": [],
+      "see": "Towering trunks step over fleeing crowds toward a vast brown strip-mine.",
+      "pace": "normal",
+      "stress": "ignore"
+    },
+    {
+      "say": "They kneel here to heal.",
+      "lines": [
+        {
+          "who": "Tom",
+          "text": "Welcome home."
+        }
+      ],
+      "see": "Trees sink into the crater; green spreads, an old farmer plants a sapling.",
+      "pace": "linger",
+      "stress": "heal"
+    }
+  ]
+}

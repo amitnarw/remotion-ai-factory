@@ -1,0 +1,18 @@
+{
+  "title": "The Money Black Hole",
+  "hook": "What if money doubled every 3 seconds?",
+  "mood": "epic",
+  "characters": [
+    { "name": "Dana", "gender": "female", "age": "adult", "look": "cashier in a blue apron" },
+    { "name": "Leo", "gender": "male", "age": "adult", "look": "street sweeper in an orange vest" }
+  ],
+  "beats": [
+    { "say": "Your one dollar becomes two.", "lines": [], "see": "Café table: a wallet flips open, two glowing bills where one sat.", "pace": "quick", "stress": "two" },
+    { "say": "Seconds later, pockets burst open.", "lines": [], "see": "Street corner floods with green bills spraying from a man's jacket.", "pace": "quick", "stress": "burst" },
+    { "say": "Sixty seconds, you're a millionaire.", "lines": [], "see": "A man stands knee-deep in a hill of cash, bills still raining down.", "pace": "normal", "stress": "millionaire" },
+    { "say": "Two minutes, money means nothing.", "lines": [{ "who": "Dana", "text": "Bread costs a billion!" }], "see": "Stripped supermarket shelves, Dana gapes at a billion-dollar bread price.", "pace": "quick", "stress": "nothing" },
+    { "say": "Cash buries entire cities.", "lines": [], "see": "Skyscrapers poke out of a green cash mountain swallowing the skyline.", "pace": "normal", "stress": "buries" },
+    { "say": "The pile gains crushing weight.", "lines": [{ "who": "Leo", "text": "It's pulling everything in!" }], "see": "Leo clings to a lamppost as streets crack and cars slide toward the mountain.", "pace": "normal", "stress": "weight" },
+    { "say": "Your money swallows Earth.", "lines": [], "see": "A black hole ringed with glowing bills devours the low-poly Earth.", "pace": "linger", "stress": "swallows" }
+  ]
+}

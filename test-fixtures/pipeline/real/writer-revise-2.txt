@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b1","say":"Dollars double."},{"beat":"b2","say":"Minutes mint millionaires."},{"beat":"b3","say":"Bank vaults burst."},{"beat":"b4","say":"Cash floods streets."},{"beat":"b5","say":"Prices explode."},{"beat":"b6","say":"Money turns worthless."}]}

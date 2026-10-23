@@ -1,0 +1,55 @@
+{
+  "scenes": [
+    {
+      "start": "b1",
+      "kit": "street-block",
+      "time": "golden",
+      "weather": "none",
+      "subject": "none",
+      "crowd": "busy",
+      "camera": "crane-reveal",
+      "accent": "terracotta",
+      "cast": []
+    },
+    {
+      "start": "b7",
+      "kit": "park",
+      "time": "noon",
+      "weather": "none",
+      "subject": "none",
+      "crowd": "light",
+      "camera": "orbit-drift",
+      "accent": "classic",
+      "cast": [
+        { "asset": "blocky_characters_character_a", "count": 1, "action": "idle" },
+        { "asset": "blocky_characters_character_b", "count": 1, "action": "idle" },
+        { "asset": "blocky_characters_character_c", "count": 1, "action": "cheer" }
+      ]
+    }
+  ],
+  "counter": {
+    "title": "EVERYONE'S MONEY",
+    "unit": "x",
+    "steps": [
+      { "beat": "b1", "value": "4", "sub": "YOUR DOLLAR, DOUBLED TWICE" },
+      { "beat": "b2", "value": "8000", "sub": "POCKETS GUSH THOUSANDS" },
+      { "beat": "b3", "value": "500000", "sub": "EVERY WALLET ON EARTH TOO" },
+      { "beat": "b4", "value": "1000000", "sub": "SANDWICHES: A MILLION EACH" },
+      { "beat": "b5", "value": "100000000", "sub": "BREAD: EIGHTY TRILLION" },
+      { "beat": "b6", "value": "9999999999", "sub": "EVERYONE'S A TRILLIONAIRE" },
+      { "beat": "b7", "value": "0", "sub": "MONEY DIES; BREAD BUYS SONGS" }
+    ]
+  },
+  "timer": null,
+  "prop": { "style": "bill-columns", "growth": "multiply", "anchor": "sidewalk-right" },
+  "world": [],
+  "shots": [
+    { "beat": "b1", "subject": "hero", "size": "CU", "angle": "eye", "side": "front", "move": "push_in", "place": "center", "energy": "calm", "style": "smooth" },
+    { "beat": "b2", "subject": "walker", "size": "MS", "angle": "eye", "side": "left34", "move": "follow", "place": "left_third", "energy": "normal", "style": "smooth" },
+    { "beat": "b3", "subject": "scene", "size": "WS", "angle": "eye", "side": "auto", "move": "dolly_zoom", "place": "auto", "energy": "bold", "style": "locked" },
+    { "beat": "b4", "subject": "hero", "size": "CU", "angle": "low", "side": "front", "move": "push_in", "place": "center", "energy": "bold", "style": "smooth" },
+    { "beat": "b5", "subject": "skyline", "size": "WS", "angle": "low", "side": "auto", "move": "crane_up", "place": "auto", "energy": "bold", "style": "smooth" },
+    { "beat": "b6", "subject": "scene", "size": "EWS", "angle": "overhead", "side": "auto", "move": "pull_out", "place": "auto", "energy": "bold", "style": "handheld" },
+    { "beat": "b7", "subject": "scene", "size": "WS", "angle": "eye", "side": "front", "move": "orbit_left", "place": "center", "energy": "calm", "style": "smooth" }
+  ]
+}

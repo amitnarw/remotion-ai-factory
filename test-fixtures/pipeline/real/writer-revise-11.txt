@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b3","say":"It crosses the interstate."},{"beat":"b4","say":"It traps Ruth."},{"beat":"b6","say":"Mara tracks the line."},{"beat":"b7","say":"Chicago watches."},{"beat":"b8","say":"Downtown empties."},{"beat":"b10","say":"The wasteland greens."}]}

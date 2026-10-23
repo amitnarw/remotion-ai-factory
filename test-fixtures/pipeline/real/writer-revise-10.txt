@@ -1,0 +1,1 @@
+{ "edits": [ { "beat": "b7", "say": "Footprints sprout forests." }, { "beat": "b2", "say": "It crosses the highway." }, { "beat": "b3", "say": "Shadow swallows suburbs." }, { "beat": "b4", "say": "Wildlife rides along." }, { "beat": "b5", "say": "Bare land behind." } ] }
