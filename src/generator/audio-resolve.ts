@@ -92,6 +92,9 @@ export interface AudioReport {
   transitions: number;
   voiceLines: number;
   libraryBuilt: boolean;
+  /** Cues or beds dropped because they had no library match and no synth
+   *  fallback file (a kept one would crash the render with a MediaError). */
+  dropped: number;
 }
 
 /** Gain (linear) that brings an entry to its target loudness without clipping. */
@@ -132,27 +135,38 @@ export function resolveAudio(input: ShotSpec, seed: string): { spec: ShotSpec; r
     transitions: 0,
     voiceLines: 0,
     libraryBuilt: library.length > 0,
+    dropped: 0,
   };
 
   // One-shot events
   for (const ev of spec.events ?? []) {
-    for (const [i, cue] of (ev.sfx ?? []).entries()) {
+    const keep: Array<{ tag: string }> = [];
+    for (const cue of ev.sfx ?? []) {
       const q = queryFor(cue.tag);
-      const hit = pickEntry(library, q.kinds, q.sets, `${seed}|${ev.name}|${cue.tag}|${i}`);
+      const hit = pickEntry(library, q.kinds, q.sets, `${seed}|${ev.name}|${cue.tag}|${keep.length}`);
       if (hit) {
         cue.file = hit.file;
         cue.gain = gainFor(hit);
         report.sfxLibrary += 1;
-      } else {
+        keep.push(cue);
+      } else if (existsSync(join(ROOT, "public", "sfx", `${cue.tag}.wav`))) {
         report.sfxSynth += 1; // composition falls back to public/sfx/<tag>.wav
+        keep.push(cue);
+      } else {
+        // No library match and no synth fallback: keeping the cue would crash
+        // the render with a MediaError (found by forest-walks 16:9, whose
+        // engine_hum fallback file did not exist). Drop it and say so.
+        report.dropped += 1;
+        console.warn(`[audio] cue "${cue.tag}" dropped: no library match and no synth fallback (public/sfx/${cue.tag}.wav missing)`);
       }
     }
+    ev.sfx = keep;
   }
 
   const audio: SpecAudio = spec.audio ?? {};
 
   // Beds (ambience). Every bed loops; the composition handles the synth fallback too.
-  for (const [i, bed] of (audio.ambient ?? []).entries()) {
+  audio.ambient = (audio.ambient ?? []).filter((bed, i) => {
     const q = queryFor(bed.tag);
     const hit = pickEntry(library, ["ambience"], q.sets, `${seed}|bed|${bed.tag}|${i}`);
     bed.loop = true;
@@ -160,10 +174,18 @@ export function resolveAudio(input: ShotSpec, seed: string): { spec: ShotSpec; r
       bed.file = hit.file;
       bed.gain = gainFor(hit);
       report.ambientLibrary += 1;
-    } else {
-      report.ambientSynth += 1;
+      return true;
     }
-  }
+    if (existsSync(join(ROOT, "public", "sfx", `${bed.tag}.wav`))) {
+      report.ambientSynth += 1;
+      return true;
+    }
+    // No library match and no synth fallback: keep only beds the render can
+    // actually play (a missing file crashes the render with a MediaError).
+    report.dropped += 1;
+    console.warn(`[audio] ambient bed "${bed.tag}" dropped: no library match and no synth fallback (public/sfx/${bed.tag}.wav missing)`);
+    return false;
+  });
 
   // Music: the spec's own cues, or one bed for the whole story from its mood
   const duration = Math.max(...spec.scenes.map((s) => s.to));
