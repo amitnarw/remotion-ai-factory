@@ -1009,5 +1009,11 @@
         "nemotron-3-ultra"
       ]
     }
+  },
+  "roles": {
+    "writer": {
+      "provider": "ollama",
+      "model": "glm-5.3"
+    }
   }
 }

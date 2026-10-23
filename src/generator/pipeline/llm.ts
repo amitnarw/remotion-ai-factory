@@ -24,6 +24,11 @@ import { Ollama } from "ollama";
 import { z } from "zod";
 import { loadAiConfig, resolveModel, type ModelReference } from "../ai/provider-registry";
 import { pickRoleModel, type RoleName } from "../ai/roles";
+import { loadDotEnv } from "../env";
+
+// Every pipeline caller (CLI, milestone, photographer) resolves a provider key
+// from process.env; make sure the repo's .env has been applied first.
+loadDotEnv();
 
 /* ---------------- model resolution ---------------- */
 

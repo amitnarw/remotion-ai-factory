@@ -33,8 +33,17 @@ export async function generateSpec(
 ): Promise<GenerateSpecResult> {
   const settings = SettingsSchema.parse(settingsInput);
 
+  // A bare CLI call passes no voice settings (the dashboard and the milestone
+  // script pick theirs explicitly). Narration is the product's default — the
+  // dashboard's switch starts on. Without this, a plain `npm run generate`
+  // planned a video whose beats all had "no spoken line".
+  const audioConfig: AudioConfig =
+    !audio.narration && !audio.dialogs
+      ? { ...audio, narration: { enabled: true, engine: "kitten2", voice: "Bruno" } }
+      : audio;
+
   const plan = async (): Promise<GenerateSpecResult> => {
-    const { spec, report } = await runPlan({ id, premise, settings, audio, cli: { provider: providerName, model: modelId } });
+    const { spec, report } = await runPlan({ id, premise, settings, audio: audioConfig, cli: { provider: providerName, model: modelId } });
     return { spec, provider: report.models.writer.provider, model: report.models.writer.model, source: "pipeline", report };
   };
 
