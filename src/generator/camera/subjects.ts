@@ -7,6 +7,7 @@
  * whole set, for establishing shots and as the fallback when a name is unknown.
  */
 export const KIT_SUBJECTS: Record<string, Record<string, string>> = {
+
   "street-block": {
     scene: "the whole street, both rows of buildings",
     hero: "the story's object on the sidewalk (coin stacks, cash, a sign...)",
@@ -59,6 +60,13 @@ export const KIT_SUBJECTS: Record<string, Record<string, string>> = {
     lamp: "the floor lamp",
     table: "the table",
     person: "the person in the room",
+  },
+  world: {
+    scene: "the whole place from across the avenue or above",
+    avenue: "the main avenue and its walkers",
+    plaza: "the city's main square (when the place has one)",
+    park: "the park inside the city (when it has one)",
+    landmark: "the place's landmark (a minaret, tower...)",
   },
 };
 

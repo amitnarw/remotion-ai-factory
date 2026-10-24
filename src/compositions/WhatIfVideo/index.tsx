@@ -109,7 +109,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         {activeScene.kit === "world" ? (
           // The one-world place scene (Phase 6 step 1): a real place with its
           // own sun, season and city style
-          <WorldStage scene={activeScene} fps={fps} />
+          <WorldStage scene={activeScene} spec={spec} fps={fps} />
         ) : activeScene.kit === "street-block" ? (
           // The dense populated street world (time-of-day looks + StatHud
           // escalation + traffic + crowd + human camera operator)

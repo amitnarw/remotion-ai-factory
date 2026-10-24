@@ -183,23 +183,26 @@ const COUNTRYSIDE_TOD: Record<
     fog: "#0a1018",
     fogDensity: 0.015,
     dirColor: "#a8b8d0",
-    dirIntensity: 1.2,
+    dirIntensity: 1.9, // lifted 2026-10-24 lane A: the barn MS read 0.04->0.079 while the other night subjects passed
     dirPos: [-40, 55, -30],
     hemi: ["#3c4a68", "#141c2c", 0.5],
     amb: 0.32,
-    fieldBase: "#2a3a1a",
-    fieldAccent: "#1a2a0a",
+    // lifted for the moon-facing lens: the night CU of the fields and the
+    // barn MS read 0.04-0.09 (below the 0.1 night floor), the palette gives
+    // back what the moon reaches. (2026-10-24 lane A)
+    fieldBase: "#34482c",
+    fieldAccent: "#243210",
     road: "#241e18",
-    houseWall: "#483c33",
-    houseRoof: "#362212",
+    houseWall: "#5a4c41",
+    houseRoof: "#422a17",
     windowDay: "#24221a",
     windowNight: "#ffe060",
-    barnWall: "#3a2618",
-    barnRoof: "#281a10",
-    hay: "#4a3e22",
+    barnWall: "#6b4a28",
+    barnRoof: "#4e3418",
+    hay: "#5a4d2b",
     fence: "#382c20",
-    windmillBody: "#38322c",
-    windmillBlade: "#241e18",
+    windmillBody: "#484038",
+    windmillBlade: "#322a24",
     mist: false,
   },
 };
@@ -585,21 +588,38 @@ const COUNTRY_WIDE = ["FS", "WS"] as const;
  * rotor) unless another building is in the way, then their clearest side.
  * Everything here is static, so the anchors ignore t.
  */
-export function countrysideAnchors(L: CountryLayout, specId: string, aspect: number): Anchors {
+export function countrysideAnchors(L: CountryLayout, specId: string, aspect: number, night = false): Anchors {
   const blockers = countryBlockers(L);
   const anchors: Anchors = {};
   const keep = (name: string, s: Subject) => {
     anchors[name] = () => s;
   };
-  /** The front (and the back, for a two-sided prop) first; turning away from it costs a little. */
+  /** The front (and the back, for a two-sided prop) first; turning away from
+   *  it costs a little. NIGHT SIDE BIAS: the key light is a low moon at
+   *  COUNTRYSIDE_TOD.night.dirPos; a facade it does not reach reads
+   *  near-black (the barn's night still was shot on the dark long side and
+   *  flagged 0.04 luma / 53% flat), so at night a facing away from the moon
+   *  pays points and the camera lands on the lit side instead. */
   const pickSide = (base: Subject, sizes: readonly ShotSize[], skip: number[], front: number, alsoBack: boolean) => {
+    const lit = night
+      ? ((): [number, number] => {
+          const dx = COUNTRYSIDE_TOD.night.dirPos[0] - base.center[0];
+          const dz = COUNTRYSIDE_TOD.night.dirPos[2] - base.center[2];
+          const l = Math.hypot(dx, dz) || 1;
+          return [dx / l, dz / l];
+        })()
+      : undefined;
     const turns: Array<[number, number]> = [[0, 0], [Math.PI / 6, 1], [-Math.PI / 6, 1], [Math.PI / 2, 3], [-Math.PI / 2, 3]];
     const fronts = alsoBack ? [front, front + Math.PI] : [front];
     let best = { facing: front, cost: Infinity };
     for (const f0 of fronts) {
       for (const [turn, penalty] of turns) {
         const f = f0 + turn;
-        const cost = clearestFacing(base, sizes, aspect, blockers, new Set(skip), f, [f]).cost + penalty;
+        let cost = clearestFacing(base, sizes, aspect, blockers, new Set(skip), f, [f]).cost + penalty;
+        if (lit) {
+          const d = Math.sin(f) * lit[0] + Math.cos(f) * lit[1];
+          if (d < 0) cost += 3 + -d * 2; // the dark side, weighted by how far round
+        }
         if (cost < best.cost) best = { facing: f, cost };
       }
     }
@@ -622,7 +642,7 @@ export function countrysideAnchors(L: CountryLayout, specId: string, aspect: num
 
   // barn: doors on both long sides; its roof peak is 9 scale² up.
   const b2 = L.barn.scale * L.barn.scale;
-  const barnBase: Subject = { center: [L.barn.x, 4.5 * b2, L.barn.z], radius: 5.5 * b2, height: 9 * b2, ground: 0 };
+  const barnBase: Subject = { center: [L.barn.x, 4.5 * b2, L.barn.z], radius: 5.5 * b2, height: 9 * b2, ground: 0, focus: "centre" };
   keep("barn", { ...barnBase, facing: pickSide(barnBase, COUNTRY_CLOSE, [OWN.barn], L.barn.rot, true).facing });
 
   // windmill: rotor hub 12.5 m up, blades 9 m long, turning in the plane that
@@ -736,8 +756,8 @@ export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: Scen
   const aspect = width / Math.max(1, height);
   const hasShots = (spec.shots?.length ?? 0) > 0;
   const anchors = useMemo(
-    (): Anchors => (hasShots ? countrysideAnchors(layout, spec.id, aspect) : {}),
-    [hasShots, layout, spec.id, aspect],
+    (): Anchors => (hasShots ? countrysideAnchors(layout, spec.id, aspect, night) : {}),
+    [hasShots, layout, spec.id, aspect, night],
   );
 
   return (

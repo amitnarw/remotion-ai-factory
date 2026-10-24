@@ -77,15 +77,17 @@ const RIVER_TOD: Record<
     fog: "#88b8d8",
     fogDensity: 0.01,
     dirColor: "#ffe8d0",
-    dirIntensity: 0.9,
+    dirIntensity: 1.0,
     dirPos: [40, 80, 20],
-    hemi: ["#b8d8f8", "#7898b8", 0.45],
-    amb: 0.28,
+    hemi: ["#b8d8f8", "#7898b8", 0.52],
+    amb: 0.34,
     waterDeep: "#256080",
     waterShallow: "#4090c0",
     waterFoam: "#f0f0f0",
-    ground: "#354525",
-    rock: "#555555",
+    // rocks-MS read 0.07-0.08 on this palette (the bank ground filled the
+    // frame); both lifted 2026-10-24 lane A
+    ground: "#48603a",
+    rock: "#707072",
     bank: "#453525",
     mist: false,
   },
@@ -316,6 +318,10 @@ export function riverAnchors(
   rocks: Array<{ x: number; z: number; scale: number }>,
   level: (t: number) => number,
   aspect: number,
+  /** Where the scene's key light sits (look.dirPos): the rocks are filmed
+   *  from the side their faces catch it - a camera on the shadow side gave
+   *  the rocks-MS still 0.07 luma on 70% flat ground (2026-10-24 lane A). */
+  sun?: { x: number; z: number },
 ): Anchors {
   const { width, length, flowDir } = cfg;
   const anchors: Anchors = {};
@@ -359,10 +365,20 @@ export function riverAnchors(
     // Facing: towards the far bank (the river's centre line), turned 30° along the flow.
     const toWater = flowDir === "z" ? Math.atan2(-side, 0) : Math.atan2(0, -side);
     const turn = side * (Math.PI / 6);
-    const base: Subject = { center: [cx, top / 2, cz], radius, height: top, ground };
+    // The lens is kept at rock-top height and above (the old anchor sat it on
+    // the 0.1 m bank plane, so the MS filled the frame with dark wet bank
+    // ground in shadow instead of the rocks).
+    const base: Subject = { center: [cx, top / 2, cz], radius, height: top, ground: Math.max(ground, top * 0.5) };
     const own = new Set(m.map((o) => rocks.indexOf(o)));
-    const blockers: Blocker[] = rocks.map((o, i) => ({ kind: "ball", x: o.x, y: 0.3 + 0.5 * o.scale, z: o.z, r: o.scale, owner: i }));
-    const facing = clearestFacing(base, ["CU", "MS", "FS", "WS"], aspect, blockers, own, toWater + turn, [toWater + turn, toWater - turn, toWater]).facing;
+    const blockers: Blocker[] = rocks.map((o, i) => ({ kind: "ball", x: o.x, y: 0.3 + 0.5 * o.scale, z: o.z, r: o.scale * 1.35 + 0.15, owner: i }));
+    // Candidates: the sides the light reaches first (day sun / night moon),
+    // then across-the-water lines; clearestFacing still rejects a lens
+    // inside or behind another rock.
+    const litYaw = sun ? Math.atan2(sun.x - cx, sun.z - cz) : NaN;
+    const candidates = Number.isNaN(litYaw)
+      ? [toWater + turn, toWater - turn, toWater]
+      : [litYaw, litYaw + Math.PI / 6, litYaw - Math.PI / 6, toWater + turn, toWater - turn, toWater];
+    const facing = clearestFacing(base, ["CU", "MS", "FS", "WS"], aspect, blockers, own, sun ? litYaw : toWater + turn, candidates).facing;
     const subject: Subject = { ...base, facing };
     anchors.rocks = () => subject;
   }
@@ -419,6 +435,8 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const aspect = width / Math.max(1, height);
   const hasShots = (spec.shots?.length ?? 0) > 0;
   const fallHeight = riverConfig.hasWaterfall ? riverConfig.waterfallHeight : undefined;
+  const sunX = look.dirPos[0];
+  const sunZ = look.dirPos[2];
   const anchors = useMemo((): Anchors => {
     if (!hasShots) return {};
     const levelAt = (tt: number) => (panel ? baseLevel + (statScaleAt(panel, tt) - 1) * 0.3 : baseLevel);
@@ -427,8 +445,11 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       riverRocks,
       levelAt,
       aspect,
+      // the key light (day sun / night moon) as a point: the rocks are filmed
+      // from their lit side
+      { x: sunX, z: sunZ },
     );
-  }, [hasShots, panel, riverConfig.width, riverConfig.length, riverConfig.flowDir, fallHeight, riverRocks, aspect]);
+    }, [hasShots, panel, riverConfig.width, riverConfig.length, riverConfig.flowDir, fallHeight, riverRocks, aspect, sunX, sunZ]);
 
   return (
     <group>

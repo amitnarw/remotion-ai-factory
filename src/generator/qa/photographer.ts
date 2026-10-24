@@ -27,6 +27,25 @@ const COMPOSITION = "WhatIfVideo";
 
 /** Above this share, one flat colour fills the frame. */
 export const MAX_FLAT = 0.55;
+/**
+ * Indoors a tight frame is often MOSTLY wall: the furniture is right against
+ * it, and the lens cannot step outside (the room bounds). The flat check
+ * trips indoors only when even that wall frame is one colour beyond this
+ * share - the interior FS/CU flags (lamp 59%, table 58%) read as the room,
+ * not as a lens against a prop.
+ */
+export const MAX_FLAT_INDOOR = 0.8;
+/**
+ * At night one dark tone (the sky, a dark facade) can legitimately cover
+ * most of the frame; the flat share only reads as a bug in daylight.
+ */
+export const MAX_FLAT_NIGHT = 0.7;
+
+/** Options of the still check. */
+export interface JudgeOptions {
+  /** Interior kit (the room walls may legitimately fill the frame). */
+  indoor?: boolean;
+}
 /** Below this (Hasler-Süsstrunk M), a daytime frame looks washed out. */
 export const MIN_COLOUR_DAY = 8;
 
@@ -58,14 +77,15 @@ function lightAt(spec: ShotSpec, t: number): ShotCheck["light"] {
 }
 
 /** The code checks on one decoded still. */
-export function judgeStill(png: Buffer, light: ShotCheck["light"]): Pick<ShotCheck, "luma" | "colour" | "flat" | "problems"> {
+export function judgeStill(png: Buffer, light: ShotCheck["light"], opts: JudgeOptions = {}): Pick<ShotCheck, "luma" | "colour" | "flat" | "problems"> {
   const img = decodePng(png);
   const luma = lumaStats(img);
   const colour = colourfulness(img);
   const flat = dominantColourShare(img);
   const problems = [...exposureVerdict(luma, light).problems];
   // Space is black sky around a planet: a flat background is expected there.
-  if (flat > MAX_FLAT && light !== "space") problems.push(`one flat colour covers ${(flat * 100).toFixed(0)}% of the frame (a prop against the lens, a wall, or empty sky or sea)`);
+  const flatLimit = opts.indoor ? MAX_FLAT_INDOOR : light === "night" ? MAX_FLAT_NIGHT : MAX_FLAT;
+  if (flat > flatLimit && light !== "space") problems.push(`one flat colour covers ${(flat * 100).toFixed(0)}% of the frame (a prop against the lens, a wall, or empty sky or sea)`);
   if (light === "day" && colour < MIN_COLOUR_DAY) problems.push(`almost no colour (colourfulness ${colour.toFixed(1)})`);
   return { luma, colour, flat, problems };
 }
@@ -95,9 +115,11 @@ export async function checkShots(input: {
     for (const { shot, frame } of shotFrames(spec)) {
       const still = join(outDir, `${shot.beat ?? frame}.png`);
       await renderStill({ composition, serveUrl, output: still, frame, inputProps, scale: input.scale ?? 0.5, puppeteerInstance: browser, chromiumOptions, overwrite: true });
-      const light = lightAt(spec, frame / (spec.fps ?? 30));
+      const tSec = frame / (spec.fps ?? 30);
+      const light = lightAt(spec, tSec);
+      const onScreen = spec.scenes.find((sc) => tSec >= sc.from && tSec < sc.to) ?? spec.scenes[spec.scenes.length - 1];
       const png = readFileSync(still);
-      const check: ShotCheck = { beat: shot.beat ?? String(frame), subject: shot.subject, size: shot.size, frame, still, light, ...judgeStill(png, light) };
+      const check: ShotCheck = { beat: shot.beat ?? String(frame), subject: shot.subject, size: shot.size, frame, still, light, ...judgeStill(png, light, { indoor: onScreen?.kit === "interior" }) };
       if (input.vision) check.problems.push(...(await askVision({ png, beat: check.beat, questions: visionQuestions(spec, shot), model: input.vision })));
       checks.push(check);
       input.onShot?.(check);

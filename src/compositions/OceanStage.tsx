@@ -22,6 +22,7 @@ import { WaterSurface, seaSwellAt, GradientSkyDome, WATER_TOD } from "./water";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { clearestFacing, type Blocker } from "./ForestStage";
 import type { Subject } from "../generator/camera/solve";
 
 const CANOE_FILE = "assets/nature/nature-kit/Models/GLTF format/canoe.glb";
@@ -405,7 +406,7 @@ function heroCanoe(specId: string, sunYaw: number): { x: number; z: number; rot:
  * camera sits on the land side. `ground` keeps the lens above the wave
  * crests (or the sand apron, or the jetty deck).
  */
-export function oceanAnchors(spec: ShotSpec, tod: string): Anchors {
+export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anchors {
   const waveAmp = (WATER_TOD[tod] ?? WATER_TOD.noon).waveAmp;
   const sun = (OCEAN_TOD[tod] ?? OCEAN_TOD.noon).dirPos;
   const canoe = heroCanoe(spec.id, Math.atan2(sun[0], sun[2]));
@@ -432,8 +433,43 @@ export function oceanAnchors(spec: ShotSpec, tod: string): Anchors {
     return { center: [0, w.up + 0.3, -70], radius: 2.5, height: 1.5, facing: 0, ground: w.ground };
   };
 
+
+  // Parasol canopies as lens blockers (see the beach anchor): a close shot
+  // must never put the lens at or inside a canopy, over the sand apron.
+  const canopyBlockers: Blocker[] = PARASOLS.map((p, i) => ({
+    kind: "ball",
+    x: p[0],
+    y: slopeTop(p[1]) + 0.05 + 2.25,
+    z: p[1],
+    r: 1.15,
+    owner: 900 + i,
+  }));
+  // The beach is filmed FROM THE SEA SIDE (facing +pi): on the land side the
+  // apron cameras sit 2-3 m behind a canopy with the poles in front of the
+  // subject for every bearing (the canopies are the subject's own base, so
+  // the clearance probes never charge them), and the lens kept ending up
+  // against a canopy. Sea-side candidate facings put the lens over the wet
+  // sand/water, outside every canopy radius; the canopies in the list still
+  // reject a bearing that grazes them and the wide bearings look down the
+  // shore line.
+  const seaFacing = [Math.PI, Math.PI + Math.PI / 6, Math.PI - Math.PI / 6, Math.PI + Math.PI / 3, Math.PI - Math.PI / 3] as const;
+  const beachFacing = clearestFacing(
+    {
+      center: [((bx[0] + bx[1]) / 2 + PARASOLS[1][0]) / 2, (by[0] + by[1]) / 2, (bz[0] + bz[1]) / 2],
+      radius: 9,
+      height: 4.5,
+      focus: "centre" as const,
+    },
+    ["WS", "MS", "FS"],
+    aspect,
+    canopyBlockers,
+    new Set<number>(),
+    Math.PI,
+    [...seaFacing],
+  ).facing;
+
   return {
-    // the beach and the sea: the shallows just east of the jetty. Wide shots
+    // the beach and the sea (widen: radius must span the whole sand strip, not just the parasol cluster - a tight beach "subject" makes every MS frame a canopy): the shallows just east of the jetty. Wide shots
     // put them on the lower third with the sand strip in front, the jetty at
     // the side and the horizon above. Faced 35° round to the east so every
     // auto side keeps the lens east of the deck and away from the parasols
@@ -455,10 +491,14 @@ export function oceanAnchors(spec: ShotSpec, tod: string): Anchors {
     // halfway to the parasol nearest that side (PARASOLS[1]) so close shots,
     // which frame the canopy tops, land on a canopy, not the gap between two.
     beach: (t) => ({
+      // the beach strip: the parasol cluster plus the wet band and apron
+      // either side of it, centred on the cluster's tall pole; framed from
+      // the sea side (beachFacing) so the lens never sits in a canopy
       center: [((bx[0] + bx[1]) / 2 + PARASOLS[1][0]) / 2, (by[0] + by[1]) / 2, (bz[0] + bz[1]) / 2],
-      radius: (bx[1] - bx[0]) / 2,
-      height: by[1] - by[0],
-      facing: 0,
+      radius: 9,
+      height: 4.5,
+      focus: "centre",
+      facing: beachFacing,
       ground: landGround(t),
     }),
     // the seaward half of the jetty up to the lamp; faces 45° round to its +x
@@ -506,7 +546,8 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
   const tod = (scene.look?.timeOfDay ?? "noon") as string;
   const look = OCEAN_TOD[tod] ?? OCEAN_TOD.noon;
   const night = tod === "night";
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+  const aspect = width / Math.max(1, height);
   const frame = useCurrentFrame();
   const t = frame / (fps || 30);
   const { level, visible, amp } = waterStateAt(spec, t);
@@ -526,7 +567,7 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
   // Canoes: seeded positions INSIDE the narrow portrait view cone
   const canoes = useMemo(() => canoeLayout(spec.id), [spec.id]);
   // What the director's shots can frame (spec.shots); without shots the rig films.
-  const anchors = useMemo(() => oceanAnchors(spec, tod), [spec, tod]);
+  const anchors = useMemo(() => oceanAnchors(spec, tod, aspect), [spec, tod, aspect]);
 
   return (
     <>

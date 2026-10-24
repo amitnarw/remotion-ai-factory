@@ -452,7 +452,7 @@ function lensCover(p: Vec3, quat: [number, number, number, number], fov: number,
 const PROBE_SIDES = ["front", "left34", "right34"] as const;
 const PROBE_ANGLES = ["eye", "low", "high"] as const;
 /** Subjects usually sit on a third, which swings the camera round by ~10°. */
-const PROBE_PLACES = ["left_third", "right_third"] as const;
+const PROBE_PLACES = ["center", "left_third", "right_third"] as const;
 
 /**
  * How badly a subject films from its current facing. The solver is run for a
