@@ -62,10 +62,27 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     assert.ok(spec.captions.some((c) => c.speaker === "Ana"));
     assert.equal(spec.story?.characters[0].voice !== undefined, true);
 
+    // Approved edits survive a reassemble: a same-length story line keeps the
+    // timing (same estimate → same windows) and a caption text edit sticks.
+    const edited = JSON.parse(JSON.stringify(spec)) as typeof spec;
+    const beat1 = edited.story!.beats.find((b) => b.say);
+    assert.ok(beat1, "a beat with a say exists");
+    const words = beat1.say.trim().split(/\s+/);
+    words[words.length - 1] = "now"; // same word count → same estimate → same caption windows
+    beat1.say = words.join(" ");
+    edited.captions[0].text = `[edited] ${edited.captions[0].text}`;
+    const again = await reassemble(ID, "plan", undefined, edited);
+    assert.doesNotThrow(() => validateSpec(again.spec));
+    assert.ok(again.warnings.some((w) => /story line\(s\) updated/.test(w)), "the adopted story edit is announced");
+    assert.ok(again.spec.captions[0].text.startsWith("[edited]"), "the approved caption text kept its window");
+    assert.equal(again.spec.story!.beats[0].say, beat1.say, "the approved story text adopted");
+    const saved = JSON.parse(readFileSync(join(process.cwd(), "output", ID, "story.json"), "utf8")) as { beats: Array<{ say: string }> };
+    assert.equal(saved.beats.find((b) => b.id === beat1.id)?.say, beat1.say, "the story edit persisted to the stage file");
+
     // Rebuilding from the saved files (no model calls) gives the same video length.
     if (!resolveTtsPython("kitten2")) {
-      const again = await reassemble(ID, "plan");
-      assert.equal(Math.max(...again.spec.scenes.map((s) => s.to)), Math.max(...spec.scenes.map((s) => s.to)));
+      const re = await reassemble(ID, "plan");
+      assert.equal(Math.max(...re.spec.scenes.map((s) => s.to)), Math.max(...again.spec.scenes.map((s) => s.to)));
     }
   } finally {
     delete process.env.FACTORY_LLM_FIXTURES;

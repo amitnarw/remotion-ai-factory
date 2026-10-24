@@ -291,7 +291,7 @@ if (valid.story && canReassemble(id)) {
   // A pipeline plan: synthesize every planned line, measure it, and re-time the
   // whole video from the real audio (no model calls).
   console.log(`[voice] re-timing the plan from the measured voice`);
-  const re = await reassemble(id, "render", audioConfig ?? undefined);
+  const re = await reassemble(id, "render", audioConfig ?? undefined, valid);
   for (const w of re.warnings) console.warn(`[voice] warning: ${w}`);
   valid = re.spec;
   durFrames = durationFrames(valid);

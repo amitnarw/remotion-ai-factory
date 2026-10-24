@@ -16,7 +16,7 @@ import { join } from "path";
 import { validateAssets } from "../asset-catalog";
 import { maxDurationFor, validateSpec, type ShotSpec, type VideoSettings } from "../spec.schema";
 import { assemble } from "./assemble";
-import { buildCaptions } from "./captions";
+import { buildCaptions, wordTimes } from "./captions";
 import { directStory, type Direction } from "./director";
 import { resolveRoleModels, type RoleModel } from "./llm";
 import { applyNotes, codeChecks, critiquePlan } from "./critic";
@@ -241,14 +241,24 @@ export function canReassemble(id: string): boolean {
  * Rebuild the spec from the saved stage files without calling any model.
  * mode "render" synthesizes every line and times the video from the measured
  * audio. `audio` overrides the plan's voice settings (e.g. changed at approval).
+ * `approved` is an edited spec (the editor's saved film): its story texts are
+ * adopted (a changed line is re-voiced — the voice cache reuses the rest) and
+ * its caption texts are kept wherever the window still matches (keep-timing:
+ * the voice is untouched, the words re-timed inside the same window).
  */
-export async function reassemble(id: string, mode: "plan" | "render", audioOverride?: AudioConfig): Promise<{ spec: ShotSpec; warnings: string[] }> {
+export async function reassemble(
+  id: string,
+  mode: "plan" | "render",
+  audioOverride?: AudioConfig,
+  approved?: ShotSpec,
+): Promise<{ spec: ShotSpec; warnings: string[] }> {
   const story = load<WriterStory>(id, "story");
   const direction = load<Direction>(id, "direction");
   const sound = load<SoundPlan>(id, "sound");
   const plan = load<SavedPlan>(id, "plan");
   if (!story || !direction || !sound || !plan) throw new Error(`output/${id}/ is missing stage files; write the plan again`);
   const audio = mergeAudio(plan.audio, audioOverride);
+  const linesChanged = adoptEdits(story, approved);
   stage("voice");
   const timed = await timeStory(story, plan.settings, audio, id, mode, true);
   if (timed.timeline.overflow) throw new Error(`the measured voice needs ${timed.timeline.duration.toFixed(0)}s, more than ${plan.settings.format} allows`);
@@ -256,5 +266,52 @@ export async function reassemble(id: string, mode: "plan" | "render", audioOverr
   save(id, "timeline", timed.timeline);
   stage("assemble");
   const done = finish(id, plan.premise, plan.settings, story, timed.timeline, direction, sound, audio);
-  return { spec: done.spec, warnings: [...timed.warnings, ...done.warnings] };
+  keepCaptionTexts(done.spec, approved);
+  save(id, "story", story);
+  validateSpec(done.spec);
+  const warned = [...timed.warnings, ...done.warnings];
+  if (linesChanged) warned.push(`${linesChanged} story line(s) updated from the approved edits, so they were re-voiced`);
+  return { spec: done.spec, warnings: warned };
+}
+
+/** Story-text edits from the approved spec (say + dialog lines), by beat id.
+ *  Returns how many beats changed (they get re-voiced). */
+function adoptEdits(story: WriterStory, approved?: ShotSpec): number {
+  if (!approved) return 0;
+  const approvedBeats = new Map((approved.story?.beats ?? []).map((b) => [b.id, b]));
+  let changed = 0;
+  for (const b of story.beats) {
+    const a = approvedBeats.get(b.id);
+    if (!a || a.say === undefined || a.say === b.say) continue;
+    b.say = a.say ?? "";
+    changed += 1;
+    // A character line replaced together with the narration keeps casting sane:
+    // the ids stay, the voices are re-found by name in castVoices.
+    if (a.lines?.length) b.lines = a.lines.map((l) => ({ who: l.who ?? "", text: l.text }));
+  }
+  return changed;
+}
+
+/** Keep the approved caption texts (the editor's wording) on the timed
+ *  captions, matched by nearest start (a same-voice reflow can shift a
+ *  window by ~0.2 s without meaning a different caption). The voice is
+ *  unchanged; the edited words get re-timed inside the timed slot. */
+function keepCaptionTexts(spec: ShotSpec, approved?: ShotSpec): void {
+  if (!approved) return;
+  const a = [...(approved.captions ?? [])];
+  for (const c of spec.captions) {
+    let best: (typeof a)[number] | undefined;
+    let bestD = Infinity;
+    for (const x of a) {
+      const d = Math.abs(x.from - c.from);
+      if (d < bestD) {
+        bestD = d;
+        best = x;
+      }
+    }
+    if (!best || bestD > 0.35 || best.text === c.text) continue;
+    c.text = best.text;
+    c.keyword = best.keyword ?? [];
+    c.words = wordTimes(best.text, c.from, c.to);
+  }
 }
