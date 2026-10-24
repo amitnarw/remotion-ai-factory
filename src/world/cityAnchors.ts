@@ -17,6 +17,30 @@ import type { Spot, StageAnchors } from "./actors/script";
 /** The ground heights the city draws (city.ts rects and areas). */
 export const GROUND = { sidewalk: 0.04, avenue: 0.12, yard: 0.1, plaza: 0.18, park: 0.2 } as const;
 
+/** The anchor name vocabulary the director may use. Some names exist only
+ *  when the place has them (plaza, park, landmark-front are conditional):
+ *  an absent one falls back to the city's centre with a warning. */
+export const ANCHOR_VOCAB = [
+  "avenue", "avenue-east", "avenue-west",
+  "sidewalk-north", "sidewalk-south", "sidewalk-north-east", "sidewalk-north-west",
+  "sidewalk-south-east", "sidewalk-south-west",
+  "plaza", "plaza-north", "plaza-south", "plaza-east", "plaza-west",
+  "park", "park-east",
+  "landmark-front",
+] as const;
+
+/** The per-scene prompt block: where a featured actor can stand. */
+export function anchorsForPrompt(): string {
+  return [
+    "WHERE (a named spot of the generated city; the same layout always places them the same way):",
+    `- avenue: its centre; avenue-east / avenue-west: 20 m either way on the avenue`,
+    `- sidewalk-north / -south (and their -east / -west variants): on the pavement`,
+    `- plaza (+ compass corners), park (+ park-east): only when the place has one`,
+    `- landmark-front: only in front of the place's landmark (a minaret today)`,
+    `an unknown or absent name places the actor at the city centre (with a warning, so name them deliberately)`,
+  ].join("\n");
+}
+
 /** [x, z] points. */
 type XZ = [number, number];
 

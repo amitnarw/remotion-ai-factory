@@ -15,6 +15,7 @@ import { headingToGround, type Vec3 } from "../../world/geo";
 import { GroundWorld } from "../../world/Ground";
 import type { GroundPose } from "../../world/flight";
 import { resolvePlace } from "../../world/places";
+import type { ActorAction, ActorScriptInput } from "../../world/actors/script";
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const smooth = (v: number) => {
@@ -27,6 +28,31 @@ const scale200 = (v: Vec3): Vec3 => [v[0] * 200, v[1] * 200, v[2] * 200];
 
 /** Where the city keeps its cloud corridor (same as the inspector view). */
 const CLOUD_PASSAGE: [number, number] = [-75, 0];
+
+/** Featured performers: the spec's actors as the layer's inputs (cast ids kept
+ *  stable so the casting stays deterministic across scenes). */
+function featuredCast(scene: SceneType): ActorScriptInput[] | undefined {
+  if (!scene.actors?.length) return undefined;
+  return scene.actors.map((a, i) => ({
+    id: `${a.role.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}-${i}`,
+    role: a.role,
+    start: a.where,
+    ...(a.carry ? { carry: a.carry } : {}),
+    ...(a.do?.length
+      ? {
+          steps: a.do
+            .map((st) => ({
+              at: st.at ?? scene.from,
+              action: st.action as ActorAction,
+              ...(st.to ? { to: st.to } : {}),
+              ...(st.target ? { target: st.target } : {}),
+              ...(st.for != null ? { for: st.for } : {}),
+            }))
+            .sort((x, y) => x.at - y.at),
+        }
+      : {}),
+  }));
+}
 
 export const WorldStage: React.FC<{ scene: SceneType; fps?: number }> = ({ scene, fps = 30 }) => {
   const frame = useCurrentFrame();
@@ -42,7 +68,8 @@ export const WorldStage: React.FC<{ scene: SceneType; fps?: number }> = ({ scene
   // The portrait fov from the inspector view; the landscape value is set in
   // Phase 3 together with the aspect-aware camera.
   const fov: number = 62;
-  return <GroundWorld place={resolved} pose={worldPose(style, localT)} fov={fov} cloudPassage={CLOUD_PASSAGE} />;
+  const cast = useMemo(() => featuredCast(scene), [scene]);
+  return <GroundWorld place={resolved} pose={worldPose(style, localT)} fov={fov} cloudPassage={CLOUD_PASSAGE} cast={cast} />;
 };
 
 /** Camera pose for a world scene at local time u (0..1), by camera style. */

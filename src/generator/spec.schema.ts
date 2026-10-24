@@ -196,6 +196,36 @@ export const SceneSchema = z.object({
       time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM, 24-hour"),
     })
     .optional(),
+  /** Featured performers in a world scene (Phase 5): specific people the story
+   *  needs, at the city's named spots (cityAnchors). At most 4 — the
+   *  background crowd fills itself without direction. Times (do[].at) are
+   *  seconds of the VIDEO (the assembler absolutizes the director's
+   *  scene-relative choices). */
+  actors: z
+    .array(
+      z.object({
+        /** Who this is: a description ("newspaper vendor") or a story character's name. */
+        role: z.string().max(80),
+        /** A spot name from cityAnchors (avenue, sidewalk-north, plaza, ...). */
+        where: z.string().min(1),
+        /** A short action timeline, seconds of the video. */
+        do: z
+          .array(
+            z.object({
+              at: z.number().min(0).optional(),
+              action: z.enum(["idle", "walk", "run", "wave", "point", "sit", "look", "talk", "react", "panic", "fall", "cheer", "clap", "jump"]),
+              to: z.string().optional(),
+              target: z.string().optional(),
+              for: z.number().positive().optional(),
+            }),
+          )
+          .max(6)
+          .optional(),
+        carry: z.enum(["bag", "box", "briefcase"]).optional(),
+      }),
+    )
+    .max(4)
+    .optional(),
   /** Set when the previous scene's world place differs from this one's:
    *  the join renders as a flight over the globe. */
   flight: z.boolean().optional(),

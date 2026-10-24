@@ -189,6 +189,7 @@ export function GroundWorld({
   cloudPassage,
   crowd = true,
   birds = true,
+  cast,
 }: {
   place: ResolvedPlace;
   pose: GroundPose;
@@ -196,6 +197,9 @@ export function GroundWorld({
   cloudPassage: [number, number];
   /** The city's background people (off for pure-geometry stills). */
   crowd?: boolean;
+  /** The director's featured performers (Phase 5): absolute-time scripts at
+   *  the city's named spots; drawn always, unlike the background crowd. */
+  cast?: ActorScriptInput[];
   /** The flock over the city. */
   birds?: boolean;
 }) {
@@ -436,6 +440,7 @@ export function GroundWorld({
       <Flags spots={world.flags} />
       {birds && place.sun.elevation > -2 && <BirdsLayer seed={place.place.id} />}
       {wantCrowd && <ActorsLayer scripts={shownScripts} anchors={world.anchors as CityAnchors} onWarnings={(w) => console.warn(`[world crowd] ${w.join("\n")}`)} />}
+      {cast?.length ? <ActorsLayer scripts={cast} anchors={world.anchors as CityAnchors} onWarnings={(w) => console.warn(`[world cast] ${w.join("\n")}`)} /> : null}
       <primitive object={world.clouds.mesh} />
     </>
   );

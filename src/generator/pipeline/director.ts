@@ -27,7 +27,15 @@ import { asArray, beatRef, callRole, fuzzyEnum, type RoleModel } from "./llm";
 import { normalizeShots } from "./shots";
 import type { Timeline } from "./timeline";
 import { worldDirectorContext } from "../../world/director-context";
+import { anchorsForPrompt } from "../../world/cityAnchors";
+import { ACTOR_ACTIONS, ACTION_HELP } from "../../world/actors/script";
 import type { WriterStory } from "./writer";
+
+/** A lenient number: the pick's number, else undefined. */
+function num(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 export const ACTIONS = ["idle", "walk", "kneel", "cheer", "panic", "fall", "look-up"] as const;
 const WEATHERS = ["none", "rain", "snow", "storm"] as const;
@@ -47,6 +55,27 @@ const SceneOut = z.object({
   /** One-world choice (Phase 6 step 1): where and when this scene happens.
    *  Present ⇒ kit is advisory; the scene renders the real place instead. */
   worldPlace: z.object({ place: z.string(), date: z.string(), time: z.string() }).optional(),
+  /** Featured performers in this scene (Phase 5): the city's named spots. */
+  actors: z
+    .array(
+      z.object({
+        role: z.string(),
+        where: z.string(),
+        do: z
+          .array(
+            z.object({
+              at: z.number().min(0).optional(),
+              action: z.enum(ACTOR_ACTIONS),
+              to: z.string().optional(),
+              target: z.string().optional(),
+              for: z.number().positive().optional(),
+            }),
+          )
+          .optional(),
+        carry: z.enum(["bag", "box", "briefcase"]).optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const DirectorSchema = z.object({
@@ -130,6 +159,24 @@ export function normalizeDirector(raw: unknown): unknown {
           }))
           .filter((c) => c.asset),
         worldPlace,
+        actors: asArray<Record<string, unknown>>(pick(s, ["actors", "performers", "featuring"]))
+          .map((a) => obj(a))
+          .filter((a): a is Record<string, unknown> => !!a)
+          .map((a) => ({
+            role: str(pick(a, ["role", "who", "person"])) || "passer-by",
+            where: str(pick(a, ["where", "spot", "place", "anchor"])) || "avenue",
+            do: asArray<Record<string, unknown>>(pick(a, ["do", "steps", "actions"]))
+              .map((st) => obj(st))
+              .filter((st): st is Record<string, unknown> => !!st)
+              .map((st) => ({
+                at: num(pick(st, ["at"])),
+                action: fuzzyEnum(pick(st, ["action", "do", "anim"]), ACTOR_ACTIONS) ?? "idle",
+                to: str(pick(st, ["to", "walk"])) || undefined,
+                target: str(pick(st, ["target", "at"])) || undefined,
+                for: num(pick(st, ["for", "seconds"])),
+              })),
+            carry: fuzzyEnum(pick(a, ["carry", "holds", "carries"]), ["bag", "box", "briefcase"]) ?? undefined,
+          })),
       };
     });
 
@@ -184,14 +231,21 @@ export function normalizeDirector(raw: unknown): unknown {
 }
 
 /** World context: one place + moment per scene, the flight rule and the
- *  catalog of places + assets (Phase 6 step 1). Included only when the story's
- *  world setting matters is unknowable here — the director decides per scene. */
+ *  catalog of places + assets (Phase 6 step 1). Featured performers'
+ *  vocabulary from Phase 5's actor system. */
 export function worldBlock(): string {
+  const actions = ACTOR_ACTIONS.map((a) => `${a} = ${ACTION_HELP[a]}`).join("; ");
   return `ONE WORLD (optional per scene): instead of naming a kit, a scene may happen at a REAL place.
 Add "world": { "place": "<place id>", "date": "YYYY-MM-DD", "time": "HH:MM" } to that scene (local date and time;
 the sun, season and skies follow from it). Choose a place only when the story's setting matters; kit scenes stay
 fine for abstract or intimate premises. A change of place between consecutive scenes is filmed as a flight.
-${worldDirectorContext()}`;
+${worldDirectorContext()}
+
+FEATURED ACTORS (optional, at most 4 per scene, world scenes only): specific people the story itself features.
+Background crowds fill themselves; only ADD an actor when the story names or needs a person. Each:
+{ "role": "who", "where": "<spot>", "do": [{ "at": <scene seconds>, "action": "<action>", "to"?: "<spot>", "target"?: "<spot>" , "for"?: <seconds> }], "carry"?: "bag"|"box"|"briefcase" }.
+${anchorsForPrompt()}
+Actions: ${actions}.`;
 }
 
 const KIT_GUIDE = `

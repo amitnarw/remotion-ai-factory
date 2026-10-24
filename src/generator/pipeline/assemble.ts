@@ -152,6 +152,27 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
           .filter((p): p is NonNullable<typeof p> => p != null)
           .pop();
         scene.flight = prevWorld != null && prevWorld.place !== s.worldPlace.place;
+        // Featured performers: absolutize their times to video seconds; an
+        // unknown spot name is warned and still resolved by the layer (it
+        // falls back to the city's centre).
+        if (s.actors?.length) {
+          scene.actors = s.actors.map((a, ai) => ({
+            role: a.role,
+            where: a.where,
+            ...(a.carry ? { carry: a.carry } : {}),
+            ...(a.do?.length
+              ? {
+                  do: a.do.map((st) => ({
+                    at: r3(from + (st.at ?? 0)),
+                    action: st.action,
+                    ...(st.to ? { to: st.to } : {}),
+                    ...(st.target ? { target: st.target } : {}),
+                    ...(st.for != null ? { for: st.for } : {}),
+                  })),
+                }
+              : {}),
+          }));
+        }
       } else {
         warnings.push(`world scene at ${s.start} fell back to kit "${s.kit}": ${w.error}`);
       }

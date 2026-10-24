@@ -118,7 +118,13 @@ test("the pulse device renders only when the director sets bpm", () => {
 test("world scenes carry the place choice and a place change becomes a flight (Phase 6 step 1)", () => {
   const worldInput = JSON.parse(JSON.stringify(messyDirector));
   worldInput.Scenes = [
-    { beat: 1, world: { place: "paris", date: "2026-06-21", time: "06:30" } },
+    {
+      beat: 1,
+      world: { place: "paris", date: "2026-06-21", time: "06:30" },
+      actors: [
+        { role: "street vendor", where: "sidewalk-north", do: [{ at: 1, action: "point", target: "avenue", for: 2 }, { at: 3.2, action: "wave" }], carry: "bag" },
+      ],
+    },
     { beat: 3, kit: "street-block", timeOfDay: "golden", weather: "none", cameraStyle: "steady push", accent: "classic", crowd: "busy" },
     { beat: 4, world: { place: "cairo", date: "2026-06-21", time: "12:00" } },
   ];
@@ -140,6 +146,14 @@ test("world scenes carry the place choice and a place change becomes a flight (P
   assert.equal(s.flights?.length, 1, "one flight window planned");
   const win = s.flights![0];
   assert.ok(win.to <= s.scenes[2].to && win.from >= 0.5, "the flight window sits inside the scenes");
+  // The featured performer: scene-relative director seconds became video seconds.
+  const actor = w1.actors?.[0];
+  assert.ok(actor, "the director's actor survives validation");
+  assert.equal(actor.role, "street vendor");
+  assert.equal(actor.where, "sidewalk-north");
+  assert.equal(actor.carry, "bag");
+  assert.ok(actor.do && actor.do[0]?.at !== undefined, "the actor has a timed step");
+  assert.ok(actor.do![0].at >= w1.from - 0.001, `the actor's first step is absolutized to video time (${actor.do?.[0].at})`);
 });
 
 test("an invalid world choice falls back to the kit and warns", () => {
