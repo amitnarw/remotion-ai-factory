@@ -194,7 +194,7 @@ export function GroundWorld({
   pose,
   fov,
   cloudPassage,
-  crowd = true,
+  crowd = false,
   birds = true,
   cast,
   mood: moodProp,
@@ -204,13 +204,12 @@ export function GroundWorld({
   pose: GroundPose;
   fov: number;
   cloudPassage: [number, number];
-  /** The city's background people (off for pure-geometry stills). */
+  /** The city's background people (off by default — the user wants none). */
   crowd?: boolean;
-  /** The director's featured performers (Phase 5): absolute-time scripts at
-   *  the city's named spots; drawn always, unlike the background crowd. */
-  cast?: ActorScriptInput[];
   /** The flock over the city. */
   birds?: boolean;
+  /** The director's featured performers (off by default — the user wants none). */
+  cast?: ActorScriptInput[];
   /** The story mood (writer vocabulary): the material palette per mood
    *  family (atmosphere/mood.ts), deterministic per mood + place. */
   mood?: string;
