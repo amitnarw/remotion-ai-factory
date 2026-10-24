@@ -1,4 +1,4 @@
-/**
+﻿/**
  * src/world/KitInstances.tsx
  *
  * Draws kit-piece placements (from ./assembler) as instanced meshes:
@@ -18,10 +18,11 @@ import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { staticFile, useDelayRender } from "remotion";
 import type { Placement } from "./assembler";
+import { WINDOW_GLOW_COLOR, windowGlowMaterialFor } from "./kitWindows";
 
 /** One drawable part of a model: geometry, material and its transform
  *  relative to the model's root. */
-interface KitPart {
+export interface KitPart {
   geometry: THREE.BufferGeometry;
   material: THREE.Material;
   matrix: THREE.Matrix4;
@@ -128,7 +129,7 @@ export function loadKitModel(file: string): Promise<KitModel> {
 export function placementMatrix(p: Placement, out = new THREE.Matrix4()): THREE.Matrix4 {
   const c = Math.cos(p.rotY) * p.scale;
   const s = Math.sin(p.rotY) * p.scale;
-  // Row-major arguments: T · R_y(rotY) · S.
+  // Row-major arguments: T Â· R_y(rotY) Â· S.
   return out.set(c, 0, s, p.x, 0, p.scale, 0, p.y, -s, 0, c, p.z, 0, 0, 0, 1);
 }
 
@@ -136,7 +137,7 @@ export function placementMatrix(p: Placement, out = new THREE.Matrix4()): THREE.
 export function buildKitInstances(
   placements: readonly Placement[],
   models: ReadonlyMap<string, KitModel>,
-  opts: { castShadow?: boolean; receiveShadow?: boolean } = {},
+  opts: { castShadow?: boolean; receiveShadow?: boolean; /** Night window glow additive copies. */ windowGlow?: boolean } = {},
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = "kit-instances";
@@ -163,6 +164,25 @@ export function buildKitInstances(
       mesh.castShadow = opts.castShadow ?? true;
       mesh.receiveShadow = opts.receiveShadow ?? true;
       group.add(mesh);
+      // Night: an additive duplicate glows through the window texels (or
+      // the whole glass pane) - see kitWindows.ts. Materials are shared
+      // from the glow cache; only the instance buffers are disposed.
+      if (opts.windowGlow) {
+        const glowMat = windowGlowMaterialFor(part.material, WINDOW_GLOW_COLOR, 2.4);
+        if (glowMat) {
+          const glow = new THREE.InstancedMesh(part.geometry, glowMat, list.length);
+          glow.name = `${file}#glow`;
+          list.forEach((p, i) => {
+            placementMatrix(p, base);
+            glow.setMatrixAt(i, m.multiplyMatrices(base, part.matrix));
+          });
+          glow.instanceMatrix.needsUpdate = true;
+          glow.computeBoundingSphere();
+          glow.castShadow = false;
+          glow.receiveShadow = false;
+          group.add(glow);
+        }
+      }
     }
   }
   return group;
@@ -177,11 +197,14 @@ export function KitInstances({
   placements,
   castShadow = true,
   receiveShadow = true,
+  windowGlow = false,
   onReady,
 }: {
   placements: readonly Placement[];
   castShadow?: boolean;
   receiveShadow?: boolean;
+  /** Night window glow: additive copies of the window-bearing parts. */
+  windowGlow?: boolean;
   /** Called when the instances are in the scene: draw calls per pass
    *  (one per file part), instances drawn (placements x parts),
    *  placements and unique files. */
@@ -212,7 +235,7 @@ export function KitInstances({
 
   const group = useMemo(() => {
     if (!loaded || loaded.key !== filesKey) return null;
-    return buildKitInstances(placements, loaded.models, { castShadow, receiveShadow });
+    return buildKitInstances(placements, loaded.models, { castShadow, receiveShadow, windowGlow });
   }, [loaded, filesKey, placements, castShadow, receiveShadow]);
 
   // The latest onReady, without re-running the effects when only its

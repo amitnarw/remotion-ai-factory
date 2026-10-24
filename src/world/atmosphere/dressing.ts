@@ -1,4 +1,4 @@
-/**
+﻿/**
  * src/world/atmosphere/dressing.ts
  *
  * Set dressing for the generated city, built as plain three.js meshes from
@@ -14,6 +14,7 @@ import type { RegionStyle } from "../places";
 import { makeRng } from "../rng";
 import { blockCentre, openBlocks, GROUND } from "../cityAnchors";
 import { lampSpots } from "./night";
+import { markWaterGeometry } from "./water";
 
 /** Point in a polygon ([x, z], even winding). */
 function pointInPolygon(x: number, z: number, poly: readonly [number, number][]): boolean {
@@ -104,13 +105,15 @@ function bench(x: number, z: number, rotY: number): THREE.Group {
   return g;
 }
 
-/** A fountain group in the plaza's centre. */
-function fountain(x: number, z: number): THREE.Group {
+/** A fountain group in the plaza's centre; `poolMat` (when given) is the
+ *  drawn-water material from water.ts, so the pool ripples and reflects. */
+function fountain(x: number, z: number, poolMat?: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   g.position.set(x, GROUND.plaza, z);
   const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.9, 0.9, 12), stone);
   basin.position.y = 0.45;
-  const pool = new THREE.Mesh(new THREE.CylinderGeometry(2.35, 2.35, 0.16, 12), water);
+  const poolGeo = markWaterGeometry(new THREE.CylinderGeometry(2.35, 2.35, 0.16, 12), 2.8);
+  const pool = new THREE.Mesh(poolGeo, poolMat ?? water);
   pool.position.y = 0.86;
   const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 1.5, 8), stone);
   stem.position.y = 1.3;
@@ -123,13 +126,21 @@ function fountain(x: number, z: number): THREE.Group {
 
 /** Dressing inside the city's plazas (largest first, at most `maxPlazas`).
  *  The flags that wave are placed by flagSpots() and rendered by Flags.tsx. */
-export function plazaDressing(layout: CityLayout, style: RegionStyle, seed: string, maxPlazas = 3): THREE.Group {
+export function plazaDressing(
+  layout: CityLayout,
+  style: RegionStyle,
+  seed: string,
+  maxPlazas = 3,
+  /** The shared drawn-water material for the fountain's pool (optional;
+   *  without it the plain flat pool colour stays, as before). */
+  poolMat?: THREE.Material,
+): THREE.Group {
   const r = makeRng(`dressing:${seed}`);
   const group = new THREE.Group();
   const plazas = openBlocks(layout, GROUND.plaza).slice(0, maxPlazas);
   for (const [pi, plaza] of plazas.entries()) {
     const [cx, cz] = blockCentre(plaza.polygon);
-    if (pi === 0) group.add(fountain(cx, cz));
+    if (pi === 0) group.add(fountain(cx, cz, poolMat));
     const ns = 3 + Math.floor(r() * 3);
     for (let i = 0; i < ns; i++) {
       const p = insidePoint(r, plaza.polygon as [number, number][], 5);

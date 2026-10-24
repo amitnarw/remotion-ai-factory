@@ -1,5 +1,5 @@
-/**
- * src/world/Root.tsx — compositions for the one-world engine test build.
+﻿/**
+ * src/world/Root.tsx â€” compositions for the one-world engine test build.
  * Separate from src/Root.tsx so the main factory is untouched.
  *
  *   npx remotion studio src/world/index.ts
@@ -111,6 +111,77 @@ export const WorldRoot: React.FC = () => (
       width={1920}
       height={1080}
       defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "09:30" } } satisfies WorldActorsProps}
+    />
+    {/* Lane C QA variants (Phase 5 step 2 + Phase 6 step 4): mood palette,
+        sun shafts, drawn water and the night kit windows. */}
+    <Composition
+      id="WorldMoodUpbeat"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "12:00" }, mood: "upbeat" } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldMoodTense"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "12:00" }, mood: "tense" } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldMoodPastel"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "12:00" }, mood: "ambient" } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldShafts"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "17:30" }, mood: "upbeat" } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldPond"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{
+        place: "colmar",
+        moment: { date: "2026-10-23", time: "12:00" },
+        pos: [491, 3.2, 222],
+        target: [515, 0.2, 207],
+        fov: 55,
+      } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldNightKits"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "colmar", moment: { date: "2026-10-23", time: "20:30" } } satisfies WorldActorsProps}
+    />
+    <Composition
+      id="WorldNightNewYork"
+      component={WorldActors}
+      durationInFrames={15 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={{ place: "new-york", moment: { date: "2026-10-23", time: "20:30" } } satisfies WorldActorsProps}
     />
     {/* Phase 5: scripted actors on a test plaza (src/world/actors/). */}
     <Composition

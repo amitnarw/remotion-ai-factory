@@ -1,4 +1,4 @@
-/**
+﻿/**
  * src/world/Ground.tsx
  *
  * The ground-level world at one place: the generated city, its trees and
@@ -30,10 +30,13 @@ import { BirdsLayer } from "./atmosphere/Birds";
 import { applyCloudDrift, applyTreeSway, type LifeTime } from "./atmosphere/sway";
 import { applyHeightFog, type HeightFogOptions } from "./atmosphere/fog";
 import { windowGlowTexture } from "./atmosphere/night";
+import { applyMoodPalette, moodLook, type MoodLook } from "./atmosphere/mood";
+import { shaftStrength, sunShafts } from "./atmosphere/shafts";
+import { bankGeometry, pondGeometry, pondsFor, waterMaterial } from "./atmosphere/water";
 
 const SKY_RADIUS = 55_000;
 
-function skyDome(sky: SkyLook, sunDir: Vec3): THREE.Mesh {
+function skyDome(sky: SkyLook, sunDir: Vec3, mood: MoodLook | null = null): THREE.Mesh {
   const geo = new THREE.SphereGeometry(SKY_RADIUS, 48, 24);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const zenith = new THREE.Color(sky.zenith);
@@ -61,6 +64,8 @@ function skyDome(sky: SkyLook, sunDir: Vec3): THREE.Mesh {
   );
   mesh.renderOrder = -1;
   mesh.frustumCulled = false;
+  // The dome shifts with the mood grade too, one material, deterministic.
+  applyMoodPalette(mesh.material, mood);
   return mesh;
 }
 
@@ -74,6 +79,7 @@ function treesGroup(
   palmCountry: boolean,
   clearings: [number, number, number][],
   fog: HeightFogOptions,
+  mood: MoodLook | null = null,
 ): { group: THREE.Group; sway: LifeTime } {
   const r = makeRng(`trees:${seed}`);
   const templates = treeTemplates({ seed, season });
@@ -132,6 +138,7 @@ function treesGroup(
   // (uniforms only: renders stay deterministic).
   const sway = applyTreeSway(material, season === "winter" ? 0.1 : 0.16);
   applyHeightFog(material, fog);
+  applyMoodPalette(material, mood);
   return { group, sway };
 }
 
@@ -190,6 +197,8 @@ export function GroundWorld({
   crowd = true,
   birds = true,
   cast,
+  mood: moodProp,
+  kitWindows = true,
 }: {
   place: ResolvedPlace;
   pose: GroundPose;
@@ -202,6 +211,11 @@ export function GroundWorld({
   cast?: ActorScriptInput[];
   /** The flock over the city. */
   birds?: boolean;
+  /** The story mood (writer vocabulary): the material palette per mood
+   *  family (atmosphere/mood.ts), deterministic per mood + place. */
+  mood?: string;
+  /** The kit buildings' night window glow (default: follows night). */
+  kitWindows?: boolean;
 }) {
   const { camera, scene } = useThree();
   const frame = useCurrentFrame();
@@ -277,6 +291,33 @@ export function GroundWorld({
       sunStrength: 0.35,
     };
     for (const mat of [groundMat, wallsMat, ...([roofs.material, props.material, land.material] as THREE.Material[])]) applyHeightFog(mat, fogOpts);
+
+    // Story mood: the toon palette per mood family (atmosphere/mood.ts),
+    // deterministic per mood + place id; null (no mood) changes nothing.
+    const mood = moodLook(moodProp, place.place.id);
+    // The drawn water: ponds in the park blocks and the fountain's pool
+    // share one material (atmosphere/water.ts), ripples driven by uTime.
+    const water = waterMaterial({
+      sky: mixHex(sky.horizon, sky.zenith, 0.35),
+      deep: "#2e7d84",
+      sunColor: sky.sunColor,
+      sunDir: place.sun.dir,
+    });
+    const waterBankMat = new THREE.MeshStandardMaterial({ color: mixHex(style.sidewalkColor, "#9b8a63", 0.6), roughness: 1, flatShading: true });
+    const waterMeshes = new THREE.Group();
+    for (const pond of pondsFor(layout, place.place.id)) {
+      const bank = new THREE.Mesh(bankGeometry(pond), waterBankMat);
+      bank.receiveShadow = true;
+      const pool = new THREE.Mesh(pondGeometry(pond), water.mat);
+      pool.receiveShadow = true;
+      pool.castShadow = false;
+      waterMeshes.add(bank, pool);
+    }
+    // Sun shafts: static additive blades for the golden hours; positioned
+    // and faded per frame in useFrame (uniforms only, no animation).
+    const shaftsOn = shaftStrength(place.sun.elevation);
+    const shafts = shaftsOn > 0 ? sunShafts({ sunDir: place.sun.dir, color: sky.sunColor, at: [0, 0, 0], strength: shaftsOn, seed: place.place.id }) : null;
+    for (const mat of [groundMat, wallsMat, waterBankMat, water.mat, ...([roofs.material, props.material, land.material, disc.material] as THREE.Material[])]) applyMoodPalette(mat, mood);
     const { group: treeMeshes, sway } = treesGroup(
       layout.trees,
       terrain,
@@ -285,10 +326,12 @@ export function GroundWorld({
       style.trees.kind === "palm",
       clearings,
       fogOpts,
+      mood,
     );
 
-    // The dressed plazas (fountain, stalls, benches) and their flags.
-    const dressing = plazaDressing(layout, style, place.place.id);
+    // The dressed plazas (fountain, stalls, benches) and their flags; the
+    // fountain's pool shares the drawn-water material.
+    const dressing = plazaDressing(layout, style, place.place.id, 3, water.mat);
     const flags = flagSpots(
       layout,
       style,
@@ -323,16 +366,20 @@ export function GroundWorld({
       disc,
       trees: treeMeshes,
       sway,
-      // Famous landmarks and the kit-built core (kit styles), drawn together
-      // as one set of instanced meshes.
-      models: [...landmarkPlacements(famous, terrain.heightAt), ...kitPlacements(layout.kitBuildings)],
+      // Famous landmarks and the kit-built core (kit styles), drawn as two
+      // instanced sets so the night window glow can key on the kit pieces.
+      landmarkModels: landmarkPlacements(famous, terrain.heightAt),
+      kitModels: kitPlacements(layout.kitBuildings),
+      waterMeshes,
+      waterU: water.uTime,
+      shafts,
       landmarks: landmarksGroup(layout.landmarks),
       clouds: cloudsMesh(layout.clouds, place.place.id),
       fogOpts,
     };
-  }, [place, style, cloudPassage, sky]);
+  }, [place, style, cloudPassage, sky, moodProp]);
 
-  const dome = useMemo(() => skyDome(sky, place.sun.dir), [sky, place]);
+  const dome = useMemo(() => skyDome(sky, place.sun.dir, moodLook(moodProp, place.place.id)), [sky, place, moodProp]);
 
   const lights = useMemo(() => {
     // Night: a dim cool moon stands in for the sun, so the dark still reads.
@@ -375,6 +422,7 @@ export function GroundWorld({
     // Wind is a pure function of t.
     world.sway.uTime.value = t;
     world.clouds.drift.uTime.value = t;
+    world.waterU.value = t;
 
     const cam = camera as THREE.PerspectiveCamera;
     const alt = Math.max(1, pose.pos[1]);
@@ -415,6 +463,14 @@ export function GroundWorld({
     lights.sun.target.position.copy(focus);
     lights.sun.target.updateMatrixWorld();
   lights.disk.position.copy(cam.position).addScaledVector(sunDir, 50_000);
+
+    // The shaft fan hangs at the camera focus, and thins with altitude
+    // (aerials see blades from above, where they would wash the ground).
+    if (world.shafts) {
+      world.shafts.group.position.copy(cam.position);
+      world.shafts.setCamera(cam.position, cam.quaternion);
+      world.shafts.setStrength(shaftStrength(place.sun.elevation) * Math.max(0.2, Math.min(1, 1.25 - alt / 420)));
+    }
   });
 
   return (
@@ -436,7 +492,10 @@ export function GroundWorld({
       <primitive object={world.landmarks} />
       <primitive object={world.dressing} />
       <primitive object={world.lamps} />
-      {world.models.length > 0 && <KitInstances placements={world.models} />}
+      <primitive object={world.waterMeshes} />
+      {world.shafts && <primitive object={world.shafts.group} />}
+      {world.landmarkModels.length > 0 && <KitInstances placements={world.landmarkModels} />}
+      {world.kitModels.length > 0 && <KitInstances placements={world.kitModels} windowGlow={kitWindows && place.sun.elevation < 1} />}
       <Flags spots={world.flags} />
       {birds && place.sun.elevation > -2 && <BirdsLayer seed={place.place.id} />}
       {wantCrowd && <ActorsLayer scripts={shownScripts} anchors={world.anchors as CityAnchors} onWarnings={(w) => console.warn(`[world crowd] ${w.join("\n")}`)} />}
