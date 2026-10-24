@@ -81,7 +81,7 @@ function worldPose(style: string, u: number): GroundPose {
   // Face along the avenue (+x); the flight's B arrival walks east, so a
   // westward dolly keeps one continuous reading of the city's depth.
   if (style === "walk-through") return view(90, 4, [-70 + 40 * u, 4.4, 3]);
-  if (style === "steady-push") return view(90, 12, [-50, 16 + 5 * u, 6]);
+  if (style === "steady-push") return view(90, 20, [-46, 8.5 + 2.5 * u, 6]);
   if (style === "crane-reveal") return view(90, lerp(8, -30, smooth(u)), [-70, 9 + 55 * smooth(u), 0]);
   if (style === "drone-top") return view(90, -55, [-55 + 12 * u, 240, 0]);
   // Unknown/absent styles: a slow high dolly, close enough to every place.
