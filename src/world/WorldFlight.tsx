@@ -22,6 +22,10 @@ export type WorldFlightProps = {
   /** Screen time the flight occupies. The 15 s path is time-scaled to fit
    *  (a shorter window is a faster flight); default: the full 15 s. */
   dur?: number;
+  /** The story's mood (writer's choice, threaded from FlightView): the
+   *  world's toon palette follows it on both ends. Optional — QA callers
+   *  without a story render ungraded. */
+  mood?: string;
 };
 
 const GL = { logarithmicDepthBuffer: true, antialias: true };
@@ -104,7 +108,7 @@ function placeLines(p: ResolvedPlace): string[] {
 const fade = (t: number, a: number, b: number, c: number, d: number) =>
   Math.max(0, Math.min(1, (t - a) / (b - a), (d - t) / (d - c)));
 
-export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur }) => {
+export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur, mood }) => {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
   const t = (frame / fps) * (TIMING.end / (dur ?? TIMING.end));
@@ -119,12 +123,12 @@ export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur }) => {
     <AbsoluteFill style={{ background: "#000" }}>
       {f.ground?.side === "a" && (
         <ThreeCanvas key="a" width={width} height={height} style={layer} shadows gl={GL}>
-          <GroundWorld place={a} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.a} />
+          <GroundWorld place={a} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.a} mood={mood} />
         </ThreeCanvas>
       )}
       {f.ground?.side === "b" && (
         <ThreeCanvas key="b" width={width} height={height} style={layer} shadows gl={GL}>
-          <GroundWorld place={b} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.b} />
+          <GroundWorld place={b} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.b} mood={mood} />
         </ThreeCanvas>
       )}
       {f.globe && (

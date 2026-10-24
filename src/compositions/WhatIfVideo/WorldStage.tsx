@@ -95,6 +95,8 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
         fov={fov}
         cloudPassage={CLOUD_PASSAGE}
         cast={shots?.castScripts}
+        // The writer's mood (spec.story) drives the world's toon palette.
+        mood={spec?.story?.mood}
       />
       {cameraPose && (
         // Overrides GroundWorld's own camera write afterwards each frame:

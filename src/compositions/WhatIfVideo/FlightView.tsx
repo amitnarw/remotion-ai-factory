@@ -35,6 +35,7 @@ export const FlightView: React.FC<{
         from={{ place: a.world.place, moment: { date: a.world.date, time: a.world.time } }}
         to={{ place: b.world.place, moment: { date: b.world.date, time: b.world.time } }}
         dur={dur}
+        mood={spec.story?.mood}
       />
     </Sequence>
   );
