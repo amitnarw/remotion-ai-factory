@@ -149,7 +149,11 @@ export function projectedBoxCoverage(
 export const EXPOSURE_LIMITS = {
   day: { minMean: 0.15, maxCrushed: 0.4, maxClipped: 0.05 },
   night: { minMean: 0.1, maxCrushed: 0.6, maxClipped: 0.05 },
-  space: { minMean: 0.04, maxCrushed: 0.9, maxClipped: 0.05 },
+  // Calibrated 2026-10-24 on the space sweep (out/qa/laneA/space): a correct
+  // starfield wide sits at mean 0.028-0.037 with 94-97% shadow, because space
+  // IS mostly black sky - the planet is what must be lit (its day MS read 0.53).
+  // The limits below still catch a genuinely unlit frame (no stars/planet).
+  space: { minMean: 0.02, maxCrushed: 0.985, maxClipped: 0.05 },
 } as const;
 
 /** `light`: true / "night" for night scenes, "space" for space, false / "day" otherwise. */

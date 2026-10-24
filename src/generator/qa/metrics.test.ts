@@ -163,6 +163,22 @@ test("exposureVerdict: day and night thresholds", () => {
   assert.match(blown.problems[0], /clipped/);
 });
 
+test("exposureVerdict: space wides are legitimately black (calibrated 2026-10-24)", () => {
+  // The measured starfield/planet wides from the space sweep (out/qa/laneA/space):
+  // correct frames, previously mis-flagged "too dark".
+  const sweep = [
+    { mean: 0.0317, crushed: 0.969, clipped: 0.009 },
+    { mean: 0.037, crushed: 0.944, clipped: 0 },
+    { mean: 0.0281, crushed: 0.966, clipped: 0 },
+  ];
+  for (const s of sweep) assert.deepEqual(exposureVerdict(s, "space"), { ok: true, problems: [] });
+  // A lit day-side surface still passes easily.
+  assert.deepEqual(exposureVerdict({ mean: 0.526, crushed: 0.18, clipped: 0 }, "space"), { ok: true, problems: [] });
+  // The failure modes the space limits still exist to catch: an unlit frame.
+  assert.equal(exposureVerdict({ mean: 0.012, crushed: 0.995, clipped: 0 }, "space").ok, false);
+  assert.equal(exposureVerdict({ mean: 0.6, crushed: 0, clipped: 0.2 }, "space").ok, false);
+});
+
 // --- colour ---------------------------------------------------------------------
 
 test("colourfulness: grey is 0, red/green is high", () => {
