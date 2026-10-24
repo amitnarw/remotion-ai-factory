@@ -22,7 +22,7 @@ import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { validateSpec, SettingsSchema, videoSeconds, type ShotSpec, type VideoSettings } from "./spec.schema";
-import { runTtsStage } from "./tts";
+import { disposeTtsWorkers, runTtsStage } from "./tts";
 import { resolveAudio } from "./audio-resolve";
 import { masterAudio } from "./audio-master";
 import { secToFrame } from "./timing";
@@ -189,6 +189,9 @@ function main() {
         console.error("═══ FAILED ═══");
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
+      } finally {
+        // A persistent kitten worker (if it started) must not keep node alive.
+        disposeTtsWorkers();
       }
     })();
     return;
@@ -251,6 +254,9 @@ function main() {
         `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
+    } finally {
+      // A persistent kitten worker (if it started) must not keep node alive.
+      disposeTtsWorkers();
     }
   })();
 }

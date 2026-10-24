@@ -9,7 +9,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { Film, Redo } from "./edits";
+import type { CaptionOverride, Film, Redo } from "./edits";
 
 export interface FilmVersion {
   v: number;
@@ -70,7 +70,11 @@ export function openFilm(id: string, root = defaultRoot()): { film: Film; head: 
   // Stage files changed outside the editor (a voice recast, a new plan):
   // keep them as a version so undo does not silently drop them.
   const onDisk = readStages(p.dir);
-  if (JSON.stringify(onDisk) !== JSON.stringify(current)) {
+  // Only the four stage files count for this check: film.captions (the
+  // editor's keep-timing wording) lives in the version snapshots only, never
+  // on the stage files, so it must not look like "changed outside the editor".
+  const stageOf = (f: Film): Film => ({ story: f.story, direction: f.direction, sound: f.sound, plan: f.plan });
+  if (JSON.stringify(stageOf(onDisk)) !== JSON.stringify(stageOf(current))) {
     const v = Math.max(...head.versions.map((x) => x.v)) + 1;
     writeJson(p.version(v), onDisk);
     const kept = head.versions.filter((x) => x.v <= head.current);
@@ -122,4 +126,17 @@ export function undoFilm(id: string, root = defaultRoot()) {
 
 export function redoFilm(id: string, root = defaultRoot()) {
   return moveTo(id, root, (_h, i) => i + 1);
+}
+
+
+/**
+ * The editor's keep-timing caption wording saved on the current version
+ * (film.captions). prepareFilm applies it over the rebuilt captions.
+ */
+export function captionOverrides(id: string, root = defaultRoot()): CaptionOverride[] {
+  try {
+    return openFilm(id, root).film.captions ?? [];
+  } catch {
+    return [];
+  }
 }

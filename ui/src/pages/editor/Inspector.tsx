@@ -1,14 +1,20 @@
-/**
+﻿/**
  * Inspector: a form for the selected timeline item, drawn from the server's
  * field list (enums become a Select, text an Input or Textarea). Save sends
  * one edit per changed field, with paths written the way film/edits.ts reads
  * them: beats by id, shots / scenes / hits / music by their index in the film.
+ *
+ * Wording is different (Phase 4, keep-timing vs reflow): narration, dialog
+ * and hook text go through PUT /api/film/:id with the edited spec — the
+ * server adopts the story text (re-voices the changed line from the cache and
+ * re-times) — and a caption's on-screen words are saved as keep-timing
+ * overrides (the voice and the window stay, only the words change).
  */
 import { useState, type ReactNode } from "react";
 import { MousePointerClick, Save } from "lucide-react";
 import type { ShotSpec } from "@/generator/spec.schema";
 import { subjectsFor } from "@/generator/camera/subjects";
-import type { EditorFields, FieldInfo, Film, FilmEdit } from "../../api";
+import type { EditorFields, FieldInfo, Film, FilmEdit, SaveEditsSpec } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Input, Textarea } from "../../components/ui/input";
@@ -65,6 +71,73 @@ interface Entry {
   /** Text shown in a tall box. */
   long?: boolean;
 }
+
+/** Wording the editor saves through the approved spec (PUT), not through /edit. */
+const TEXT_EDIT_PATH = /^(story\.hook|story\.beats\[[^\]]+\]\.say|captions\[\d+\]\.text)$/;
+
+/**
+ * Turn wording changes into an edited spec (the server diffs it against the
+ * film). Entries whose target is gone from the spec come back in `missed`;
+ * the caller saves those through /edit instead.
+ */
+function specTextMutate(
+  spec: ShotSpec,
+  changes: Entry[],
+  values: Record<string, unknown>,
+): { spec: ShotSpec; missed: Entry[] } {
+  const missed: Entry[] = [];
+  const story = spec.story ? { ...spec.story } : undefined;
+  if (story) story.beats = (story.beats ?? []).map((b) => ({ ...b }));
+  const captions = (spec.captions ?? []).map((c) => ({ ...c }));
+  for (const e of changes) {
+    const v = typeof values[e.path] === "string" ? (values[e.path] as string) : "";
+    let m = /^captions\[(\d+)\]\.text$/.exec(e.path);
+    if (m) {
+      const cap = captions[Number(m[1])];
+      if (!cap) {
+        missed.push(e);
+        continue;
+      }
+      cap.text = v;
+      cap.words = undefined; // the server re-times the words inside the window
+      continue;
+    }
+    if (!story) {
+      missed.push(e);
+      continue;
+    }
+    m = /^story\.hook$/.exec(e.path);
+    if (m) {
+      story.hook = v;
+      continue;
+    }
+    m = /^story\.beats\[([^\]]+)\]\.say$/.exec(e.path);
+    if (m) {
+      const b = story.beats?.find((x) => x.id === m![1]);
+      if (!b) {
+        missed.push(e);
+        continue;
+      }
+      b.say = v;
+      continue;
+    }
+    // Character dialog lines are NOT approved-spec wording: the playable spec's
+    // timed lines include narrator lines the film does not have, so their
+    // spelling edits go through /edit (validated per line; same fast re-voice).
+    missed.push(e);
+  }
+  const out: ShotSpec = { ...spec, story: story ?? spec.story, captions: captions.length ? captions : spec.captions };
+  return { spec: out, missed };
+}
+
+/** Short old-to-new reading for the diff preview. */
+const shortText = (v: unknown): string => {
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t.length > 44 ? `${t.slice(0, 41)}...` : t || "(empty)";
+  }
+  return JSON.stringify(v);
+};
 
 /** One entry per editable field of an object, skipping lists and nested objects. */
 function entriesFor(base: string, fields: Record<string, FieldInfo>, obj: Record<string, unknown>, skip: string[] = []): Entry[] {
@@ -131,11 +204,17 @@ function FieldInput({ entry, value, onChange, disabled }: { entry: Entry; value:
  * The form itself. `toEdits` turns the changed fields into edits (default: one
  * "set" per field); `alwaysSave` allows saving with no change (keeping a shot
  * that was picked automatically).
+ *
+ * Wording entries (say / lines / hook / caption text) go through `onSaveSpec`
+ * (the approved-spec PUT) when it is given; everything else goes through
+ * `onSave` (/edit) as before. A small diff preview shows what will change.
  */
 function FieldsForm({
   groups,
   busy,
   onSave,
+  onSaveSpec,
+  spec,
   saveLabel = "Save changes",
   toEdits,
   alwaysSave = false,
@@ -143,6 +222,10 @@ function FieldsForm({
   groups: Array<{ title?: string; entries: Entry[] }>;
   busy: boolean;
   onSave: SaveEdits;
+  /** Wording saves go here (PUT /api/film/:id). Absent = this form cannot save wording. */
+  onSaveSpec?: SaveEditsSpec;
+  /** The current spec, needed by onSaveSpec. */
+  spec?: ShotSpec;
   saveLabel?: string;
   toEdits?: (values: Record<string, unknown>, changed: Entry[]) => FilmEdit[];
   alwaysSave?: boolean;
@@ -152,17 +235,52 @@ function FieldsForm({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const changed = all.filter((e) => !same(draft[e.path], e.value));
+  const wording = changed.filter((e) => TEXT_EDIT_PATH.test(e.path));
+  const structural = changed.filter((e) => !TEXT_EDIT_PATH.test(e.path));
 
   const save = async () => {
-    const edits = toEdits
-      ? toEdits(draft, changed)
-      : changed.map((e) => ({ op: "set" as const, path: e.path, value: draft[e.path] }));
-    if (edits.length === 0) return;
+    if (changed.length === 0) return;
     setSaving(true);
     setError(null);
-    const message = await onSave(edits);
+    if (wording.length > 0) {
+      if (!onSaveSpec || !spec) {
+        setSaving(false);
+        setError("This wording cannot be saved from here (no spec to diff against).");
+        return;
+      }
+      const { spec: next, missed } = specTextMutate(spec, wording, draft);
+      const message = await onSaveSpec(() => next);
+      if (message) {
+        setSaving(false);
+        setError(message);
+        return;
+      }
+      const fallback = missed.map((e) => ({ op: "set" as const, path: e.path, value: draft[e.path] }));
+      if (fallback.length > 0) {
+        const fallbackMessage = await onSave(fallback);
+        if (fallbackMessage) {
+          setSaving(false);
+          setError(fallbackMessage);
+          return;
+        }
+      }
+    }
+    if (structural.length > 0) {
+      const edits = toEdits
+        ? toEdits(draft, structural)
+        : structural.map((e) => ({ op: "set" as const, path: e.path, value: draft[e.path] }));
+      if (edits.length === 0) {
+        setSaving(false);
+        return;
+      }
+      const message = await onSave(edits);
+      if (message) {
+        setSaving(false);
+        setError(message);
+        return;
+      }
+    }
     setSaving(false);
-    if (message) setError(message);
   };
 
   return (
@@ -183,6 +301,21 @@ function FieldsForm({
           ))}
         </div>
       ))}
+      {changed.length > 0 ? (
+        <div className="rounded-xl bg-input/40 px-3 py-2">
+          <div className="mb-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+            {changed.length === 1 ? "1 line changed" : `${changed.length} lines changed`}
+          </div>
+          <ul className="space-y-0.5 text-xs text-muted-foreground">
+            {changed.map((e) => (
+              <li key={e.path} className="break-words tabular-nums">
+                <span className="font-semibold text-foreground/70">{labelFor(e.path.slice(e.path.lastIndexOf(".") + 1))}</span>{" "}
+                {shortText(e.value)} <span className="font-bold">to</span> {shortText(draft[e.path])}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {error ? (
         <div role="alert" className="whitespace-pre-wrap rounded-xl bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground">
           {error}
@@ -191,7 +324,7 @@ function FieldsForm({
       <div className="flex items-center gap-2">
         <Button size="sm" disabled={busy || saving || (!alwaysSave && changed.length === 0)} onClick={save}>
           <Save className={saving ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />
-          {saving ? "Saving..." : saveLabel}
+          {saving ? "Saving..." : wording.length > 0 && structural.length === 0 && alwaysSave ? "Keep timing" : saveLabel}
         </Button>
         {changed.length > 0 && !saving ? (
           <Button
@@ -205,7 +338,9 @@ function FieldsForm({
             Reset
           </Button>
         ) : null}
-        {changed.length > 0 ? <span className="text-xs text-muted-foreground">{changed.length} changed</span> : null}
+        {wording.length > 0 ? (
+          <span className="text-xs text-muted-foreground">re-voices the changed line(s) + re-times the video</span>
+        ) : null}
       </div>
     </div>
   );
@@ -213,7 +348,7 @@ function FieldsForm({
 
 /* ------------------------------------------------------------------ */
 
-function BeatForm({ film, fields, beatId, line, busy, onSave }: { film: Film; fields: EditorFields; beatId: string; line?: number; busy: boolean; onSave: SaveEdits }) {
+function BeatForm({ film, fields, beatId, line, busy, onSave, onSaveSpec, spec }: { film: Film; fields: EditorFields; beatId: string; line?: number; busy: boolean; onSave: SaveEdits; onSaveSpec?: SaveEditsSpec; spec?: ShotSpec }) {
   const beat = film.story.beats.find((b) => b.id === beatId);
   if (!beat) return <Note>Beat {beatId} is not in the story any more.</Note>;
   const base = `story.beats[${beatId}]`;
@@ -229,7 +364,32 @@ function BeatForm({ film, fields, beatId, line, busy, onSave }: { film: Film; fi
     <FieldsForm
       busy={busy}
       onSave={onSave}
+      onSaveSpec={onSaveSpec}
+      spec={spec}
       groups={[{ entries: main }, ...(lines.length ? [{ title: "Character lines", entries: lines }] : [])]}
+    />
+  );
+}
+
+/** A caption's on-screen words, saved as keep-timing (the voice stays). */
+function CaptionScreenForm({ spec, item, busy, onSaveSpec }: { spec: ShotSpec; item: TrackItem; busy: boolean; onSaveSpec?: SaveEditsSpec }) {
+  const cap = spec.captions?.[item.specIndex];
+  if (!cap) return <Note>This caption is not in the plan any more.</Note>;
+  return (
+    <FieldsForm
+      busy={busy}
+      onSave={async () => "Use the caption save instead (it keeps the timing)."}
+      onSaveSpec={onSaveSpec}
+      spec={spec}
+      alwaysSave
+      saveLabel="Keep timing"
+      groups={[
+        {
+          entries: [
+            { path: `captions[${item.specIndex}].text`, label: "Words on screen", info: { kind: "text" as const }, value: cap.text, long: true },
+          ],
+        },
+      ]}
     />
   );
 }
@@ -240,7 +400,7 @@ function ShotForm({ film, spec, fields, item, busy, onSave }: { film: Film; spec
   if (item.beat === "hook") return <Note>The opening shot is picked for you. It films the whole place while the question is asked.</Note>;
   const directed = item.filmIndex !== undefined ? film.direction.shots[item.filmIndex] : undefined;
   const source = (directed ?? specShot) as unknown as Record<string, unknown>;
-  const kit = spec.scenes.find((s) => specShot.from >= s.from && specShot.from < s.to)?.kit ?? spec.scenes[0]?.kit;
+  const kit = spec.scenes.find((sc) => specShot.from >= sc.from && specShot.from < sc.to)?.kit ?? spec.scenes[0]?.kit;
   const shotFields = { ...fields.shot };
   if (shotFields.subject?.kind === "text") shotFields.subject = { kind: "enum", options: subjectsFor(kit) };
   const base = item.filmIndex !== undefined ? `direction.shots[${item.filmIndex}]` : "direction.shots[new]";
@@ -306,9 +466,9 @@ function MusicForm({ film, fields, item, busy, onSave }: { film: Film; fields: E
   );
 }
 
-function HookForm({ film, busy, onSave }: { film: Film; busy: boolean; onSave: SaveEdits }) {
+function HookForm({ film, busy, onSave, onSaveSpec, spec }: { film: Film; busy: boolean; onSave: SaveEdits; onSaveSpec?: SaveEditsSpec; spec?: ShotSpec }) {
   const entries: Entry[] = [{ path: "story.hook", label: "Opening question", info: { kind: "text" }, value: film.story.hook, long: true }];
-  return <FieldsForm groups={[{ entries }]} busy={busy} onSave={onSave} />;
+  return <FieldsForm groups={[{ entries }]} busy={busy} onSave={onSave} onSaveSpec={onSaveSpec} spec={spec} />;
 }
 
 function Note({ children }: { children: ReactNode }) {
@@ -335,6 +495,7 @@ export function Inspector({
   version,
   busy,
   onSave,
+  onSaveSpec,
 }: {
   item: TrackItem | undefined;
   film: Film;
@@ -344,13 +505,15 @@ export function Inspector({
   version: number;
   busy: boolean;
   onSave: SaveEdits;
+  /** Wording saves (narration, dialog, caption) through the approved spec. */
+  onSaveSpec?: SaveEditsSpec;
 }) {
   const renderBody = () => {
     if (!item) return null;
-    const props = { film, fields, busy, onSave };
+    const props = { film, fields, busy, onSave, onSaveSpec, spec };
     switch (item.kind) {
       case "hook":
-        return <HookForm film={film} busy={busy} onSave={onSave} />;
+        return <HookForm film={film} busy={busy} onSave={onSave} onSaveSpec={onSaveSpec} spec={spec} />;
       case "beat":
         return <BeatForm {...props} beatId={item.beat!} />;
       case "caption":
@@ -358,21 +521,25 @@ export function Inspector({
         if (item.beat === "hook") {
           return (
             <div className="space-y-3">
-              <Note>{item.kind === "caption" ? "Captions follow the spoken words." : "This is the opening question, read aloud."} Change the words here.</Note>
-              <HookForm film={film} busy={busy} onSave={onSave} />
+              <Note>{item.kind === "caption" ? "The opening question rides the Hook card." : "This is the opening question, read aloud."} Change the words below; the narrator speaks them again.</Note>
+              <HookForm film={film} busy={busy} onSave={onSave} onSaveSpec={onSaveSpec} spec={spec} />
             </div>
           );
         }
-        return (
-          <div className="space-y-3">
-            <Note>
-              {item.kind === "caption"
-                ? `"${item.label}" comes from the words spoken in ${item.beat}. Change them in the beat below.`
-                : `This line is part of ${item.beat}. Change its words below.`}
-            </Note>
-            {item.beat ? <BeatForm {...props} beatId={item.beat} line={item.line} /> : null}
-          </div>
-        );
+        if (item.beat && item.beat !== "hook") {
+          return (
+            <div className="space-y-3">
+              <Note>
+                {item.kind === "caption"
+                  ? "What this caption shows, and what is spoken in this moment."
+                  : "One spoken line. Change the words it says below."}
+              </Note>
+              {item.kind === "caption" ? <CaptionScreenForm spec={spec} item={item} busy={busy} onSaveSpec={onSaveSpec} /> : null}
+              <BeatForm {...props} beatId={item.beat} line={item.kind === "voice" ? item.line : undefined} />
+            </div>
+          );
+        }
+        return null;
       case "shot":
         return <ShotForm {...props} spec={spec} item={item} />;
       case "scene":

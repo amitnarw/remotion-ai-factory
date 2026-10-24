@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import {
   editFilm,
   getFilm,
+  getFilmStatus,
+  putFilm,
   redoFilm,
   renderSpec,
   undoFilm,
@@ -23,6 +25,7 @@ import {
   type FilmHead,
   type FilmProposal,
   type FilmResponse,
+  type SaveEditsSpec,
 } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -120,6 +123,8 @@ export default function Editor() {
   const [draft, setDraft] = useState(loadDraft);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [rendering, setRendering] = useState(false);
+  /** The server is re-voicing/re-measuring edited lines in the background. */
+  const [measuring, setMeasuring] = useState(false);
 
   useEffect(() => {
     if (!filmId) return;
@@ -127,7 +132,11 @@ export default function Editor() {
     setData(null);
     setLoadError(null);
     getFilm(filmId)
-      .then((r) => alive && setData(r))
+      .then((r) => {
+        if (!alive) return;
+        setData(r);
+        setMeasuring(!!r.measuring);
+      })
       .catch((e) => alive && setLoadError(errorMessage(e)));
     return () => {
       alive = false;
@@ -142,13 +151,41 @@ export default function Editor() {
 
   const adopt = useCallback((r: FilmChangeResponse) => {
     setData((d) => (d ? { ...d, head: r.head, film: r.film, spec: r.spec, warnings: r.warnings, audio: r.audio, measured: r.measured } : d));
+    setMeasuring(!!r.measuring);
   }, []);
+
+  /** Poll /status until the background voice measurement lands, then refresh. */
+  useEffect(() => {
+    if (!filmId || !measuring) return;
+    let alive = true;
+    const timer = setInterval(async () => {
+      try {
+        const status = await getFilmStatus(filmId);
+        if (status.measuring) return;
+        clearInterval(timer);
+        if (!alive) return;
+        setMeasuring(false);
+        if (status.error) toast.error("Background voicing failed", { description: status.error.slice(0, 200) });
+        const r = await getFilm(filmId);
+        if (!alive) return;
+        setData(r);
+        setMeasuring(!!r.measuring); // a newer edit may already be re-measuring
+        if (!status.error) toast.success("Voice measured", { description: "The timing is real now - the video can be made." });
+      } catch {
+        /* server hiccup: keep polling */
+      }
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [filmId, measuring]);
 
   /** One save = one version. Resolves to the server's message on failure. */
   const save = useCallback(
     async (edits: FilmEdit[], source: "user" | "ai" = "user", summary?: string): Promise<string | null> => {
       if (!filmId) return "No video is open.";
-      setBusy(edits.some((e) => /\.(say|text|who)$|story\.hook|\.lines/.test(e.path)) ? "Saving and voicing the new words..." : "Saving...");
+      setBusy(edits.some((e) => /\.(see|stress|pace|sound|at|who)$/i.test(e.path)) ? "Saving..." : "Saving and re-timing...");
       try {
         const r = await editFilm(filmId, { edits, source, summary });
         adopt(r);
@@ -165,6 +202,38 @@ export default function Editor() {
 
   const onSaveUser = useCallback((edits: FilmEdit[]) => save(edits, "user"), [save]);
   const onApplyAi = useCallback((p: FilmProposal) => save(p.edits, "ai", p.summary), [save]);
+
+  /** Wording saves (PUT /api/film/:id): narration/dialog text re-voices and
+   *  re-times ("reflow", the changed length is offered), caption text keeps
+   *  its timing. */
+  const onSaveSpec = useCallback<SaveEditsSpec>(
+    async (mutate) => {
+      if (!filmId || !spec) return "No video is open.";
+      const from = specTiming(spec);
+      setBusy(spec.captions ? "Saving..." : "Saving and re-timing...");
+      try {
+        const r = await putFilm(filmId, { spec: mutate(spec) });
+        adopt(r);
+        const to = specTiming(r.spec);
+        const delta = (to.durationInFrames - from.durationInFrames) / (from.fps || 30);
+        const keptTiming = (r.changed?.lines ?? 0) === 0 && (r.changed?.captions ?? 0) > 0;
+        toast.success(keptTiming ? "Words kept on their timing" : "Saved", {
+          description:
+            keptTiming
+              ? `The voice did not change; ${(r.changed?.captions ?? 0)} caption(s) re-timed in place (version ${r.head.current}).`
+              : Math.abs(delta) >= 0.4
+                ? `Reflowed: the video is now ${(to.durationInFrames / to.fps).toFixed(1)}s (${delta >= 0 ? "+" : ""}${delta.toFixed(1)}s), version ${r.head.current}.`
+                : `Re-voiced from the cache; version ${r.head.current}.`,
+        });
+        return null;
+      } catch (e) {
+        return errorMessage(e);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [filmId, spec, adopt],
+  );
 
   const move = async (dir: "undo" | "redo") => {
     if (!filmId) return;
@@ -256,6 +325,11 @@ export default function Editor() {
             <RefreshCw className="h-3.5 w-3.5 animate-spin" /> {busy}
           </Badge>
         ) : null}
+        {measuring ? (
+          <Badge variant="amber" className="gap-2">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Voicing the changed words...
+          </Badge>
+        ) : null}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="secondary" size="sm" disabled={!canUndo || locked} onClick={() => move("undo")} title="Undo the last change">
             <Undo2 className="h-4 w-4" /> Undo
@@ -320,6 +394,7 @@ export default function Editor() {
             version={head.current}
             busy={locked}
             onSave={onSaveUser}
+            onSaveSpec={onSaveSpec}
           />
           <AskAi filmId={filmId} beat={askTargetBeat(selected)} busy={locked} onApply={onApplyAi} />
         </div>

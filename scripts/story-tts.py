@@ -167,17 +167,98 @@ def run_voxcpm(job, out_dir):
     return durations, sr
 
 
+def worker_kitten() -> None:
+    """Keep the model loaded and synthesize lines as they arrive on stdin.
+
+    Protocol (one JSON object per line, written by src/generator/tts.ts):
+      request  {"id": "b3-n2", "text": "...", "voice": "Bruno", "outDir": "..."}
+      response @@ {"ok": true, "id": "...", "dur": 4.123, "wav": "..."}  (file written)
+      or       @@ {"ok": false, "id": "...", "error": "..."}             (line failed; worker stays)
+    The loop exits on {"op": "quit"} or when stdin closes.
+
+    """
+    import time  # noqa: PLC0415
+
+    use_all_cores()
+    from kittenml import KittenTTS  # noqa: E402
+
+    t0 = time.time()
+    try:
+        model = KittenTTS("KittenML/kitten-tts-2")
+    except Exception as e:  # a load failure is fatal: the Node side falls back to the batch path
+        print("@@ " + json.dumps({"ok": False, "id": None, "error": f"model load failed: {str(e)[:300]}"}), flush=True)
+        raise
+    try:
+        voices = set(model.available_voices or [])
+    except Exception:
+        voices = set()
+    print(f"[voice/worker] kitten ready in {time.time() - t0:.1f}s", flush=True)
+
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            req = json.loads(raw)
+        except Exception as e:
+            print("@@ " + json.dumps({"ok": False, "id": None, "error": f"bad request line: {str(e)[:120]}"}), flush=True)
+            continue
+        if req.get("op") == "quit":
+            break
+        lid = str(req.get("id") or "line")
+        text = str(req.get("text") or "")
+        voice = req.get("voice") or KITTEN_DEFAULT_VOICE
+        if voices and voice not in voices:
+            voice = KITTEN_DEFAULT_VOICE
+        if voice in KITTEN_BANNED:
+            voice = KITTEN_DEFAULT_VOICE
+        out_dir = req.get("outDir") or "."
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{lid}.wav")
+        try:
+            t1 = time.time()
+            audio = model.generate(text, voice=voice, temperature=0.6, top_k=30)
+            if os.path.exists(path):
+                os.remove(path)
+            for attempt in range(3):
+                try:
+                    sf.write(path, audio, model.sample_rate)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+            trim_silence(path)
+            dur = round(wav_duration(path), 3)
+            print(f"[voice/kitten] {lid}: {dur}s ({voice}) in {time.time() - t1:.1f}s", flush=True)
+            print("@@ " + json.dumps({"ok": True, "id": lid, "dur": dur, "wav": os.path.abspath(path), "voice": voice}), flush=True)
+        except Exception as e:
+            print("@@ " + json.dumps({"ok": False, "id": lid, "error": str(e)[:300]}), flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("job", help="path to job JSON")
+    parser.add_argument("job", nargs="?", default=None, help="path to job JSON")
     parser.add_argument("--engine", choices=["kitten2", "voxcpm2"], default=None)
+    parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="keep the engine loaded for the whole process and read one JSON line per utterance from stdin (kitten2). The Node side keeps one worker per server session; a line then costs only its generation time.",
+    )
     args = parser.parse_args()
 
+    engine = args.engine or "kitten2"
+
+    if args.worker:
+        if engine != "kitten2":
+            raise SystemExit("--worker is only implemented for kitten2")
+        worker_kitten()
+        return
+
+    if not args.job:
+        parser.error("a job JSON file is required without --worker")
     job = json.loads(open(args.job, "r", encoding="utf-8").read())
     out_dir = job["outDir"]
     os.makedirs(out_dir, exist_ok=True)
-
-    engine = args.engine or job.get("engine") or "kitten2"
 
     if engine == "voxcpm2":
         durations, sr = run_voxcpm(job, out_dir)

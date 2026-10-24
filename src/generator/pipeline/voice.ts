@@ -13,7 +13,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { CACHE_DIR, synthesizeLines, tempoVoiceFile, type VoiceLine } from "../tts";
+import { CACHE_DIR, cachedDuration, synthesizeLines, tempoVoiceFile, type VoiceLine } from "../tts";
 import { resolveTtsPython } from "../tts-python";
 import { voxDescription } from "../voices";
 import type { WriterCharacter, WriterStory } from "./writer";
@@ -195,9 +195,11 @@ export function estimateDuration(text: string, model: SpeechModel | number): num
 }
 
 /**
- * Give every line a duration. mode "plan": Kitten lines are synthesized when
- * Kitten is installed; everything else is estimated (with a warning). mode
- * "render": every line is synthesized and measured (throws if an engine is missing).
+ * Give every line a duration. mode "plan": lines the voice cache measured
+ * keep their real length; Kitten lines the cache lacks are synthesized when
+ * Kitten is installed (FACTORY_PLAN_TTS=1), and the rest are estimated (with
+ * a warning). mode "render": every line is synthesized and measured (throws
+ * if an engine is missing).
  */
 export async function voiceLines(
   lines: PlannedLine[],
@@ -212,7 +214,7 @@ export async function voiceLines(
   // render always measures.
   const planTts = process.env.FACTORY_PLAN_TTS === "1" && !!resolveTtsPython("kitten2");
   const real = lines.filter((l) => mode === "render" || (planTts && l.engine === "kitten2"));
-  const estimated = lines.filter((l) => !real.includes(l));
+  const estimated: PlannedLine[] = []; // filled below: only lines the cache does NOT cover
 
   const durations = new Map<string, { dur: number; file: string }>();
   if (real.length > 0) {
@@ -227,6 +229,27 @@ export async function voiceLines(
       const first = (e as Error).message.split(/\r?\n/)[0] ?? "";
       warnings.push(`synthesis failed at plan time, so these lines are estimated: ${first.slice(0, 160)}`);
       estimated.push(...real);
+    }
+  }
+  // Plan-mode cache reuse (Phase 4 fast edits): a line the voice cache has
+  // already measured keeps its REAL length (and its file), so a wording edit
+  // answers with true timing for everything unchanged, and a fully measured
+  // film reads back as measured (no background re-measure loop).
+  const rest = lines.filter((l) => !real.includes(l));
+  const fromCache: PlannedLine[] = [];
+  for (const l of rest) {
+    if (cachedDuration(l) === null) estimated.push(l);
+    else fromCache.push(l);
+  }
+  if (fromCache.length > 0) {
+    try {
+      const vl: VoiceLine[] = fromCache.map((l) => ({ id: l.id, text: l.text, at: 0, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc, kind: l.kind }));
+      const manifest = await synthesizeLines(vl, id);
+      for (const e of manifest.lines) if (e.dur) durations.set(e.id, { dur: e.dur, file: e.file });
+      console.log(`[voice] ${fromCache.length} measured line(s) reused from the cache (no synthesis needed)`);
+    } catch {
+      warnings.push("cached voice lines could not be re-used; they are estimated");
+      for (const l of fromCache) if (!estimated.includes(l)) estimated.push(l);
     }
   }
   if (estimated.length > 0) {

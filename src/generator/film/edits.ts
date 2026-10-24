@@ -35,6 +35,20 @@ export interface Film {
   direction: Direction;
   sound: SoundPlan;
   plan: FilmPlan;
+  /**
+   * Keep-timing caption wording saved by the editor (PUT /api/film/:id):
+   * "the words on screen change, the voice does not". Applied over the
+   * rebuilt captions after every re-timing, matched by window start (+-0.35 s,
+   * like keepCaptionTexts in pipeline/run.ts). Absent = the plan's captions.
+   */
+  captions?: CaptionOverride[];
+}
+
+/** One caption's editor wording, remembered on its (previous) window start. */
+export interface CaptionOverride {
+  from: number;
+  text: string;
+  keyword?: string[];
 }
 
 export const EditSchema = z.discriminatedUnion("op", [

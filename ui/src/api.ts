@@ -346,6 +346,10 @@ export interface FilmState {
   warnings: string[];
   audio: AudioReport;
   measured: boolean;
+  /** PUT only: how much the approved spec changed (story lines / captions). */
+  changed?: { lines: number; captions: number };
+  /** True while the server re-voices/re-measures edited lines in the background. */
+  measuring?: boolean;
 }
 
 export interface FilmResponse extends FilmState {
@@ -358,6 +362,8 @@ export interface FilmChangeResponse extends FilmState {
   summary?: string[];
 }
 
+/** Wording saves through the approved spec (PUT /api/film/:id). */
+export type SaveEditsSpec = (mutate: (spec: import("../../src/generator/spec.schema").ShotSpec) => import("../../src/generator/spec.schema").ShotSpec) => Promise<string | null>;
 export type FilmTarget = { kind: "beat"; beat: string } | { kind: "video" };
 
 /** Ask AI's answer. Nothing is saved until it is sent back through editFilm. */
@@ -381,6 +387,21 @@ function postJson(url: string, body?: unknown): Promise<Response> {
 /** The film, its history, the playable spec and the Inspector's field choices. */
 export async function getFilm(id: string): Promise<FilmResponse> {
   return json(await fetch(filmUrl(id)));
+}
+
+/** Is the background voice measurement still running (a text answer came back on estimates)? */
+export async function getFilmStatus(id: string): Promise<{ id: string; measuring: boolean; startedAt?: number; error?: string }> {
+  return json(await fetch(filmUrl(id, "status")));
+}
+
+/** The editor writes its edited spec here: story wording is adopted into the
+ *  film ("reflow": re-voice + re-time), caption wording is kept on its timing
+ *  window ("keep timing" - the voice is untouched). */
+export async function putFilm(
+  id: string,
+  body: { spec: unknown },
+): Promise<FilmChangeResponse & { changed?: { lines: number; captions: number }; measuring?: boolean }> {
+  return json(await fetch(filmUrl(id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
 }
 
 /** Save edits as a new version. Throws the server's message when an edit is not allowed. */
