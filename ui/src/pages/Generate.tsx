@@ -421,19 +421,23 @@ function voiceConfigToAudio(cfg: VoiceConfig): unknown {
 }
 
 /** Play one sample. Errors are shown, not swallowed. */
-async function auditionVoice(engine: "kitten2" | "voxcpm2", voice: string, voiceDesc?: string) {
+async function auditionVoice(engine: "kitten2" | "voxcpm2", voice: string, voiceDesc?: string, setBusy?: (b: string | null) => void) {
+  if (setBusy) setBusy(voice);
   try {
     const blob = await voiceSample({ engine, voice, voiceDesc });
     const audio = new Audio(URL.createObjectURL(blob));
     await audio.play();
   } catch (e) {
     toast.error(`Could not play the sample: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    if (setBusy) setBusy(null);
   }
 }
 
 function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: VoiceConfig) => void }) {
   const [kittenVoices, setKittenVoices] = useState<{ id: string }[]>([]);
   const [voxVoices, setVoxVoices] = useState<{ id: string }[]>([]);
+  const [busyVoice, setBusyVoice] = useState<string | null>(null);
   useEffect(() => {
     getVoices("kitten2").then((r) => setKittenVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
     getVoices("voxcpm2").then((r) => setVoxVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
@@ -484,9 +488,10 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   variant="secondary"
                   size="sm"
                   aria-label="Listen to the narrator voice"
-                  onClick={() => auditionVoice(value.narrationEngine, value.narrationVoice)}
+                  onClick={() => auditionVoice(value.narrationEngine, value.narrationVoice, undefined, setBusyVoice)}
+                  disabled={busyVoice !== null}
                 >
-                  <Play className="h-4 w-4" />
+                  {busyVoice === value.narrationVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
@@ -532,9 +537,10 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   variant="secondary"
                   size="sm"
                   aria-label="Listen to the character voice"
-                  onClick={() => auditionVoice(value.charactersEngine, value.characterVoice)}
+                  onClick={() => auditionVoice(value.charactersEngine, value.characterVoice, undefined, setBusyVoice)}
+                  disabled={busyVoice !== null}
                 >
-                  <Play className="h-4 w-4" />
+                  {busyVoice === value.characterVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 </Button>
               </div>
               <div className="mt-1 text-xs text-muted-foreground">Per-character voices come with the editor (a later phase).</div>

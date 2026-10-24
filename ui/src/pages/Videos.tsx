@@ -3,7 +3,7 @@
  * ?selected=<id> deep-links/highlights an entry; survives refresh.
  */
 import { useEffect, useRef, useState } from "react";
-import { Film, Download, Trash2, Eye, Play } from "lucide-react";
+import { Film, Download, Trash2, Eye, Play, Edit } from "lucide-react";
 import { listVideos, deleteVideo, Video } from "../api";
 import { toast } from "sonner";
 import { PageHeader, EmptyState, ErrorBanner, MetaRow } from "../components/shared";
@@ -195,6 +195,15 @@ const visible = (videos ?? [])
                     <a href={`/media/${v.spec}`} target="_blank" rel="noreferrer" download aria-label="Download spec JSON">
                       <Download className="h-4 w-4" /> Spec
                     </a>
+                  </Button>
+                ) : null}
+                {v.engine === "story" && v.spec ? (
+                  <Button
+                    variant={selected === v.id ? "amber" : "secondary"}
+                    size="sm"
+                    onClick={() => setQuery({ tab: "editor", film: v.id })}
+                  >
+                    <Edit className="h-4 w-4" /> Edit
                   </Button>
                 ) : null}
                 <Button
