@@ -33,6 +33,7 @@ import { windowGlowTexture } from "./atmosphere/night";
 import { applyMoodPalette, moodLook, type MoodLook } from "./atmosphere/mood";
 import { shaftStrength, sunShafts } from "./atmosphere/shafts";
 import { bankGeometry, pondGeometry, pondsFor, waterMaterial } from "./atmosphere/water";
+import { Surface } from "./surface";
 
 const SKY_RADIUS = 55_000;
 
@@ -262,6 +263,11 @@ export function GroundWorld({
     });
     const land = new THREE.Mesh(terrain.geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
     land.receiveShadow = true;
+
+    // Ocean water: for coastal/ocean places, draw a proper water surface
+    // at sea level (y = 0) using the animated water material. The terrain
+    // already classifies water faces; we add a flat mesh at y = 0 that
+    // covers the ocean extent, with animated ripples, sky reflection,
     // Past the terrain's edge (~9 km) a plain disc carries the ground to the horizon.
     const disc = new THREE.Mesh(
       new THREE.CircleGeometry(60_000, 48).rotateX(-Math.PI / 2),
@@ -302,6 +308,28 @@ export function GroundWorld({
       sunColor: sky.sunColor,
       sunDir: place.sun.dir,
     });
+
+    // Ocean water: for coastal/ocean places, draw a proper water surface
+    // at sea level (y = 0) using the animated water material. The terrain
+    // already classifies water faces; we add a flat mesh at y = 0 that
+    // covers the ocean extent, with animated ripples, sky reflection,
+    // sun glint and shore foam.
+    let oceanWater: THREE.Mesh | null = null;
+    if (place.surface === Surface.Ocean) {
+      // Ocean water: simple MeshStandardMaterial to test rendering
+      const oceanGeometry = new THREE.PlaneGeometry(2000, 2000, 32, 32).rotateX(-Math.PI / 2);
+      const oceanMat = new THREE.MeshStandardMaterial({
+        color: "#2e7d84",
+        roughness: 0.16,
+        metalness: 0,
+        transparent: false,
+      });
+      const oceanWaterMesh = new THREE.Mesh(oceanGeometry, oceanMat);
+      oceanWaterMesh.position.y = 0.01;
+      oceanWaterMesh.receiveShadow = true;
+      oceanWater = oceanWaterMesh;
+    }
+
     const waterBankMat = new THREE.MeshStandardMaterial({ color: mixHex(style.sidewalkColor, "#9b8a63", 0.6), roughness: 1, flatShading: true });
     const waterMeshes = new THREE.Group();
     for (const pond of pondsFor(layout, place.place.id)) {
@@ -375,6 +403,7 @@ export function GroundWorld({
       landmarks: landmarksGroup(layout.landmarks),
       clouds: cloudsMesh(layout.clouds, place.place.id),
       fogOpts,
+      oceanWater,
     };
   }, [place, style, cloudPassage, sky, moodProp]);
 
@@ -492,6 +521,7 @@ export function GroundWorld({
       <primitive object={world.dressing} />
       <primitive object={world.lamps} />
       <primitive object={world.waterMeshes} />
+      {world.oceanWater && <primitive object={world.oceanWater} />}
       {world.shafts && <primitive object={world.shafts.group} />}
       {world.landmarkModels.length > 0 && <KitInstances placements={world.landmarkModels} />}
       {world.kitModels.length > 0 && <KitInstances placements={world.kitModels} windowGlow={kitWindows && place.sun.elevation < 1} />}
