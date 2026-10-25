@@ -19,6 +19,7 @@ import {
   Check,
   Play,
   SlidersHorizontal,
+  Loader2,
 } from "lucide-react";
 import {
   getJob,
@@ -489,11 +490,12 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                 <Button
                   variant="secondary"
                   size="sm"
+                  className="w-8 h-8 flex items-center justify-center"
                   aria-label="Listen to the narrator voice"
                   onClick={() => { if (busyVoice) return; auditionVoice(value.narrationEngine, value.narrationVoice, undefined, setBusyVoice); }}
                   disabled={busyVoice !== null}
                 >
-                  {busyVoice === value.narrationVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {busyVoice === value.narrationVoice ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
@@ -538,11 +540,12 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                 <Button
                   variant="secondary"
                   size="sm"
+                  className="w-8 h-8 flex items-center justify-center"
                   aria-label="Listen to the character voice"
                   onClick={() => { if (busyVoice) return; auditionVoice(value.charactersEngine, value.characterVoice, undefined, setBusyVoice); }}
                   disabled={busyVoice !== null}
                 >
-                  {busyVoice === value.characterVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {busyVoice === value.characterVoice ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 </Button>
               </div>
               <div className="mt-1 text-xs text-muted-foreground">Per-character voices come with the editor (a later phase).</div>
