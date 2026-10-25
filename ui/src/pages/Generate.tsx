@@ -434,6 +434,8 @@ async function auditionVoice(engine: "kitten2" | "voxcpm2", voice: string, voice
   }
 }
 
+
+
 function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: VoiceConfig) => void }) {
   const [kittenVoices, setKittenVoices] = useState<{ id: string }[]>([]);
   const [voxVoices, setVoxVoices] = useState<{ id: string }[]>([]);
@@ -488,7 +490,7 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   variant="secondary"
                   size="sm"
                   aria-label="Listen to the narrator voice"
-                  onClick={() => auditionVoice(value.narrationEngine, value.narrationVoice, undefined, setBusyVoice)}
+                  onClick={() => { if (busyVoice) return; auditionVoice(value.narrationEngine, value.narrationVoice, undefined, setBusyVoice); }}
                   disabled={busyVoice !== null}
                 >
                   {busyVoice === value.narrationVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -537,7 +539,7 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   variant="secondary"
                   size="sm"
                   aria-label="Listen to the character voice"
-                  onClick={() => auditionVoice(value.charactersEngine, value.characterVoice, undefined, setBusyVoice)}
+                  onClick={() => { if (busyVoice) return; auditionVoice(value.charactersEngine, value.characterVoice, undefined, setBusyVoice); }}
                   disabled={busyVoice !== null}
                 >
                   {busyVoice === value.characterVoice ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
