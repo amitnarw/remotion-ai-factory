@@ -33,6 +33,7 @@ import { windowGlowTexture } from "./atmosphere/night";
 import { applyMoodPalette, moodLook, type MoodLook } from "./atmosphere/mood";
 import { shaftStrength, sunShafts } from "./atmosphere/shafts";
 import { bankGeometry, pondGeometry, pondsFor, waterMaterial } from "./atmosphere/water";
+import { createFBMSkyDome } from "./atmosphere/fbmSky";
 import { Surface } from "./surface";
 
 const SKY_RADIUS = 55_000;
@@ -200,22 +201,26 @@ export function GroundWorld({
   cast,
   mood: moodProp,
   kitWindows = true,
+  /** Use FBM procedural sky instead of gradient dome (default off). */
+  fbmSky = false,
 }: {
   place: ResolvedPlace;
   pose: GroundPose;
   fov: number;
   cloudPassage: [number, number];
-  /** The city's background people (off by default — the user wants none). */
+  /** The city's background people (off by default - the user wants none). */
   crowd?: boolean;
   /** The flock over the city. */
   birds?: boolean;
-  /** The director's featured performers (off by default — the user wants none). */
+  /** The director's featured performers (off by default - the user wants none). */
   cast?: ActorScriptInput[];
   /** The story mood (writer vocabulary): the material palette per mood
    *  family (atmosphere/mood.ts), deterministic per mood + place. */
   mood?: string;
   /** The kit buildings' night window glow (default: follows night). */
   kitWindows?: boolean;
+  /** Use FBM procedural sky with fractal clouds. */
+  fbmSky?: boolean;
 }) {
   const { camera, scene } = useThree();
   const frame = useCurrentFrame();
@@ -407,7 +412,22 @@ export function GroundWorld({
     };
   }, [place, style, cloudPassage, sky, moodProp]);
 
-  const dome = useMemo(() => skyDome(sky, place.sun.dir, moodLook(moodProp, place.place.id)), [sky, place, moodProp]);
+  const dome = useMemo(() => {
+    if (fbmSky) {
+      return createFBMSkyDome({
+        seed: place.place.id,
+        skyLook: sky,
+        sunDir: new THREE.Vector3(...place.sun.dir),
+        cloudScale: 8000,
+        cloudOctaves: 5,
+        cloudContrast: 1.5,
+        cloudCoverage: 0.4,
+        sunGlowSize: 8,
+        sunGlowIntensity: 1.0,
+      });
+    }
+    return skyDome(sky, place.sun.dir, moodLook(moodProp, place.place.id));
+  }, [fbmSky, sky, place, moodProp]);
 
   const lights = useMemo(() => {
     // Night: a dim cool moon stands in for the sun, so the dark still reads.
