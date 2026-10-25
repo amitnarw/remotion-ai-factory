@@ -17,9 +17,38 @@ import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js"
 import { castActors, type CastStyle, type Casting } from "./cast";
 import { applyPose, buildRig, type ActorRig } from "./rig";
 import { aimPoint, planActor, poseAt, type ActorPlan, type ActorScriptInput, type StageAnchors } from "./script";
+import * as THREE from "three";
 
 const loader = new GLTFLoader();
 const cache = new Map<string, Promise<GLTF>>();
+
+/** Distance beyond which actors become billboards (metres). */
+const LOD_DISTANCE = 60;
+
+interface LODActor {
+  id: string;
+  rig: ActorRig | null; // null = billboard
+  billboardTexture?: THREE.Texture;
+  billboardSize: number; // height in metres
+}
+
+/** Creates a billboard texture from the rig at the current pose. */
+function makeBillboardTexture(rig: ActorRig, camera: THREE.Camera, renderer: THREE.WebGLRenderer): THREE.Texture {
+  const size = 256;
+  const rt = new THREE.WebGLRenderTarget(size, size);
+  const scene = new THREE.Scene();
+  scene.add(rig.root.clone());
+  
+  const cam = camera.clone();
+  cam.position.set(0, rig.height * 0.5, 3);
+  cam.lookAt(0, rig.height * 0.5, 0);
+  
+  renderer.setRenderTarget(rt);
+  renderer.render(scene, cam);
+  renderer.setRenderTarget(null);
+  
+  return rt.texture;
+}
 
 /** Loads one model once (path under public/). */
 export function loadActorModel(file: string): Promise<GLTF> {
@@ -73,11 +102,14 @@ export function ActorsLayer({
   const advance = useThree((s) => s.advance);
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const { gl } = useThree(); // renderer
 
   const files = useMemo(() => [...new Set([...casting.models.values()].map((a) => a.file))].sort(), [casting]);
   const filesKey = files.join("\n");
   const [loaded, setLoaded] = useState<{ key: string; models: Map<string, GLTF> } | null>(null);
   const [hold] = useState(() => ({ handle: files.length ? (delayRender(`actor models (${files.length})`, { timeoutInMilliseconds: 120_000 }) as number | null) : null }));
+  // LOD: actors beyond LOD_DISTANCE become billboards
+  const [lodActors, setLodActors] = useState<Map<string, LODActor>>(new Map());
 
   useEffect(() => {
     let live = true;
@@ -112,10 +144,43 @@ export function ActorsLayer({
   const t = frame / (fps || 30);
   useFrame(() => {
     if (!rigs) return;
+    const { camera } = useThree();
+    const camPos = camera.position;
+    
     for (const [id, rig] of rigs) {
       const plan = plans.get(id);
       if (!plan) continue;
       applyPose(rig, poseAt(plan, t), (aim) => aimPoint(aim, t, plans));
+      
+      // LOD: check distance to camera
+      const rigPos = rig.root.position;
+      const dist = rigPos.distanceTo(camPos);
+      const shouldBeBillboard = dist > LOD_DISTANCE;
+      
+      setLodActors(prev => {
+        const current = prev.get(id);
+        if (current && current.rig === null === shouldBeBillboard) return prev;
+        
+        if (shouldBeBillboard && (!current || current.rig)) {
+          // Create billboard texture
+          const texture = makeBillboardTexture(rig, useThree((s) => s.camera), gl);
+          return new Map(prev).set(id, { id, rig: null, billboardTexture: texture, billboardSize: rig.height });
+        } else if (!shouldBeBillboard && current && current.rig === null) {
+          // Back to full rig
+          return new Map(prev).set(id, { id, rig, billboardTexture: undefined, billboardSize: rig.height });
+        }
+        return prev;
+      });
+    }
+    
+    // Apply pose to all rigs (billboards don't need pose)
+    for (const [id, rig] of rigs) {
+      const plan = plans.get(id);
+      if (!plan) continue;
+      const lod = lodActors.get(id);
+      if (!lod || lod.rig) {
+        applyPose(rig, poseAt(plan, t), (aim) => aimPoint(aim, t, plans));
+      }
     }
   });
 
@@ -140,9 +205,25 @@ export function ActorsLayer({
   if (!rigs) return null;
   return (
     <>
-      {[...rigs.values()].map((rig, i) => (
-        <primitive key={i} object={rig.root} />
-      ))}
+      {[...rigs.values()].map((rig, i) => {
+        const lod = lodActors.get([...rigs.keys()][i]);
+        if (lod && !lod.rig && lod.billboardTexture) {
+          // Billboard: a sprite that always faces camera
+          return (
+            <primitive key={i} object={new THREE.Sprite(
+              new THREE.SpriteMaterial({ 
+                map: lod.billboardTexture, 
+                transparent: true,
+                alphaTest: 0.5
+              })
+            )} 
+            scale={[lod.billboardSize * 0.5, lod.billboardSize, 1]} 
+            position={rig.root.position} 
+            />
+          );
+        }
+        return <primitive key={i} object={rig.root} />;
+      })}
     </>
   );
 }
