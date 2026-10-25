@@ -246,11 +246,13 @@ function failedLogError(premise: string): string | undefined {
   if (!match) return undefined;
   const text = fs.readFileSync(join(dir, match), "utf8");
   const lines = text.split(/\r?\n/);
-  const idx = lines.findIndex((l) => l.startsWith("Error:"));
+  // Skip warning lines (FutureWarning, DeprecationWarning, etc.)
+  const cleanLines = lines.filter((l) => !l.includes("FutureWarning") && !l.includes("DeprecationWarning") && !l.includes("UserWarning"));
+  const idx = cleanLines.findIndex((l) => l.startsWith("Error:"));
   if (idx >= 0) {
-    return lines.slice(idx, idx + 4).join("\n").trim();
+    return cleanLines.slice(idx, idx + 4).join("\n").trim();
   }
-  const tail = lines.filter((l) => l.trim()).slice(-5).join("\n");
+  const tail = cleanLines.filter((l) => l.trim()).slice(-5).join("\n");
   return tail || undefined;
 }
 
@@ -403,7 +405,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       const logTail = job.logs
         .join("")
         .split(/\r?\n/)
-        .filter((l) => l.trim() && !l.includes("Rendered "))
+        .filter((l) => l.trim() && !l.includes("Rendered ") && !l.includes("FutureWarning") && !l.includes("DeprecationWarning") && !l.includes("UserWarning"))
         .slice(-4)
         .join("\n");
       job.error = logError ?? (logTail || `exit code ${code}`);

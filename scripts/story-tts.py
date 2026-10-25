@@ -97,7 +97,9 @@ def run_kitten(job, out_dir):
     use_all_cores()
     from kittenml import KittenTTS  # noqa: E402
 
-    model = KittenTTS("KittenML/kitten-tts-2")
+    import torch
+    _dev = "cuda" if torch.cuda.is_available() else "cpu"
+    model = KittenTTS("KittenML/kitten-tts-2", device=_dev)
     try:
         voices = set(model.available_voices or [])
     except Exception:
@@ -140,7 +142,9 @@ def run_voxcpm(job, out_dir):
             f"Original error: {e}"
         )
 
-    model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device)
     sr = model.tts_model.sample_rate
     default_desc = job.get("defaultVoiceDesc")
     # Voice descriptions are free text in parentheses. A bare preset id that
@@ -184,7 +188,9 @@ def worker_kitten() -> None:
 
     t0 = time.time()
     try:
-        model = KittenTTS("KittenML/kitten-tts-2")
+        import torch
+        _dev = "cuda" if torch.cuda.is_available() else "cpu"
+        model = KittenTTS("KittenML/kitten-tts-2", device=_dev)
     except Exception as e:  # a load failure is fatal: the Node side falls back to the batch path
         print("@@ " + json.dumps({"ok": False, "id": None, "error": f"model load failed: {str(e)[:300]}"}), flush=True)
         raise
