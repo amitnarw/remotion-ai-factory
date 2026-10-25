@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Check,
   Play,
+  Pause,
   SlidersHorizontal,
   Loader2,
 } from "lucide-react";
@@ -421,19 +422,7 @@ function voiceConfigToAudio(cfg: VoiceConfig): unknown {
   };
 }
 
-/** Play one sample. Errors are shown, not swallowed. */
-async function auditionVoice(engine: "kitten2" | "voxcpm2", voice: string, voiceDesc?: string, setBusy?: (b: string | null) => void) {
-  if (setBusy) setBusy(voice);
-  try {
-    const blob = await voiceSample({ engine, voice, voiceDesc });
-    const audio = new Audio(URL.createObjectURL(blob));
-    await audio.play();
-  } catch (e) {
-    toast.error(`Could not play the sample: ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    if (setBusy) setBusy(null);
-  }
-}
+
 
 
 
@@ -441,6 +430,10 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
   const [kittenVoices, setKittenVoices] = useState<{ id: string }[]>([]);
   const [voxVoices, setVoxVoices] = useState<{ id: string }[]>([]);
   const [busyVoice, setBusyVoice] = useState<string | null>(null);
+  /** Currently playing or paused voice: null = none, { voice: string; state: "playing" | "paused" } */
+  const [playState, setPlayState] = useState<{ voice: string; state: "playing" | "paused" } | null>(null);
+  /** One shared audio element: switching voices stops the previous one. */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
     getVoices("kitten2").then((r) => setKittenVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
     getVoices("voxcpm2").then((r) => setVoxVoices((r.voices ?? []).map((v: any) => ({ id: v.id }))));
@@ -451,6 +444,61 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
     try { localStorage.setItem(VOICE_LS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   };
   const voicesFor = (engine: VoiceConfig["narrationEngine"]) => (engine === "kitten2" ? kittenVoices : voxVoices);
+
+  /** Toggle play/pause for a voice, or play a new one (stopping the previous). */
+  const toggleVoice = (engine: "kitten2" | "voxcpm2", voice: string, voiceDesc?: string) => {
+    if (busyVoice) return; // loading: ignore clicks
+    if (playState && playState.voice === voice) {
+      const a = audioRef.current;
+      if (a) {
+        if (playState.state === "playing") {
+          a.pause();
+          setPlayState({ voice, state: "paused" });
+        } else {
+          void a.play();
+          setPlayState({ voice, state: "playing" });
+        }
+      }
+      return;
+    }
+    // A new voice (or re-play from scratch): stop the old.
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      URL.revokeObjectURL(audioRef.current.src);
+      audioRef.current = null;
+    }
+    setPlayState(null);
+    setBusyVoice(voice);
+    void (async () => {
+      try {
+        const blob = await voiceSample({ engine, voice, voiceDesc });
+        const audio = new Audio(URL.createObjectURL(blob));
+        audioRef.current = audio;
+        audio.onended = () => {
+          if (audioRef.current === audio) setPlayState(null);
+        };
+        setPlayState({ voice, state: "playing" });
+        await audio.play();
+      } catch (e) {
+        toast.error(`Could not play the sample: ${e instanceof Error ? e.message : String(e)}`);
+        if (audioRef.current === null) setPlayState(null);
+      } finally {
+        setBusyVoice(null);
+      }
+    })();
+  };
+
+  /** What the button shows for one voice: pause while playing, play while paused, loader while loading. */
+  const buttonIcon = (voice: string) =>
+    busyVoice === voice ? (
+      <Loader2 className="h-4 w-4 animate-spin" />
+    ) : playState?.voice === voice && playState.state === "playing" ? (
+      <Pause className="h-4 w-4" />
+    ) : (
+      <Play className="h-4 w-4" />
+    );
+
   return (
     <Card className="p-4 space-y-4">
       <div>
@@ -492,10 +540,10 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   size="sm"
                   className="w-8 h-8 flex items-center justify-center"
                   aria-label="Listen to the narrator voice"
-                  onClick={() => { if (busyVoice) return; auditionVoice(value.narrationEngine, value.narrationVoice, undefined, setBusyVoice); }}
+                  onClick={() => toggleVoice(value.narrationEngine, value.narrationVoice)}
                   disabled={busyVoice !== null}
                 >
-                  {busyVoice === value.narrationVoice ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {buttonIcon(value.narrationVoice)}
                 </Button>
               </div>
             </div>
@@ -542,10 +590,10 @@ function VoiceSettings({ value, onChange }: { value: VoiceConfig; onChange: (c: 
                   size="sm"
                   className="w-8 h-8 flex items-center justify-center"
                   aria-label="Listen to the character voice"
-                  onClick={() => { if (busyVoice) return; auditionVoice(value.charactersEngine, value.characterVoice, undefined, setBusyVoice); }}
+                  onClick={() => toggleVoice(value.charactersEngine, value.characterVoice)}
                   disabled={busyVoice !== null}
                 >
-                  {busyVoice === value.characterVoice ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {buttonIcon(value.characterVoice)}
                 </Button>
               </div>
               <div className="mt-1 text-xs text-muted-foreground">Per-character voices come with the editor (a later phase).</div>

@@ -6,7 +6,9 @@
  */
 
 import { Config } from "@remotion/cli/config";
+import { join } from "path";
 
 Config.setRspack(true);
 Config.setChromiumOpenGlRenderer("angle");
 Config.setVideoImageFormat("jpeg");
+Config.setPublicDir(join(__dirname, "public"));
