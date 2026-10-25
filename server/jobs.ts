@@ -204,13 +204,16 @@ function evictOldJobs() {
 function latestReportFor(premise: string): { mp4: string; spec: unknown; report: string } | undefined {
   const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return undefined;
-  const matches: Array<{ report: unknown; file: string }> = [];
+  const matches: Array<{ report: unknown; file: string; videoDir: string }> = [];
   for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith("-report.json")) continue;
+    const videoDir = join(dir, f);
+    if (!fs.statSync(videoDir).isDirectory()) continue;
+    const reportFile = join(videoDir, "report.json");
+    if (!fs.existsSync(reportFile)) continue;
     try {
-      const report = JSON.parse(fs.readFileSync(join(dir, f), "utf8"));
+      const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
       if (report && typeof report === "object" && (report as Record<string, unknown>).premise === premise) {
-        matches.push({ report, file: f });
+        matches.push({ report, file: f, videoDir });
       }
     } catch { /* ignore */ }
   }
@@ -220,14 +223,14 @@ function latestReportFor(premise: string): { mp4: string; spec: unknown; report:
       Number((b.report as Record<string, unknown>).generatedAt || 0) -
       Number((a.report as Record<string, unknown>).generatedAt || 0),
   );
-  const latest = matches[0] as { report: unknown; file: string };
+  const latest = matches[0] as { report: unknown; file: string; videoDir: string };
   let spec: unknown = {};
   try {
     const specRaw = (latest.report as Record<string, unknown>).spec as string;
-    const sp = isAbsolute(specRaw) ? specRaw : join(dir, specRaw);
+    const sp = isAbsolute(specRaw) ? specRaw : join(latest.videoDir, specRaw);
     spec = JSON.parse(fs.readFileSync(sp, "utf8"));
   } catch { /* keep {} */ }
-  return { mp4: basename((latest.report as Record<string, unknown>).output as string), spec, report: latest.file };
+  return { mp4: basename((latest.report as Record<string, unknown>).output as string), spec, report: join(latest.videoDir, "report.json") };
 }
 
 // The CLI's FAILED log policy writes output/FAILED-<slug>.log on failure.
@@ -384,8 +387,10 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       // Extract a poster thumbnail for the Videos tab (best-effort).
       if (out?.mp4) {
         const vid = (out as any).id || job.specId || job.premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
-        const mp4Abs = join(ROOT, "output", basename(out.mp4));
-        const thumbAbs = join(ROOT, "output", `${vid}-thumb.jpg`);
+        // Find the video directory
+        const videoDir = join(ROOT, "output", vid);
+        const mp4Abs = join(videoDir, "video.mp4");
+        const thumbAbs = join(videoDir, "thumb.jpg");
         try {
           spawnSync(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbAbs], { stdio: "ignore" });
         } catch { /* ignore */ }

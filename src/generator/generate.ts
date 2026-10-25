@@ -59,6 +59,16 @@ function slug(text: string): string {
   );
 }
 
+/** Get the per-video output directory: output/<id>/ */
+function videoOutputDir(id: string): string {
+  return join(OUTPUT_DIR, id);
+}
+
+/** Ensure the per-video output directory exists. */
+function ensureVideoOutputDir(id: string): void {
+  mkdirSync(videoOutputDir(id), { recursive: true });
+}
+
 /** Duration in frames from a spec (last scene end + 2s tail; street-block
  *  scenes end with the story — only a short breather after the last frame). */
 function durationFrames(spec: ShotSpec): number {
@@ -230,8 +240,9 @@ function main() {
       );
 
       // Write spec for reference + debugging
-      mkdirSync(OUTPUT_DIR, { recursive: true });
-      const specPath = join(OUTPUT_DIR, `${id}-spec.json`);
+      ensureVideoOutputDir(id);
+      const videoDir = videoOutputDir(id);
+      const specPath = join(videoDir, "spec.json");
       writeFileSync(specPath, JSON.stringify(valid, null, 2));
 
       // Dashboard approval flow: --no-render stops after the spec write.
@@ -272,18 +283,15 @@ async function renderOnly(
   const premise = meta?.premise ?? valid.title;
   const providerUsed = meta?.providerUsed ?? "approved-spec";
   const modelUsed = meta?.modelUsed ?? "";
-  const specPath = meta?.specPath ?? join(OUTPUT_DIR, `${id}-spec.json`);
+  ensureVideoOutputDir(id);
+  const videoDir = videoOutputDir(id);
+  const specPath = meta?.specPath ?? join(videoDir, "spec.json");
 
       // Duration from spec (recomputed after the voice stage re-times a planned story)
       let durFrames = durationFrames(valid);
 
-      // Output MP4 path (shorter filename)
-      const stamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, "-")
-        .replace("T", "-")
-        .slice(0, 13);
-      const out = join(OUTPUT_DIR, `${id}-${stamp}.mp4`);
+      // Output MP4 path (in per-video folder)
+      const out = join(videoDir, "video.mp4");
 
       console.log(`Generating: "${premise}"`);
       console.log(`Provider: ${providerUsed} / ${modelUsed}`);
@@ -348,7 +356,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
       // Props go to a FILE — asset-driven specs exceed the Windows ~32KB command-line limit.
       // (The chunked path passes inputProps over the Node API; the file stays for debugging.)
       const inputProps = JSON.stringify({ spec: resolved.spec });
-      const propsPath = join(OUTPUT_DIR, `${id}-props.json`);
+      const propsPath = join(videoDir, "props.json");
       writeFileSync(propsPath, inputProps);
 
       // Fresh explicit bundle (step 3) so the render never serves stale code.
@@ -415,15 +423,15 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
         ),
       );
 
-      const reportPath = join(OUTPUT_DIR, `${id}-report.json`);
+      const reportPath = join(videoDir, "report.json");
       writeFileSync(
         reportPath,
         JSON.stringify(
           {
             premise,
             id,
-            output: out,
-            spec: specPath,
+            output: "video.mp4",
+            spec: "spec.json",
             provider: providerUsed,
             model: modelUsed,
             frames: durFrames,

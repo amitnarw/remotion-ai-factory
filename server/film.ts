@@ -113,7 +113,7 @@ function specFromRequest(input: unknown): ShotSpec {
 /** The last prepared spec (for the caption-wording diff); null when missing. */
 function lastPrepared(id: string): ShotSpec | null {
   try {
-    return JSON.parse(readFileSync(join(process.cwd(), "output", `${id}-spec.json`), "utf8")) as ShotSpec;
+    return JSON.parse(readFileSync(join(process.cwd(), "output", id, "spec.json"), "utf8")) as ShotSpec;
   } catch {
     return null;
   }

@@ -86,7 +86,7 @@ export async function renderChunked(
   const fps = spec.fps ?? 30;
   const durationInFrames = secToFrame(videoSeconds(spec), fps);
   const dims = spec.settings ? formatDims(spec.settings.format) : { width: spec.width ?? 1080, height: spec.height ?? 1920 };
-  const out = opts.out ?? join(root, "output", `${id}-${new Date().toISOString().replace(/[:.]/g, "-").replace("T", "-").slice(0, 13)}.mp4`);
+  const out = opts.out ?? join(root, "output", id, "video.mp4");
   const chunksDir = join(root, "output", id, "chunks");
   const encoder = encoderFor(quality);
 

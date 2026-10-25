@@ -421,7 +421,7 @@ app.get("/api/spec/:jobId", (req, res) => {
   if (!job.specId) {
     return res.status(404).json({ error: "this job produced no plan — write the idea again" });
   }
-  const p = join(ROOT, "output", `${job.specId}-spec.json`);
+  const p = join(ROOT, "output", job.specId, "spec.json");
   try {
     const spec = JSON.parse(fs.readFileSync(p, "utf8"));
     res.json({ ready: true, specId: job.specId, spec, provider: job.provider, model: job.model });
@@ -454,7 +454,7 @@ app.post("/api/plan/:specId/recast", async (req, res) => {
     plan.audio.dialogs = { ...(plan.audio.dialogs ?? {}), voices: { ...(plan.audio.dialogs?.voices ?? {}), [name]: voice } };
     fs.writeFileSync(planPath, JSON.stringify(plan, null, 2));
     const { spec, warnings } = await reassemble(specId, "plan");
-    fs.writeFileSync(join(ROOT, "output", `${specId}-spec.json`), JSON.stringify(spec, null, 2));
+    fs.writeFileSync(join(ROOT, "output", specId, "spec.json"), JSON.stringify(spec, null, 2));
     res.json({ spec, warnings });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
@@ -467,7 +467,7 @@ app.post("/api/render-spec", (req, res) => {
   if (!specId || !/^[a-z0-9-]+$/.test(specId)) {
     return res.status(400).json({ error: "specId required", fix: "Approve from the review screen" });
   }
-  const specPathRel = join("output", `${specId}-spec.json`);
+  const specPathRel = join("output", specId, "spec.json");
   const specPath = join(ROOT, specPathRel);
   if (!fs.existsSync(specPath)) {
     return res.status(404).json({
@@ -496,12 +496,12 @@ app.post("/api/render-spec", (req, res) => {
   if (audio) (job as any).audio = audio;
   if (audio) {
     try {
-      const sidecar = join(ROOT, "output", `${specId}-audio.json`);
+      const sidecar = join(ROOT, "output", specId, "audio.json");
       fs.writeFileSync(sidecar, JSON.stringify(audio, null, 2));
     } catch { /* ignore */ }
   }
   const extra = ["--from-spec", specPathRel.replace(/\\/g, "/")];
-  if (audio) extra.push("--audio-file", `output/${specId}-audio.json`);
+  if (audio) extra.push("--audio-file", `output/${specId}/audio.json`);
   // The editor's Make-the-video button renders through the chunked, cached renderer.
   if (chunked) extra.push("--chunked");
   runJob(job, { extraArgs: extra });
@@ -698,7 +698,7 @@ app.get("/api/videos", (_req, res) => {
     return {
       id,
       ...report,
-      output: report.output ? basename(report.output) : undefined,
+      output: report.output ? "video.mp4" : undefined,
       spec: report.spec ? basename(report.spec) : undefined,
       reviewFolder: reviewExists ? reviewDir : undefined,
       thumbnail: fs.existsSync(thumbPath) ? `${id}-thumb.jpg` : undefined,
