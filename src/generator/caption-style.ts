@@ -19,7 +19,21 @@ export const CAPTION_PRESET_NAMES = [
   "minimal",
 ] as const;
 export const CAPTION_POSITIONS = ["top", "upper", "middle", "lower", "bottom"] as const;
-export const CAPTION_FONTS = ["inter", "archivo-black", "serif"] as const;
+export const CAPTION_FONTS = [
+  "inter",
+  "montserrat",
+  "poppins",
+  "bebas-neue",
+  "anton",
+  "oswald",
+  "playfair-display",
+  "merriweather",
+  "lora",
+  "nunito",
+  "roboto-condensed",
+  "archivo-black",
+  "serif",
+] as const;
 export const CAPTION_ANIMATIONS = ["none", "fade", "pop", "slide-up", "word-reveal"] as const;
 export const CAPTION_BACKGROUNDS = ["none", "box", "pill"] as const;
 
@@ -106,6 +120,16 @@ export function resolveCaptionStyle(input?: CaptionStyleInput | null): CaptionLo
 /** CSS font stacks. The bundled fonts are loaded in hud/fonts.ts. */
 export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
   inter: "'Inter', system-ui, sans-serif",
+  montserrat: "'Montserrat', system-ui, sans-serif",
+  poppins: "'Poppins', system-ui, sans-serif",
+  "bebas-neue": "'Bebas Neue', 'Arial Black', sans-serif",
+  anton: "'Anton', 'Arial Black', sans-serif",
+  oswald: "'Oswald', system-ui, sans-serif",
+  "playfair-display": "'Playfair Display', Georgia, serif",
+  merriweather: "'Merriweather', Georgia, serif",
+  lora: "'Lora', Georgia, serif",
+  nunito: "'Nunito', system-ui, sans-serif",
+  "roboto-condensed": "'Roboto Condensed', 'Roboto', sans-serif",
   "archivo-black": "'Archivo Black', 'Arial Black', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };

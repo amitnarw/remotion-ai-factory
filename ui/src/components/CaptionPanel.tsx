@@ -30,7 +30,19 @@ const POSITION_LABELS: Record<(typeof CAPTION_POSITIONS)[number], string> = {
   top: "Top", upper: "Upper third", middle: "Middle", lower: "Lower third", bottom: "Bottom",
 };
 const FONT_LABELS: Record<(typeof CAPTION_FONTS)[number], string> = {
-  inter: "Inter", "archivo-black": "Archivo Black", serif: "Serif (Georgia)",
+  inter: "Inter",
+  montserrat: "Montserrat",
+  poppins: "Poppins",
+  "bebas-neue": "Bebas Neue",
+  anton: "Anton",
+  oswald: "Oswald",
+  "playfair-display": "Playfair Display",
+  merriweather: "Merriweather",
+  lora: "Lora",
+  nunito: "Nunito",
+  "roboto-condensed": "Roboto Condensed",
+  "archivo-black": "Archivo Black",
+  serif: "Serif (Georgia)",
 };
 const ANIMATION_LABELS: Record<(typeof CAPTION_ANIMATIONS)[number], string> = {
   none: "None", fade: "Fade in", pop: "Pop", "slide-up": "Slide up", "word-reveal": "Word by word",
