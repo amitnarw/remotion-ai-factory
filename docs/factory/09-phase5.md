@@ -16,7 +16,7 @@ New: `src/world/actors/` (`script.ts`, `script.test.ts`, `rigs.ts`, `rig.ts`, `c
 2. **Install:** `npm ci --legacy-peer-deps`. A plain `npm install` fails on the `@types/react-dom` peer conflict.
 3. **Models** (need internet once; not in git):
    - `npm run assets`: Kenney and Poly Pizza characters, city and nature packs, into `public/assets/`.
-   - `npx tsx scripts/setup-world-assets.ts`: KayKit and Quaternius packs (about 380 MB, into `public/assets/world/`). The test plaza uses the KayKit bench, streetlight, café table and trees, and the Quaternius planter.
+   - `npm run world:assets`: KayKit and Quaternius packs (about 380 MB, into `public/assets/world/`). The test plaza uses the KayKit bench, streetlight, café table and trees, and the Quaternius planter.
 4. **Check:** `npx tsx --test src/world/actors/script.test.ts` should report 10 passing tests.
 5. **Look at it:** `npx remotion studio src/world/index.ts`, then open `ActorStage` (9:16) or `ActorStageWide` (16:9) and scrub through the 15 s.
 

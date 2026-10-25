@@ -71,7 +71,7 @@ The counter card ("YOUR MONEY 1× → 2×") is shown only when the director uses
 
 ### 3.6 With the Ollama key (any time)
 1. Providers → Model roles: choose a **Photographer (vision)** model. The research suggests `gemma4:31b` on the cloud; check that it's in your list.
-2. Run `npx tsx scripts/photographer.ts <id>` on a few videos. Check that the yes/no answers match what you see, then calibrate the thresholds on about 50 stills.
+2. Run `npm run photographer -- <id>` on a few videos. Check that the yes/no answers match what you see, then calibrate the thresholds on about 50 stills.
 3. Run a plan with real models and check the director's `shots`. Record them with `FACTORY_LLM_RECORD=test-fixtures/pipeline/<name>`.
 
 ### 3.7 Later (Phase 3 v2)
@@ -91,7 +91,7 @@ npx remotion bundle src/index.ts --out-dir out/phase3-bundle
 npx remotion still out/phase3-bundle WhatIfVideo out/phase3-stills/x.png --props output/<id>-props.json --frame 300 --scale 0.5 --gl=angle
 
 # Photographer: one still per shot, checked by code (+ vision questions if a Photographer model is chosen)
-npx tsx scripts/photographer.ts <id> --bundle out/phase3-bundle
+npm run photographer -- <id> --bundle out/phase3-bundle
 
 # Full milestone check with photographer results
 npm run milestone -- --fixtures --qa

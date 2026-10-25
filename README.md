@@ -133,7 +133,7 @@ On a machine with a key, `FACTORY_LLM_RECORD=test-fixtures/pipeline/<name>` save
 ### Photographer check (one still per shot)
 
 ```bash
-npx tsx scripts/photographer.ts <id>      # <id> as in output/<id>-spec.json or output/<id>-props.json
+npm run photographer -- <id>      # <id> as in output/<id>-spec.json or output/<id>-props.json
 ```
 
 It renders the middle frame of every shot at half size and checks it by code: too dark, crushed or clipped, one flat colour filling the frame (a prop against the lens, a wall), or washed out. If you choose a **Photographer (vision)** model in Providers → Model roles, every still also gets neutral yes/no questions ("Is the wooden jetty clearly visible?", "Is any sea water visible?" after the oceans vanish). The model never sees the story, so it can't just agree with it. Results: `output/<id>/qa/qa.json` plus the stills.

@@ -33,7 +33,7 @@ CesiumJS, iTowns, Giro3D, OpenGlobus, MapLibre, deck.gl (own render loop or imag
 
 ## Test build (built before the research; kept as the starting point)
 Separate entry point, nothing in the main factory touched: `src/world/`, `scripts/setup-world-data.ts`.
-- `npx tsx scripts/setup-world-data.ts` builds the surface grid from Natural Earth 1:50m (public domain): ocean, land, desert, mountains, tundra, ice, lakes at quarter-degree cells, 55 KB.
+- `npm run world:data` builds the surface grid from Natural Earth 1:50m (public domain): ocean, land, desert, mountains, tundra, ice, lakes at quarter-degree cells, 55 KB.
 - `geo.ts`: NOAA sun position, subsolar point, season by hemisphere, great-circle maths. `places.ts`: place catalog + regional styles + `resolvePlace`. `city.ts`: seeded city generator. `flight.ts`: camera path street → clouds → globe → clouds → street. `Ground.tsx`, `Globe.tsx`, `WorldFlight.tsx`.
 - Run: `npx remotion studio src/world/index.ts` or `npx remotion render src/world/index.ts WorldFlight out/world-flight.mp4`.
 - Tests: `npx tsx --test src/world/world.test.ts` (11 pass: midnight sun in Tromsø, equinox noon in Cairo, surface map, city determinism, no camera jumps, cloud cover closed at both scale switches).
@@ -49,10 +49,10 @@ Built by parallel agents, all inside `src/world/` and `scripts/` (main factory u
 
 **Set up on a new machine** (needs internet once; assets are not in git):
 ```
-npx tsx scripts/setup-world-data.ts      # Natural Earth surface grid (already committed; only to rebuild)
+npm run world:data                      # Natural Earth surface grid (already committed; only to rebuild)
 npm run assets                           # older Kenney/Poly Pizza packs (public/assets/city etc.)
-npx tsx scripts/setup-world-assets.ts    # new packs into public/assets/world/ (~380 MB)
-npx tsx scripts/build-world-catalog.ts   # re-measure and re-classify (writes src/world/data/world-catalog.json)
+npm run world:assets                     # new packs into public/assets/world/ (~380 MB)
+npm run world:catalog                   # re-measure and re-classify (writes src/world/data/world-catalog.json)
 ```
 
 | Piece | Files | What it does |
