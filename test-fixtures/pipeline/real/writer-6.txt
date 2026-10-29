@@ -1,0 +1,68 @@
+{
+  "title": "Ten Seconds Without Oceans",
+  "hook": "What if the oceans vanished for 10 seconds?",
+  "mood": "epic",
+  "characters": [
+    {
+      "name": "Mara",
+      "gender": "female",
+      "age": "adult",
+      "look": "fisher in a yellow raincoat"
+    }
+  ],
+  "beats": [
+    {
+      "say": "Every ship crashes onto sand.",
+      "lines": [
+        { "who": "Mara", "text": "Hold on!" }
+      ],
+      "see": "A yellow-jacketed fishing boat and giant tankers dropping onto cracked red seafloor, ocean gone.",
+      "pace": "quick",
+      "stress": "crashes"
+    },
+    {
+      "say": "Trillions of fish rain down.",
+      "lines": [],
+      "see": "Silver fish showering onto the dry seabed, a whale thudding beside a coral ridge.",
+      "pace": "quick",
+      "stress": "rain"
+    },
+    {
+      "say": "Undersea cables snap worldwide.",
+      "lines": [],
+      "see": "Severed glowing cables sparking across the seabed; a city skyline's windows going dark.",
+      "pace": "quick",
+      "stress": "snap"
+    },
+    {
+      "say": "Earth's crust springs upward.",
+      "lines": [],
+      "see": "Seabed ridges rising, new cracks glowing, a coastal town shuddering on the horizon.",
+      "pace": "quick",
+      "stress": "upward"
+    },
+    {
+      "say": "Time's up — the ocean returns.",
+      "lines": [
+        { "who": "Mara", "text": "Here it comes." }
+      ],
+      "see": "A sky-high wall of water cascading back into the empty ocean basin.",
+      "pace": "linger",
+      "stress": "returns"
+    },
+    {
+      "say": "Returning seas swallow the coastlines.",
+      "lines": [],
+      "see": "A giant wave crashing through a harbor city, sweeping cranes and cars away.",
+      "pace": "quick",
+      "stress": "swallow"
+    },
+    {
+      "say": "It's the loudest sound ever.",
+      "lines": [],
+      "see": "Shockwave rings spreading from every coastline; people on streets everywhere covering their ears.",
+      "pace": "linger",
+      "stress": "loudest"
+    }
+  ]
+}

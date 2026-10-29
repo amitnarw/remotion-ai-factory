@@ -1,0 +1,1 @@
+{"edits": [{"beat": "b3", "say": "A minute in, your pockets burst."}, {"beat": "b5", "say": "By noon you outweigh the planet."}, {"beat": "b7", "say": "Every three seconds, it doubles."}]}

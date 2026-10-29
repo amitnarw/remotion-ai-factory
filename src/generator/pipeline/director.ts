@@ -1,0 +1,418 @@
+/**
+ * src/generator/pipeline/director.ts — the Director role: where and how each
+ * beat is filmed.
+ *
+ * The director sees the beats with their real lengths ("b3 (4.1s): <see>") and
+ * chooses the world: which kit, time of day, weather, camera, crowd, cast, and
+ * optional devices (a counter, a timer, a hero prop, world events). It refers
+ * to beats only; the assembler turns every choice into seconds.
+ */
+import { z } from "zod";
+import { catalogForPrompt } from "../asset-catalog";
+import {
+  CAMERA_STYLES,
+  HERO_ANCHORS,
+  HERO_GROWTH,
+  HERO_PROP_STYLES,
+  SCENE_KITS,
+  STREET_ACCENTS,
+  TIME_OF_DAY,
+  WORLD_EVENTS,
+  memoryBlock,
+} from "../ai/knowledge";
+import { STAT_REACTS, type StatReact, type VideoSettings } from "../spec.schema";
+import { SHOT_ANGLES, SHOT_ENERGIES, SHOT_MOVES, SHOT_PLACES, SHOT_SIDES, SHOT_SIZES, SHOT_STYLES, ShotSchema } from "../camera/shot";
+import { KIT_SUBJECTS, subjectMenu } from "../camera/subjects";
+import { asArray, beatRef, callRole, fuzzyEnum, type RoleModel } from "./llm";
+import { normalizeShots } from "./shots";
+import type { Timeline } from "./timeline";
+import { worldDirectorContext } from "../../world/director-context";
+import { anchorsForPrompt } from "../../world/cityAnchors";
+import { ACTOR_ACTIONS, ACTION_HELP } from "../../world/actors/script";
+import type { WriterStory } from "./writer";
+
+/** A lenient number: the pick's number, else undefined. */
+function num(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+export const ACTIONS = ["idle", "walk", "kneel", "cheer", "panic", "fall", "look-up"] as const;
+const WEATHERS = ["none", "rain", "snow", "storm"] as const;
+const SUBJECTS = ["earth", "moon", "mars", "none"] as const;
+const CROWDS = ["none", "light", "busy"] as const;
+
+/** What each counter reaction means, for the prompt and the normalizer. */
+export const REACT_HELP: Record<StatReact, string> = {
+  lift: "weightless, gravity, lightness",
+  crack: "pressure, quakes, the earth itself",
+  confetti: "celebration, fame, likes",
+  money: "wealth, prices, cash",
+  water: "sea level, floods, rain",
+  snow: "cold, winter, temperature",
+  dark: "power, energy, darkness",
+};
+
+/** A free-text reaction: the closest name, else a name whose meaning has
+ *  the word ("gravity" -> lift, "quake" -> crack, "power" -> dark). */
+function reactOf(v: unknown): StatReact | undefined {
+  const named = fuzzyEnum(v, STAT_REACTS);
+  if (named || typeof v !== "string") return named;
+  const words = v.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2);
+  const meaning = (r: StatReact) => REACT_HELP[r].split(/[^a-z]+/).filter((m) => m.length > 2 && m !== "the");
+  return STAT_REACTS.find((r) => meaning(r).some((m) => words.some((w) => m.startsWith(w) || w.startsWith(m))));
+}
+
+/** World-event names a model tends to write instead of the listed ones
+ *  (fuzzyEnum alone would read "power off" as gravity-off). */
+const EVENT_ALIASES: Record<string, (typeof WORLD_EVENTS)[number]> = {
+  blackout: "lights-out",
+  "power-off": "lights-out",
+  "power-out": "lights-out",
+  "power-cut": "lights-out",
+  "gravity-back": "gravity-on",
+  "gravity-returns": "gravity-on",
+  earthquake: "ground-break",
+  quake: "ground-break",
+};
+
+function eventOf(v: unknown): (typeof WORLD_EVENTS)[number] | undefined {
+  const key = typeof v === "string" ? v.toLowerCase().trim().replace(/[\s_]+/g, "-") : "";
+  return EVENT_ALIASES[key] ?? fuzzyEnum(v, WORLD_EVENTS);
+}
+
+const SceneOut = z.object({
+  start: z.string(),
+  kit: z.enum(SCENE_KITS),
+  time: z.enum(TIME_OF_DAY),
+  weather: z.enum(WEATHERS),
+  subject: z.enum(SUBJECTS),
+  crowd: z.enum(CROWDS),
+  camera: z.enum(CAMERA_STYLES),
+  accent: z.enum(STREET_ACCENTS),
+  cast: z.array(z.object({ asset: z.string(), count: z.number().int().min(1).max(40), action: z.enum(ACTIONS) })),
+  /** One-world choice (Phase 6 step 1): where and when this scene happens.
+   *  Present ⇒ kit is advisory; the scene renders the real place instead. */
+  worldPlace: z.object({ place: z.string(), date: z.string(), time: z.string() }).optional(),
+  /** Featured performers in this scene (Phase 5): the city's named spots. */
+  actors: z
+    .array(
+      z.object({
+        role: z.string(),
+        where: z.string(),
+        do: z
+          .array(
+            z.object({
+              at: z.number().min(0).optional(),
+              action: z.enum(ACTOR_ACTIONS),
+              to: z.string().optional(),
+              target: z.string().optional(),
+              for: z.number().positive().optional(),
+            }),
+          )
+          .optional(),
+        carry: z.enum(["bag", "box", "briefcase"]).optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const DirectorSchema = z.object({
+  scenes: z.array(SceneOut).min(1),
+  counter: z
+    .object({
+      title: z.string(),
+      unit: z.string(),
+      steps: z
+        .array(
+          z.object({
+            beat: z.string(),
+            value: z.string(),
+            sub: z.string(),
+            /** Optional pulse device (fear/urgency premises only): shows the red
+             *  EKG row on the counter card and ties a heartbeat sound to it. */
+            bpm: z.number().min(40).max(220).optional(),
+          }),
+        ),
+      /** How a world place reacts at each step: required when a step falls
+       *  in a world scene (the essential check asks again without it). */
+      react: z.enum(STAT_REACTS).optional(),
+    })
+    .nullable(),
+  timer: z.object({ label: z.string(), startBeat: z.string(), endBeat: z.string().nullable() }).nullable(),
+  prop: z.object({ style: z.enum(HERO_PROP_STYLES), growth: z.enum(HERO_GROWTH), anchor: z.enum(HERO_ANCHORS) }).nullable(),
+  world: z.array(z.object({ beat: z.string(), event: z.enum(WORLD_EVENTS) })),
+  /** Camera shot per beat (Phase 3). Beats without one get a shot from film rules (shots.ts). */
+  shots: z.array(ShotSchema.extend({ beat: z.string() })).default([]),
+});
+export type Direction = z.infer<typeof DirectorSchema>;
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "";
+}
+
+function pick(o: Record<string, unknown>, keys: string[]): unknown {
+  const byLower = new Map(Object.keys(o).map((k) => [k.toLowerCase(), k]));
+  for (const k of keys) {
+    const real = byLower.get(k.toLowerCase());
+    if (real !== undefined && o[real] !== undefined && o[real] !== null) return o[real];
+  }
+  return undefined;
+}
+
+function obj(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** Accept the usual variations and shape the reply for the schema. */
+export function normalizeDirector(raw: unknown): unknown {
+  const o = obj(raw) ?? {};
+  const scenes = asArray<Record<string, unknown>>(pick(o, ["scenes", "locations", "sets"]))
+    .map((s) => obj(s))
+    .filter((s): s is Record<string, unknown> => !!s)
+    .map((s) => {
+      // One-world choice (strict): all three fields must be present, else the
+      // scene stays a kit scene and the schema rejects a broken choice so the
+      // repair loop fixes it.
+      const wRaw = obj(pick(s, ["world", "where"]));
+      const wPlace = wRaw ? str(pick(wRaw, ["place", "placeId", "city"])) : "";
+      const wDate = wRaw ? str(pick(wRaw, ["date"])) : "";
+      const wTime = wRaw ? str(pick(wRaw, ["time", "localTime"])) : "";
+      const worldPlace =
+        wPlace && /^\d{4}-\d{2}-\d{2}$/.test(wDate) && /^([01]\d|2[0-3]):[0-5]\d$/.test(wTime)
+          ? { place: wPlace, date: wDate, time: wTime }
+          : undefined;
+      return {
+        start: beatRef(pick(s, ["start", "beat", "from", "startBeat", "at"])) ?? "b1",
+        kit: fuzzyEnum(pick(s, ["kit", "location", "set"]), SCENE_KITS) ?? "street-block",
+        time: fuzzyEnum(pick(s, ["time", "timeOfDay", "tod", "light"]), TIME_OF_DAY) ?? "afternoon",
+        weather: fuzzyEnum(String(pick(s, ["weather"]) ?? "none").replace(/^clear$/i, "none"), WEATHERS) ?? "none",
+        subject: fuzzyEnum(pick(s, ["subject", "planet"]), SUBJECTS) ?? "none",
+        crowd: fuzzyEnum(pick(s, ["crowd", "people", "density"]), CROWDS) ?? "light",
+        camera: fuzzyEnum(pick(s, ["camera", "cameraStyle", "move"]), CAMERA_STYLES) ?? "steady-push",
+        accent: fuzzyEnum(pick(s, ["accent", "palette"]), STREET_ACCENTS) ?? "classic",
+        cast: asArray<Record<string, unknown>>(pick(s, ["cast", "characters", "props"]))
+          .map((c) => obj(c))
+          .filter((c): c is Record<string, unknown> => !!c)
+          .map((c) => ({
+            asset: str(pick(c, ["asset", "id", "model"])),
+            count: Math.max(1, Math.min(40, Math.round(Number(pick(c, ["count", "n", "amount"])) || 1))),
+            action: fuzzyEnum(pick(c, ["action", "anim", "animation"]), ACTIONS) ?? "idle",
+          }))
+          .filter((c) => c.asset),
+        worldPlace,
+        actors: asArray<Record<string, unknown>>(pick(s, ["actors", "performers", "featuring"]))
+          .map((a) => obj(a))
+          .filter((a): a is Record<string, unknown> => !!a)
+          .map((a) => ({
+            role: str(pick(a, ["role", "who", "person"])) || "passer-by",
+            where: str(pick(a, ["where", "spot", "place", "anchor"])) || "avenue",
+            do: asArray<Record<string, unknown>>(pick(a, ["do", "steps", "actions"]))
+              .map((st) => obj(st))
+              .filter((st): st is Record<string, unknown> => !!st)
+              .map((st) => ({
+                at: num(pick(st, ["at"])),
+                action: fuzzyEnum(pick(st, ["action", "do", "anim"]), ACTOR_ACTIONS) ?? "idle",
+                to: str(pick(st, ["to", "walk"])) || undefined,
+                target: str(pick(st, ["target", "at"])) || undefined,
+                for: num(pick(st, ["for", "seconds"])),
+              })),
+            carry: fuzzyEnum(pick(a, ["carry", "holds", "carries"]), ["bag", "box", "briefcase"]) ?? undefined,
+          })),
+      };
+    });
+
+  const counterRaw = obj(pick(o, ["counter", "statPanel", "stat", "meter"]));
+  const counter = counterRaw
+    ? {
+        title: str(pick(counterRaw, ["title", "label", "name"])) || "COUNT",
+        unit: str(pick(counterRaw, ["unit", "suffix"])),
+        steps: asArray<Record<string, unknown>>(pick(counterRaw, ["steps", "beats", "values"]))
+          .map((st) => obj(st))
+          .filter((st): st is Record<string, unknown> => !!st)
+          .map((st) => {
+            const bpm = Number(pick(st, ["bpm", "pulse", "heart"]));
+            return {
+              beat: beatRef(pick(st, ["beat", "at", "start"])) ?? "",
+              value: str(pick(st, ["value", "number", "amount"])),
+              sub: str(pick(st, ["sub", "caption", "label", "note"])),
+              bpm: Number.isFinite(bpm) && bpm >= 40 && bpm <= 220 ? Math.round(bpm) : undefined,
+            };
+          })
+          .filter((st) => st.beat && st.value),
+        react: reactOf(pick(counterRaw, ["react", "reaction", "reacts", "worldReaction", "effect"])),
+      }
+    : null;
+
+  const timerRaw = obj(pick(o, ["timer", "clock"]));
+  const timer = timerRaw
+    ? {
+        label: str(pick(timerRaw, ["label", "title"])) || "TIME",
+        startBeat: beatRef(pick(timerRaw, ["startBeat", "start", "from"])) ?? "b1",
+        endBeat: beatRef(pick(timerRaw, ["endBeat", "end", "to"])) ?? null,
+      }
+    : null;
+
+  const propRaw = obj(pick(o, ["prop", "heroProp", "hero"]));
+  const prop = propRaw
+    ? {
+        style: fuzzyEnum(pick(propRaw, ["style", "type", "kind"]), HERO_PROP_STYLES) ?? "none",
+        growth: fuzzyEnum(pick(propRaw, ["growth", "direction"]), HERO_GROWTH) ?? "multiply",
+        anchor: fuzzyEnum(pick(propRaw, ["anchor", "place", "position"]), HERO_ANCHORS) ?? "sidewalk-left",
+      }
+    : null;
+
+  const world = asArray<Record<string, unknown>>(pick(o, ["world", "worldEvents", "events"]))
+    .map((w) => obj(w))
+    .filter((w): w is Record<string, unknown> => !!w)
+    .map((w) => ({ beat: beatRef(pick(w, ["beat", "at", "start"])) ?? "", event: eventOf(pick(w, ["event", "name", "type"])) }))
+    .filter((w): w is { beat: string; event: (typeof WORLD_EVENTS)[number] } => !!w.beat && !!w.event);
+
+  const shots = normalizeShots(pick(o, ["shots", "cameraShots", "camera_shots"]));
+
+  return { scenes, counter, timer, prop, world, shots };
+}
+
+/** World context: one place + moment per scene, the flight rule and the
+ *  catalog of places + assets (Phase 6 step 1). Featured performers'
+ *  vocabulary from Phase 5's actor system. */
+export function worldBlock(): string {
+  const actions = ACTOR_ACTIONS.map((a) => `${a} = ${ACTION_HELP[a]}`).join("; ");
+  return `ONE WORLD (optional per scene): instead of naming a kit, a scene may happen at a REAL place.
+Add "world": { "place": "<place id>", "date": "YYYY-MM-DD", "time": "HH:MM" } to that scene (local date and time;
+the sun, season and skies follow from it). Choose a place only when the story's setting matters; kit scenes stay
+fine for abstract or intimate premises. A change of place between consecutive scenes is filmed as a flight.
+${worldDirectorContext()}
+
+FEATURED ACTORS (optional, at most 4 per scene, world scenes only): specific people the story itself features.
+Background crowds fill themselves; only ADD an actor when the story names or needs a person. Each:
+{ "role": "who", "where": "<spot>", "do": [{ "at": <scene seconds>, "action": "<action>", "to"?: "<spot>", "target"?: "<spot>" , "for"?: <seconds> }], "carry"?: "bag"|"box"|"briefcase" }.
+${anchorsForPrompt()}
+Actions: ${actions}.`;
+}
+
+const KIT_GUIDE = `
+- street-block: a dense city street (shops, café, traffic, a walking crowd). Money, people, daily life, society. Fills itself: no cast.
+- space: planets and stars; set "subject" to earth, moon or mars. Cosmic premises. Always "night". Fills itself: no cast.
+- ocean: waves to the horizon, a beach, a jetty, canoes. Water and coast premises. Fills itself: no cast.
+- countryside: fields, houses, a barn, a windmill, a mountain ridge. Rural and quiet-life premises. Animals may be cast.
+- forest: dense trees, mist, light shafts. Wilderness, ancient, eerie premises. Animals may be cast.
+- river: a flowing river, rocks, a ridge, optional waterfall. Floods, journeys. Animals may be cast.
+- interior: a room with a window, sofa, lamp. Domestic, intimate, mystery. People may be cast.
+- park / boardwalk / pier / city-street: model sets you dress with 2-6 cast entries (people, animals, vehicles, props).`;
+
+/** Everything the director may choose, in its own vocabulary (beats, not seconds). */
+export function directorInventory(premise: string): string {
+  return `WORLDS (kit):${KIT_GUIDE}
+
+TIME (time): ${TIME_OF_DAY.join(", ")}. dawn = hope; noon = heat, peak; afternoon = normal day; golden = drama, nostalgia; overcast = dread; night = danger, mystery.
+WEATHER: ${WEATHERS.join(", ")} (storm adds lightning).
+CAMERA (camera): ${CAMERA_STYLES.join(", ")}. walk-through = a person filming while walking; steady-push = locked frame with push-ins on big moments; crane-reveal = rises to reveal; drone-top = overhead.
+CROWD (street only): none, light, busy.  ACCENT (street colours): ${STREET_ACCENTS.join(", ")}.
+COUNTER (optional): a big on-screen number that escalates, e.g. "YOUR MONEY 1x -> 2x -> 4x". Give it a title, a unit ("x", "%", "°C" or ""), and steps at beats with a numeric value and a short subline. Values are plain numbers: digits only, no commas, no powers, no words, at most 10 digits. The world grows with it. Optional per step: "bpm" (40-220) shows a red pulse row on the card and ties a heartbeat sound under the video — use it ONLY when the premise is about fear, panic or an urgent body threat; never default it.
+  "react" (REQUIRED when any step falls in a world scene, a real place): how the place physically reacts at every step, bigger with each one. ${STAT_REACTS.map((r) => `${r} = ${REACT_HELP[r]}`).join("; ")}. Pick the one the premise is about. Kit scenes ignore it.
+TIMER (optional): "TIME WITHOUT WATER" style clock from a start beat to an end beat (or to the end).
+PROP (street only, optional): the premise as an object on the street: ${HERO_PROP_STYLES.join(", ")}; growth multiply or vanish; anchor ${HERO_ANCHORS.join(", ")}.
+WORLD EVENTS (optional, at beats): water-vanish, water-return, water-rise (ocean, pier, river, world places: the streets flood, or the ponds and fountains drain); rain-start, rain-stop (any); lights-out (street, interior, forest, countryside, world places: the world goes dark, sun or moon, sky and every lamp and window fade to near-black, by day too; use it only when the story means darkness).
+  World places only: gravity-off, gravity-on (stalls, crates and litter float up off the plaza, then fall back); ground-break (the paving cracks and breaks into slabs that rise); snow-start, snow-stop (snow falls and whitens the streets and roofs, then stops falling).
+SHOTS (one per beat): how the camera films that beat.
+  subject: what the shot is about, from the set the beat is in:
+${Object.keys(KIT_SUBJECTS).map((k) => `    ${k}: ${subjectMenu(k)}`).join("\n")}
+  size: ${SHOT_SIZES.join(", ")} (extreme close-up .. extreme wide). Open a new place wide; go tighter as the story builds; a reveal goes wide.
+  angle: ${SHOT_ANGLES.join(", ")}. low = power, awe; high = small, vulnerable; overhead = a map view; dutch = unease.
+  side: ${SHOT_SIDES.join(", ")}.  place: ${SHOT_PLACES.join(", ")} (where the subject sits on screen).
+  move: ${SHOT_MOVES.join(", ")}. Almost never static; push_in for tension, pull_out or crane_up for reveals, orbit for wonder, dolly_zoom for a shock (use once at most).
+  energy: ${SHOT_ENERGIES.join(", ")}.  style: ${SHOT_STYLES.join(", ")} (handheld for chaos and urgency).
+  Never film the same subject at the same size twice in a row.
+  A counter step or world event in a world place is a reaction beat: film it WS or EWS, or low (angle low) over the spot where it starts: the plaza when the place has one, else the avenue.
+CAST: actions ${ACTIONS.join(", ")}. Asset ids must come from this catalog:
+${catalogForPrompt(premise, 60)}
+
+${memoryBlock()}`;
+}
+
+const SYSTEM = `You are the film director of short "what if" videos made in a stylised low-poly 3D world.
+For a story already written beat by beat, you choose where each part is filmed and how.
+Rules:
+- Start the first scene at b1. A new scene starts only where the location or time of day changes for a reason; a scene lasts until the next scene's start.
+- Open on the most striking setting. Every scene must look different from the previous one (kit, time or weather).
+- The picture must SHOW the premise: use a counter for escalation stories, a timer for "gone for N seconds" stories, world events when the environment itself changes, a prop when the subject is an object on the street.
+- Use only the ids listed. Refer to beats as "b1", "b2", ... Never write seconds.
+Reply with JSON only.`;
+
+export function directorPrompt(input: { premise: string; story: WriterStory; timeline: Timeline; settings: VideoSettings }): string {
+  const len = new Map(input.timeline.beats.map((b) => [b.id, b.to - b.from]));
+  const beats = input.story.beats
+    .map((b) => `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s): ${b.see}${b.say ? `  | said: "${b.say}"` : ""}`)
+    .join("\n");
+  const maxScenes = input.settings.sceneCount ?? Math.min(6, Math.max(1, Math.round(input.story.beats.length / 4)));
+  return `Premise: "${input.premise}"
+Story: "${input.story.title}" (mood: ${input.story.mood})
+Beats:
+${beats}
+
+Use at most ${maxScenes} scene${maxScenes === 1 ? "" : "s"}${input.settings.sceneCount ? ` (the user asked for ${input.settings.sceneCount})` : ""}.
+
+${directorInventory(input.premise)}
+
+${worldBlock()}
+
+JSON shape:
+{
+  "scenes": [{ "start": "b1", "kit": "street-block", "time": "golden", "weather": "none", "subject": "none", "crowd": "busy", "camera": "walk-through", "accent": "classic", "cast": [] }, { "start": "b4", "world": { "place": "los-angeles", "date": "2026-06-21", "time": "18:30" }, "time": "golden" }],
+  "counter": { "title": "YOUR MONEY", "unit": "x", "react": "money", "steps": [{ "beat": "b1", "value": "1", "sub": "A NORMAL DAY" }] } or null,
+  "timer": { "label": "TIME WITHOUT WATER", "startBeat": "b2", "endBeat": null } or null,
+  "prop": { "style": "coin-stacks", "growth": "multiply", "anchor": "sidewalk-left" } or null,
+  "world": [{ "beat": "b4", "event": "lights-out" }],
+  "shots": [{ "beat": "b1", "subject": "scene", "size": "WS", "angle": "eye", "side": "auto", "move": "push_in", "place": "auto", "energy": "calm", "style": "smooth" }]
+} (a scene either carries kit or world — never both; leave "world" off entirely to not use places)`;
+}
+
+/**
+ * A counter with a step in a world scene must say how the place reacts
+ * (gate item 7: no number change without a physical change), so the repair
+ * loop asks again instead of the assembler inventing one. Scenes are read
+ * the way the assembler tiles them: by start beat, unknown beats ignored, the
+ * first scene from b1, a duplicate start kept once. `beats` is the story's
+ * beat ids in order. Null when there is nothing to fix.
+ */
+export function counterReactProblem(v: Direction, beats: string[]): string | null {
+  if (!v.counter || v.counter.react) return null;
+  const order = new Map(beats.map((id, i) => [id, i]));
+  const scenes = v.scenes
+    .filter((s) => order.has(s.start))
+    .sort((a, b) => order.get(a.start)! - order.get(b.start)!)
+    .filter((s, i, all) => i === 0 || all[i - 1].start !== s.start);
+  if (!scenes.length) return null;
+  const sceneOf = (beat: string) => [...scenes].reverse().find((s) => order.get(s.start)! <= order.get(beat)!) ?? scenes[0];
+  const steps = v.counter.steps.filter((st) => order.has(st.beat) && sceneOf(st.beat).worldPlace).map((st) => st.beat);
+  if (!steps.length) return null;
+  return (
+    `the counter has steps in a world scene (${steps.join(", ")}) but no "react": add "react" to the counter, ` +
+    `one of ${STAT_REACTS.join(", ")} (how the place reacts at each step)`
+  );
+}
+
+export async function directStory(input: {
+  premise: string;
+  story: WriterStory;
+  timeline: Timeline;
+  settings: VideoSettings;
+  models: Record<string, RoleModel>;
+}): Promise<Direction> {
+  const beats = input.story.beats.map((b) => b.id);
+  const known = new Set(beats);
+  const result = await callRole({
+    role: "director",
+    label: "director",
+    system: SYSTEM,
+    prompt: directorPrompt(input),
+    schema: DirectorSchema,
+    models: input.models,
+    normalize: normalizeDirector,
+    essential: (v) =>
+      (v.scenes.some((s) => known.has(s.start)) ? null : `no scene starts at a real beat; start the first scene at b1`) ??
+      counterReactProblem(v, beats),
+  });
+  return result.value;
+}

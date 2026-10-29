@@ -1,11 +1,15 @@
 /**
- * Hook.tsx — the opening premise card ("What if gravity disappeared...").
- * Same caption look as the captions; keyword highlighting uses React spans.
+ * Hook.tsx — the opening premise title ("What if gravity disappeared..."), overlaid on
+ * the live scene (no card). It follows the resolved caption look: the default
+ * "reference" preset renders it as a serif title with the keyword in gold and a
+ * soft shadow (Phase 7, quality-refs/). Keyword highlighting uses React spans.
+ * The size fits the text into at most 3 lines inside the safe area.
  */
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import "./fonts";
 import { CaptionLook, FONT_STACKS, resolveCaptionStyle } from "../../generator/caption-style";
+import { captionScale, centredTextMargin, fitFontSize, hookCentrePct, textOutline } from "../../generator/layout";
 
 interface HookProps {
   text: string;
@@ -13,26 +17,34 @@ interface HookProps {
   startFrame: number;
   endFrame: number;
   style?: CaptionLook;
+  /** The HUD's kind: with the text HUD the hook sits high, as in the references. */
+  hud?: "text" | "card";
 }
 
-export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style }) => {
+export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style, hud = "card" }) => {
   const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
+  const { width, height } = useVideoConfig();
   if (frame < startFrame || frame > endFrame) return null;
 
   const look = resolveCaptionStyle(style);
-  const scale = width / 1080;
+  const scale = captionScale(width, height);
+  const margin = centredTextMargin(width, height);
+  const boxWidth = width * (1 - 2 * margin);
+  const shown = look.uppercase ? text.toUpperCase() : text;
+  const fontSize = fitFontSize(shown, 52 * scale, boxWidth, 3);
+  const centre = hookCentrePct(width, height, hud);
   const keys = keywordHighlight.map((k) => k.toLowerCase()).filter(Boolean);
-  const words = (look.uppercase ? text.toUpperCase() : text).split(/\s+/).filter(Boolean);
+  const words = shown.split(/\s+/).filter(Boolean);
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
+        // A band centred on the hook's height, as tall as the frame allows.
+        top: `${centre - Math.min(centre, 100 - centre)}%`,
+        bottom: `${100 - centre - Math.min(centre, 100 - centre)}%`,
+        left: `${margin * 100}%`,
+        right: `${margin * 100}%`,
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
@@ -43,24 +55,27 @@ export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFr
     >
       <div
         style={{
+          boxSizing: "border-box",
+          maxWidth: "100%",
           fontFamily: FONT_STACKS[look.font],
-          fontWeight: look.font === "archivo-black" ? 400 : 800,
+          fontWeight: look.font === "archivo-black" ? 400 : Math.max(look.weight, 700),
           fontStyle: look.italic ? "italic" : "normal",
-          fontSize: 48 * scale,
+          fontSize,
           color: look.color,
           textAlign: "center",
-          lineHeight: 1.2,
-          maxWidth: "90%",
-          textShadow: look.shadow ? `0 ${3 * scale}px ${6 * scale}px rgba(0,0,0,0.45)` : "none",
-          padding: `0 ${40 * scale}px`,
+          lineHeight: 1.18,
+          textShadow: look.shadow ? textOutline(scale, look.font === "serif" ? "soft" : "outline") : "none",
         }}
       >
         {words.map((word, i) => {
           const hit = keys.some((k) => word.toLowerCase().replace(/[^a-z0-9]/g, "").includes(k.replace(/[^a-z0-9]/g, "")));
+          // A real space between words, so the line wraps between words (with
+          // margins only, the browser saw one long word and split it anywhere).
           return (
-            <span key={`${i}-${word}`} style={{ color: hit ? look.highlight : look.color, fontWeight: hit ? 900 : undefined, marginRight: i < words.length - 1 ? "0.25em" : 0 }}>
-              {word}
-            </span>
+            <React.Fragment key={`${i}-${word}`}>
+              {i > 0 && " "}
+              <span style={{ color: hit ? look.highlight : look.color, fontWeight: hit ? 900 : undefined }}>{word}</span>
+            </React.Fragment>
           );
         })}
       </div>

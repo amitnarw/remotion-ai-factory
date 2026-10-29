@@ -1,7 +1,8 @@
 /* Build QC prop files for stills: one street spec per time-of-day + space specs. */
 const fs = require("fs");
 const path = require("path");
-const OUT = "C:/Users/Narwal/Desktop/remotion/out/qc";
+// Inside this repo (it was a hard-coded path on another machine).
+const OUT = path.join(__dirname, "..", "out", "qc");
 fs.mkdirSync(OUT, { recursive: true });
 
 function streetSpec(tod) {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CaptionStyleSchema } from "./caption-style";
+import { ShotSchema } from "./camera/shot";
 
 /**
  * Shot spec schema — the single contract that drives the whole video.
@@ -17,6 +18,9 @@ export const SfxCueSchema = z.object({
   to: z.number().nullable().optional(),
   /** "ramp-up" | "ramp-down" | "hold" */
   volume: z.enum(["ramp-up", "ramp-down", "hold"]).optional(),
+  /** Set by audio-resolve: the library file, and its loudness gain. */
+  file: z.string().optional(),
+  gain: z.number().optional(),
 });
 
 export const EventSchema = z.object({
@@ -36,6 +40,9 @@ export const CaptionSchema = z.object({
   keyword: z.array(z.string()).optional().default([]),
   /** Optional speaker for character dialog lines. */
   speaker: z.string().optional(),
+  /** Per-word timings (seconds) from the timeline. Word-by-word animations use
+   *  them; without them the caption's time is shared evenly across its words. */
+  words: z.array(z.object({ text: z.string(), from: z.number(), to: z.number() })).optional(),
   /** Look of the caption plate: "bold" = uppercase sans, "serif-italic" =
    *  the lowerc-case serif italic narration look (e.g. "Normal eyes. 20/20."). */
   style: z.enum(["bold", "serif-italic"]).optional(),
@@ -51,18 +58,35 @@ export const CameraKeySchema = z.object({
  *  value  = the big number before the unit ("16")
  *  zoom   = camera zoom multiplier while this beat is active
  *  sub    = the all-caps subline ("LIKE 16X BINOCULARS")
- *  bpm    = pulse shown on the red EKG line */
+ *  bpm    = the red pulse row on the card — a director device, not a fixture:
+ *           present only when the director chooses it (fear/urgency premises);
+ *           the row and a heartbeat sound render only when it is set. The
+ *           assembler never invents it (see docs/factory/10-intent-audit.md). */
 export const StatBeatSchema = z.object({
   t: z.number(),
   value: z.string().regex(/^[0-9][0-9.]*$/, "big value like \"16\" — no letters"),
   zoom: z.number().min(1),
   sub: z.string(),
-  bpm: z.number().min(40).max(220),
+  bpm: z.number().min(40).max(220).optional(),
+  /** World reaction 1..16 (planet size, water level, prop count). Set by the
+   *  assembler; the HUD still shows `value`. Absent = use the value (old specs). */
+  scale: z.number().min(1).max(16).optional(),
 });
+
+/** How a world place reacts at every counter step (docs/factory/11-world-reactions.md):
+ *  lift = things float up, crack = the ground cracks, then breaks, confetti /
+ *  money = bursts in the air, water = the streets flood, snow = snow falls and
+ *  settles, dark = the power fails. */
+export const STAT_REACTS = ["lift", "crack", "confetti", "money", "water", "snow", "dark"] as const;
+export type StatReact = (typeof STAT_REACTS)[number];
 
 export const StatPanelSchema = z.object({
   title: z.string(),
   unit: z.string().default("x").describe("suffix after the big value, e.g. \"x\" renders \"16x\""),
+  /** A director device: how the world places react at each step (required by
+   *  the director when a step falls in a world scene). Kit stages ignore it
+   *  and keep their own reactions. */
+  react: z.enum(STAT_REACTS).optional(),
   beats: z.array(StatBeatSchema).min(1).max(8),
 });
 
@@ -116,7 +140,7 @@ export const SceneSchema = z.object({
    *    "city-street" | "park" | "boardwalk" | "pier" | "interior" = CC0 GLB
    *                     kits rendered by AssetStage (with scene.cast) */
   kit: z
-    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river"])
+    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river", "world"])
     .optional(),
   /** For space scenes: which world is in frame (planet built procedurally). */
   subject: z.enum(["earth", "moon", "mars"]).optional(),
@@ -172,6 +196,50 @@ export const SceneSchema = z.object({
       waterfallHeight: z.number().positive().optional(),
     })
     .optional(),
+  /** One-world scene: the director's choice of where and when (Phase 6 step 1).
+   *  Present ⇒ the place renders instead of the kit stages (kit becomes
+   *  "world"). The composition re-resolves sun/season from this choice —
+   *  nothing derived is stored here, so the frame is deterministic. */
+  world: z
+    .object({
+      place: z.string(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+      time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM, 24-hour"),
+    })
+    .optional(),
+  /** Featured performers in a world scene (Phase 5): specific people the story
+   *  needs, at the city's named spots (cityAnchors). At most 4 — the
+   *  background crowd fills itself without direction. Times (do[].at) are
+   *  seconds of the VIDEO (the assembler absolutizes the director's
+   *  scene-relative choices). */
+  actors: z
+    .array(
+      z.object({
+        /** Who this is: a description ("newspaper vendor") or a story character's name. */
+        role: z.string().max(80),
+        /** A spot name from cityAnchors (avenue, sidewalk-north, plaza, ...). */
+        where: z.string().min(1),
+        /** A short action timeline, seconds of the video. */
+        do: z
+          .array(
+            z.object({
+              at: z.number().min(0).optional(),
+              action: z.enum(["idle", "walk", "run", "wave", "point", "sit", "look", "talk", "react", "panic", "fall", "cheer", "clap", "jump"]),
+              to: z.string().optional(),
+              target: z.string().optional(),
+              for: z.number().positive().optional(),
+            }),
+          )
+          .max(6)
+          .optional(),
+        carry: z.enum(["bag", "box", "briefcase"]).optional(),
+      }),
+    )
+    .max(4)
+    .optional(),
+  /** Set when the previous scene's world place differs from this one's:
+   *  the join renders as a flight over the globe. */
+  flight: z.boolean().optional(),
 });
 
 export type SceneType = z.infer<typeof SceneSchema>;
@@ -196,6 +264,8 @@ export const SettingsSchema = z
     quality: z.enum(["draft", "final"]).default("final"),
     /** Caption look (preset + overrides); see caption-style.ts. */
     captions: CaptionStyleSchema.optional(),
+    /** Run the AI critic pass (one extra model call, off by default). */
+    critic: z.boolean().optional(),
   })
   .superRefine((s, ctx) => {
     if (s.targetDuration === undefined) return;
@@ -223,6 +293,91 @@ export function maxDurationFor(format: VideoFormat): number {
   return format === "16:9" ? 600 : 90;
 }
 
+/**
+ * The video's length in seconds. A planned video (it has a story) ends where
+ * its timeline ends, since the timeline already holds the closing tail. Older
+ * template specs hold 2 s after the last scene (0.25 s when every scene is the
+ * street block).
+ */
+export function videoSeconds(spec: ShotSpec): number {
+  const last = Math.max(...spec.scenes.map((s) => s.to));
+  if (spec.story) return last;
+  const streetOnly = spec.scenes.every((s) => s.kit === "street-block" || s.scene === "street-block");
+  return streetOnly ? last + 0.25 : last + 2;
+}
+
+/**
+ * The story behind a planned video (Phase 2 pipeline). Beats are the unit the
+ * AI roles refer to; the assembler turns them into seconds. Stored in the spec
+ * so the render can reuse the planned voice lines and the editor can show them.
+ */
+export const StoryLineSchema = z.object({
+  id: z.string(),
+  /** "narrator" or a character name. */
+  who: z.string(),
+  text: z.string(),
+  /** Start in seconds and measured or estimated duration, set by the timeline. */
+  at: z.number().optional(),
+  dur: z.number().optional(),
+  estimated: z.boolean().optional(),
+});
+
+export const StoryBeatSchema = z.object({
+  id: z.string(),
+  from: z.number().optional(),
+  to: z.number().optional(),
+  say: z.string().optional(),
+  see: z.string().optional(),
+  pace: z.enum(["quick", "normal", "linger"]).optional(),
+  stress: z.string().optional(),
+  lines: z.array(StoryLineSchema).optional(),
+});
+
+export const StoryCharacterSchema = z.object({
+  name: z.string(),
+  gender: z.enum(["male", "female", "any"]).optional(),
+  age: z.enum(["child", "adult", "old"]).optional(),
+  look: z.string().optional(),
+  /** Cast voice: Kitten preset id or VoxCPM preset/description. */
+  voice: z.string().optional(),
+});
+
+export const StorySchema = z.object({
+  title: z.string().optional(),
+  mood: z.string().optional(),
+  hook: z.string().optional(),
+  characters: z.array(StoryCharacterSchema).default([]),
+  beats: z.array(StoryBeatSchema).default([]),
+});
+export type Story = z.infer<typeof StorySchema>;
+
+/**
+ * One camera shot on the timeline (Phase 3): the director's shot for a beat,
+ * timed by the assembler. Stages that know the subject frame it with the
+ * camera solver (src/generator/camera/solve.ts); others keep their own rig.
+ */
+export const SpecShotSchema = ShotSchema.extend({
+  from: z.number(),
+  to: z.number(),
+  /** The beat it films ("hook", "b3"...). */
+  beat: z.string().optional(),
+});
+export type SpecShot = z.infer<typeof SpecShotSchema>;
+
+/**
+ * How one scene hands over to the next (Phase 3), centred on the cut at `t`.
+ * dip-black / dip-white fade through a colour; flash is a few white frames;
+ * whip turns the camera fast through the cut. Plain cuts need no entry.
+ */
+export const TRANSITION_TYPES = ["dip-black", "dip-white", "flash", "whip"] as const;
+export const SpecTransitionSchema = z.object({
+  t: z.number(),
+  type: z.enum(TRANSITION_TYPES),
+  /** Total length in seconds, half before the cut and half after. */
+  dur: z.number().min(0.05).max(2),
+});
+export type SpecTransition = z.infer<typeof SpecTransitionSchema>;
+
 export const ShotSpecSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -231,6 +386,22 @@ export const ShotSpecSchema = z.object({
   height: z.number().default(1920),
   palette: z.string().default("pastelDay"),
   settings: SettingsSchema.optional(),
+  /** Planned story (Phase 2). Absent for offline templates and older specs. */
+  story: StorySchema.optional(),
+  /** Camera shots in time order (Phase 3). Absent: each stage films with its own rig. */
+  shots: z.array(SpecShotSchema).optional(),
+  /** Scene-to-scene transitions (Phase 3). Absent: hard cuts. */
+  transitions: z.array(SpecTransitionSchema).optional(),
+  /** Flight windows (Phase 6): during one, the composition renders WorldFlight
+   *  between the surrounding world scenes' places instead of the two stages. */
+  flights: z
+    .array(
+      z.object({
+        from: z.number(),
+        to: z.number(),
+      }),
+    )
+    .optional(),
   hook: z.object({
     text: z.string(),
     keywordHighlight: z.array(z.string()).optional().default([]),
@@ -257,12 +428,26 @@ export const ShotSpecSchema = z.object({
   scenes: z.array(SceneSchema).min(1),
   /** World-state events — the ENVIRONMENT itself reacts (premise visibility).
    *  Water events animate the ocean/pier water level; weather + lights
-   *  events are honoured by the stages that support them. */
+   *  events are honoured by the stages that support them. gravity-off/on,
+   *  ground-break and snow-start/stop are shown by the world places only
+   *  (src/world/react/reaction.ts). */
   worldEvents: z
     .array(
       z.object({
         t: z.number(),
-        name: z.enum(["water-vanish", "water-return", "water-rise", "rain-start", "rain-stop", "lights-out"]),
+        name: z.enum([
+          "water-vanish",
+          "water-return",
+          "water-rise",
+          "rain-start",
+          "rain-stop",
+          "lights-out",
+          "gravity-off",
+          "gravity-on",
+          "ground-break",
+          "snow-start",
+          "snow-stop",
+        ]),
       }),
     )
     .default([]),
@@ -275,6 +460,9 @@ export const ShotSpecSchema = z.object({
             from: z.number(),
             to: z.number().nullable().optional(),
             vol: z.number().optional(),
+            file: z.string().optional(),
+            gain: z.number().optional(),
+            loop: z.boolean().optional(),
             /** restart=true: restart the file at bed from-time instead of
              *  slicing mid-file (keeps heartbeat beats phase-aligned when
              *  the tempo changes between segments). */
@@ -282,7 +470,26 @@ export const ShotSpecSchema = z.object({
           }),
         )
         .optional(),
-      music: z.any().optional(),
+      /** Background music. Written by audio-resolve (mood -> library file). */
+      music: z
+        .array(
+          z.object({
+            mood: z.string().optional(),
+            file: z.string().optional(),
+            gain: z.number().optional(),
+            from: z.number(),
+            to: z.number().nullable().optional(),
+            loop: z.boolean().optional(),
+            fadeIn: z.number().optional(),
+            fadeOut: z.number().optional(),
+          }),
+        )
+        .nullable()
+        .optional(),
+      /** Whoosh at each scene cut. */
+      transitions: z
+        .array(z.object({ t: z.number(), file: z.string().optional(), gain: z.number().optional() }))
+        .optional(),
       /** Generated voice tracks (narration/dialogs). Written by the render
        *  pipeline's TTS stage; consumed by CompositionAudio. */
       voiceFiles: z
@@ -293,6 +500,7 @@ export const ShotSpecSchema = z.object({
             at: z.number(),
             dur: z.number().optional(),
             kind: z.enum(["narration", "dialog"]).default("narration"),
+            gain: z.number().optional(),
           }),
         )
         .optional(),
@@ -358,9 +566,9 @@ export function validateSpec(input: unknown): ShotSpec {
     );
   }
   spec.scenes.forEach((s, i) => {
-    if (!s.kit && !["city", "first-person"].includes(s.scene)) {
+    if (!s.kit && !s.world && !["city", "first-person"].includes(s.scene)) {
       problems.push(
-        `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street`,
+        `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street (or a world place choice)`,
       );
     }
   });

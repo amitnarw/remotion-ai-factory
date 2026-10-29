@@ -21,11 +21,18 @@
 import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
-import { validateSpec, SettingsSchema, type ShotSpec, type VideoSettings } from "./spec.schema";
-import { runTtsStage } from "./tts";
+import { validateSpec, SettingsSchema, videoSeconds, type ShotSpec, type VideoSettings } from "./spec.schema";
+import { disposeTtsWorkers, runTtsStage, type TtsAudioConfig } from "./tts";
+import { resolveAudio } from "./audio-resolve";
+import { masterAudio } from "./audio-master";
 import { secToFrame } from "./timing";
 import { generateSpec } from "./ai/generate-spec";
+import { creditsForPlaces } from "../world/landmarks";
+import { PLACES } from "../world/places";
+import { canReassemble, reassemble } from "./pipeline/run";
+import type { AudioConfig } from "./pipeline/voice";
 import { validateAssets } from "./asset-catalog";
+import { renderChunked, type ChunkStats } from "./render";
 
 const FFMPEG = join(
   process.cwd(),
@@ -34,11 +41,11 @@ const FFMPEG = join(
   "compositor-win32-x64-msvc",
   "ffmpeg.exe",
 );
-// Render from an EXPLICIT fresh bundle (out/render-bundle). Passing src/index.ts
-// to `remotion render` triggers the CLI's auto-bundle, which intermittently
-// serves a stale cached bundle on this machine — an explicit bundle step always
-// builds from current code.
-const ENTRY = join(process.cwd(), "out", "render-bundle");
+// Render from an EXPLICIT fresh bundle (out/render-bundle-<id>). Passing
+// src/index.ts to `remotion render` triggers the CLI's auto-bundle, which
+// intermittently serves a stale cached bundle on this machine — an explicit
+// bundle step always builds from current code. Per-id so concurrent renders
+// (the milestone pool) never write the same directory.
 const BUNDLE_SRC = join(process.cwd(), "src", "index.ts");
 const COMP_ID = "WhatIfVideo";
 const OUTPUT_DIR = join(process.cwd(), "output");
@@ -52,14 +59,20 @@ function slug(text: string): string {
   );
 }
 
+/** Get the per-video output directory: output/<id>/ */
+function videoOutputDir(id: string): string {
+  return join(OUTPUT_DIR, id);
+}
+
+/** Ensure the per-video output directory exists. */
+function ensureVideoOutputDir(id: string): void {
+  mkdirSync(videoOutputDir(id), { recursive: true });
+}
+
 /** Duration in frames from a spec (last scene end + 2s tail; street-block
  *  scenes end with the story — only a short breather after the last frame). */
 function durationFrames(spec: ShotSpec): number {
-  const last = Math.max(...spec.scenes.map((s) => s.to));
-  const streetOnly = spec.scenes.every(
-    (s) => s.kit === "street-block" || s.scene === "street-block",
-  );
-  return secToFrame(streetOnly ? last + 0.25 : last + 2, spec.fps ?? FPS);
+  return secToFrame(videoSeconds(spec), spec.fps ?? FPS);
 }
 
 /** Parse argv into { premise, provider, model, noRender, fromSpec }. */
@@ -70,6 +83,7 @@ function parseArgs(argv: string[]): {
   noRender: boolean;
   fromSpec: string | undefined;
   audioFile: string | undefined;
+  chunked: boolean;
   settings: Partial<VideoSettings>;
 } {
   const settings: Partial<VideoSettings> = {};
@@ -78,6 +92,7 @@ function parseArgs(argv: string[]): {
   let noRender = false;
   let fromSpec: string | undefined;
   let audioFile: string | undefined;
+  let chunked = false;
   const premiseParts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -91,6 +106,9 @@ function parseArgs(argv: string[]): {
       fromSpec = argv[++i];
     } else if (a === "--audio-file" && argv[i + 1]) {
       audioFile = argv[++i];
+    } else if (a === "--chunked") {
+      // Chunked, cached render (src/generator/render) instead of one `remotion render`.
+      chunked = true;
     } else if (a === "--format" && argv[i + 1]) {
       settings.format = argv[++i] as VideoSettings["format"];
     } else if (a === "--duration" && argv[i + 1]) {
@@ -99,6 +117,8 @@ function parseArgs(argv: string[]): {
       settings.sceneCount = Number(argv[++i]);
     } else if (a === "--quality" && argv[i + 1]) {
       settings.quality = argv[++i] as VideoSettings["quality"];
+    } else if (a === "--critic") {
+      settings.critic = true;
     } else if (a === "--settings-json" && argv[i + 1]) {
       try {
         Object.assign(settings, JSON.parse(argv[++i]));
@@ -110,7 +130,19 @@ function parseArgs(argv: string[]): {
       premiseParts.push(a);
     }
   }
-  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile, settings };
+  return { premise: premiseParts.join(" ").trim(), provider, model, noRender, fromSpec, audioFile, chunked, settings };
+}
+
+/** The voice settings file the dashboard writes (narration / dialogs). */
+function readAudioConfig(audioFile: string | undefined): AudioConfig | null {
+  if (!audioFile) return null;
+  try {
+    const abs = audioFile.startsWith("/") || audioFile.includes(":") ? audioFile : join(process.cwd(), audioFile);
+    return JSON.parse(readFileSync(abs, "utf8")) as AudioConfig;
+  } catch (e) {
+    console.warn(`[voice] could not read audio config: ${e}`);
+    return null;
+  }
 }
 
 function writeFailedLog(id: string, premise: string, error: unknown): string {
@@ -138,7 +170,7 @@ function writeFailedLog(id: string, premise: string, error: unknown): string {
 }
 
 function main() {
-  const { premise, provider, model, noRender, fromSpec, audioFile, settings: rawSettings } = parseArgs(process.argv.slice(2));
+  const { premise, provider, model, noRender, fromSpec, audioFile, chunked, settings: rawSettings } = parseArgs(process.argv.slice(2));
   const settingsCheck = SettingsSchema.safeParse(rawSettings);
   if (!settingsCheck.success) {
     console.error(
@@ -157,16 +189,25 @@ function main() {
           ? fromSpec
           : join(process.cwd(), fromSpec);
         if (!statSync(abs)) throw new Error(`spec file not found: ${abs} — fix: run the plan step first`);
-        const id = abs.replace(/\\/g, "/").split("/").pop()!.replace(/-spec\.json$/, "");
+        // output/<id>/spec.json (per-video folders, what the dashboard and the
+        // editor pass) -> <id> from the folder; the old output/<id>-spec.json ->
+        // <id> from the file name. (Taking the file name for both made every
+        // dashboard render's id "spec.json".)
+        const parts = abs.replace(/\\/g, "/").split("/");
+        const file = parts.pop()!;
+        const id = file === "spec.json" ? parts.pop()! : file.replace(/-spec\.json$/, "");
         const valid = validateSpec(JSON.parse(readFileSync(abs, "utf8")));
         const premise = valid.title;
         console.log(`[render-only] ${id} — "${premise}" (${valid.scenes.length} scenes)`);
-        await renderOnly(valid, id, el, { audioFile });
+        await renderOnly(valid, id, el, { audioFile, chunked });
       } catch (error) {
         console.error("");
         console.error("═══ FAILED ═══");
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
+      } finally {
+        // A persistent kitten worker (if it started) must not keep node alive.
+        disposeTtsWorkers();
       }
     })();
     return;
@@ -185,17 +226,17 @@ function main() {
     const t0 = Date.now();
     const el = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
     try {
-      console.log(
-        `[1/5] Writing script — ${
-          provider && provider !== "offline"
-            ? `${provider}/${model ?? "(provider default)"}`
-            : "offline template families"
-        }`,
-      );
-      const result = await generateSpec(premise, provider, model, settings);
+      console.log(`[1/5] Writing the plan${process.env.FACTORY_LLM_FIXTURES ? " (recorded fixtures)" : ""}`);
+      const result = await generateSpec(premise, provider, model, settings, readAudioConfig(audioFile) ?? {}, id);
       const spec = result.spec;
       const providerUsed = result.provider;
       const modelUsed = result.model;
+      if (result.report) {
+        const models = process.env.FACTORY_LLM_FIXTURES
+          ? "models: fixtures"
+          : Object.entries(result.report.models).map(([role, m]) => `${role}=${m.provider}/${m.model}`).join(" ");
+        console.log(`[plan] ${result.report.duration.toFixed(1)}s (target ${result.report.target}s)${result.report.revised ? ", revised once" : ""}; sound by ${result.report.soundSource}; ${models}`);
+      }
 
       // Validate (redundant but defensive — generateSpec already validates)
       const valid = validateSpec(spec);
@@ -205,8 +246,9 @@ function main() {
       );
 
       // Write spec for reference + debugging
-      mkdirSync(OUTPUT_DIR, { recursive: true });
-      const specPath = join(OUTPUT_DIR, `${id}-spec.json`);
+      ensureVideoOutputDir(id);
+      const videoDir = videoOutputDir(id);
+      const specPath = join(videoDir, "spec.json");
       writeFileSync(specPath, JSON.stringify(valid, null, 2));
 
       // Dashboard approval flow: --no-render stops after the spec write.
@@ -217,7 +259,7 @@ function main() {
         return;
       }
 
-      await renderOnly(valid, id, el, { providerUsed, modelUsed, specPath, premise });
+      await renderOnly(valid, id, el, { providerUsed, modelUsed, specPath, premise, chunked });
     } catch (error) {
       const logPath = writeFailedLog(id, premise, error);
       console.error("");
@@ -229,39 +271,33 @@ function main() {
         `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
+    } finally {
+      // A persistent kitten worker (if it started) must not keep node alive.
+      disposeTtsWorkers();
     }
   })();
 }
 
 /** Render an approved/validated spec: MP4 + report (share [3/5]..[5/5] logs). */
 async function renderOnly(
-  valid: ShotSpec,
+  planned: ShotSpec,
   id: string,
   el: () => string,
-  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string; audioFile?: string },
+  meta?: { providerUsed?: string; modelUsed?: string; specPath?: string; premise?: string; audioFile?: string; chunked?: boolean },
 ): Promise<void> {
+  let valid = planned;
   const premise = meta?.premise ?? valid.title;
   const providerUsed = meta?.providerUsed ?? "approved-spec";
   const modelUsed = meta?.modelUsed ?? "";
-  const specPath = meta?.specPath ?? join(OUTPUT_DIR, `${id}-spec.json`);
+  ensureVideoOutputDir(id);
+  const videoDir = videoOutputDir(id);
+  const specPath = meta?.specPath ?? join(videoDir, "spec.json");
 
-      // Duration from spec
-      const durFrames = durationFrames(valid);
+      // Duration from spec (recomputed after the voice stage re-times a planned story)
+      let durFrames = durationFrames(valid);
 
-      // Output MP4 path (shorter filename)
-      const stamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, "-")
-        .replace("T", "-")
-        .slice(0, 13);
-      const out = join(OUTPUT_DIR, `${id}-${stamp}.mp4`);
-
-      // Build input props: { spec: {...} }
-      // Write to a FILE — asset-driven specs exceed the Windows ~32KB
-      // command-line limit when passed inline via --props.
-      const inputProps = JSON.stringify({ spec: valid });
-      const propsPath = join(OUTPUT_DIR, `${id}-props.json`);
-      writeFileSync(propsPath, inputProps);
+      // Output MP4 path (in per-video folder)
+      const out = join(videoDir, "video.mp4");
 
       console.log(`Generating: "${premise}"`);
       console.log(`Provider: ${providerUsed} / ${modelUsed}`);
@@ -269,23 +305,21 @@ async function renderOnly(
       console.log(`Duration: ${durFrames} frames (${(durFrames / FPS).toFixed(1)}s)`);
       console.log("");
 
-// TTS voice stage (narration/dialogs) — runs before bundling so the
-// generated WAVs are in public/ before the render reads them.
-const audioFile = meta?.audioFile;
-let audioConfig: any = null;
-if (audioFile) {
-  try {
-    const absAudio = audioFile.startsWith("/") || audioFile.includes(":")
-      ? audioFile
-      : join(process.cwd(), audioFile);
-    audioConfig = JSON.parse(readFileSync(absAudio, "utf8"));
-  } catch (e) {
-    console.warn(`[voice] could not read audio config: ${e}`);
-  }
-}
+// Voice stage — runs before bundling so the WAVs are in public/ before the render reads them.
+const audioConfig = readAudioConfig(meta?.audioFile);
+if (valid.story && canReassemble(id)) {
+  // A pipeline plan: synthesize every planned line, measure it, and re-time the
+  // whole video from the real audio (no model calls).
+  console.log(`[voice] re-timing the plan from the measured voice`);
+  const re = await reassemble(id, "render", audioConfig ?? undefined, valid);
+  for (const w of re.warnings) console.warn(`[voice] warning: ${w}`);
+  valid = re.spec;
+  durFrames = durationFrames(valid);
+  console.log(`[voice] done — ${(valid.audio?.voiceFiles ?? []).length} lines, ${(durFrames / FPS).toFixed(1)}s`);
+} else {
 // Also fall back to spec.audio for narration/dialogs config (UI-injected).
-const specAudio = (valid as any).audio ?? {};
-const mergedAudio = {
+const specAudio = valid.audio ?? {};
+const mergedAudio: TtsAudioConfig = {
   narration: audioConfig?.narration ?? specAudio.narration,
   dialogs: audioConfig?.dialogs ?? specAudio.dialogs,
 };
@@ -294,7 +328,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
   try {
     const manifest = await runTtsStage(valid, mergedAudio, id);
     if (manifest) {
-      (valid as any).audio = { ...(valid as any).audio, voiceFiles: manifest.lines };
+      valid = { ...valid, audio: { ...valid.audio, voiceFiles: manifest.lines } };
       console.log(`[voice] done — ${manifest.lines.length} lines`);
     }
   } catch (e) {
@@ -302,18 +336,50 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
     throw e;
   }
 }
+}
+
+      // Sound: every cue becomes a library file with a loudness gain. This runs
+      // after the voice stage, so the voice files are in the props. (They used to be
+      // written before, which left narration out of every render.)
+      const resolved = resolveAudio(valid, id);
+      const ar = resolved.report;
+      console.log(
+        `[audio] sfx ${ar.sfxLibrary} library / ${ar.sfxSynth} synth · beds ${ar.ambientLibrary} library / ${ar.ambientSynth} synth · ` +
+          `music ${ar.music.map((m) => (m.file ? m.mood : `${m.mood} (none found)`)).join(", ") || "none"} · cuts ${ar.transitions} · voice ${ar.voiceLines}`,
+      );
+      // Chunked, cached render: muted chunks + one audio pass, joined (see src/generator/render).
+      // The bundled CLI render below stays the default path.
+      let chunkStats: ChunkStats | undefined;
+      if (meta?.chunked) {
+        const r = await renderChunked(resolved.spec, id, {
+          quality: valid.settings?.quality ?? "final",
+          out,
+          log: (line: string) => console.log(line),
+        });
+        chunkStats = r.chunks;
+      }
+
+      // Props go to a FILE — asset-driven specs exceed the Windows ~32KB command-line limit.
+      // (The chunked path passes inputProps over the Node API; the file stays for debugging.)
+      const inputProps = JSON.stringify({ spec: resolved.spec });
+      const propsPath = join(videoDir, "props.json");
+      writeFileSync(propsPath, inputProps);
 
       // Fresh explicit bundle (step 3) so the render never serves stale code.
+      // Per-id: two renders at once (milestone pool, parallel jobs) must not
+      // write the same directory.
+      if (!meta?.chunked) {
+      const bundleDir = join(process.cwd(), "out", `render-bundle-${id}`);
       const bundleCmd = join(process.cwd(), "node_modules", ".bin", "remotion.cmd");
       execFileSync(
         "cmd",
-        ["/c", bundleCmd, "bundle", BUNDLE_SRC, "--out-dir", ENTRY],
+        ["/c", bundleCmd, "bundle", BUNDLE_SRC, "--out-dir", bundleDir],
         { stdio: "inherit", env: { ...process.env, FFMPEG_PATH: FFMPEG } },
       );
 
       const cmdArgs = [
         "render",
-        ENTRY,
+        bundleDir,
         COMP_ID,
         "--props",
         propsPath,
@@ -349,17 +415,29 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
           FFMPEG_PATH: FFMPEG,
         },
       });
+      }
       console.log(`[5/5] Encode + mux finished at +${el()}`);
 
-      const reportPath = join(OUTPUT_DIR, `${id}-report.json`);
+      const master = masterAudio(out);
+      console.log(
+        `[audio] master: ${master.applied ? `${master.before?.lufs?.toFixed(1)} → ${master.after?.lufs?.toFixed(1)} LUFS` : `skipped (${master.reason})`}`,
+      );
+
+      const creditsLines = creditsForPlaces(
+        (valid.scenes ?? []).flatMap((s) =>
+          s.world && PLACES[s.world.place] ? [PLACES[s.world.place]] : [],
+        ),
+      );
+
+      const reportPath = join(videoDir, "report.json");
       writeFileSync(
         reportPath,
         JSON.stringify(
           {
             premise,
             id,
-            output: out,
-            spec: specPath,
+            output: "video.mp4",
+            spec: "spec.json",
             provider: providerUsed,
             model: modelUsed,
             frames: durFrames,
@@ -376,6 +454,11 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
               ]),
             ),
             worldEvents: (valid.worldEvents ?? []).map((e) => e.name),
+            // CC-BY credits: only the models THIS video used (Phase 6 step 1) —
+            // landmarks standing in the world scenes' places.
+            ...(creditsLines.length ? { credits: creditsLines } : {}),
+            ...(chunkStats ? { chunks: chunkStats } : {}),
+            audio: { ...ar, master },
             generatedAt: new Date().toISOString(),
           },
           null,

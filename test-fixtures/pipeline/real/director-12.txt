@@ -1,0 +1,76 @@
+{
+  "scenes": [
+    {
+      "start": "b1",
+      "kit": "interior",
+      "time": "golden",
+      "weather": "none",
+      "subject": "none",
+      "crowd": "none",
+      "camera": "orbit-drift",
+      "accent": "mint",
+      "cast": [
+        { "asset": "blocky_characters_character_a", "count": 1, "action": "idle" }
+      ]
+    },
+    {
+      "start": "b3",
+      "kit": "city-street",
+      "time": "overcast",
+      "weather": "none",
+      "subject": "none",
+      "crowd": "light",
+      "camera": "handheld-urgency",
+      "accent": "lagoon",
+      "cast": [
+        { "asset": "city_kit_commercial_building_a", "count": 1, "action": "idle" },
+        { "asset": "city_kit_commercial_building_d", "count": 2, "action": "idle" },
+        { "asset": "blocky_characters_character_b", "count": 6, "action": "cheer" },
+        { "asset": "blocky_characters_character_c", "count": 5, "action": "kneel" },
+        { "asset": "blocky_characters_character_d", "count": 3, "action": "walk" },
+        { "asset": "car_kit_box", "count": 2, "action": "idle" }
+      ]
+    },
+    {
+      "start": "b6",
+      "kit": "space",
+      "time": "night",
+      "weather": "none",
+      "subject": "earth",
+      "crowd": "none",
+      "camera": "drone-top",
+      "accent": "mint",
+      "cast": []
+    }
+  ],
+  "counter": {
+    "title": "MARCO'S DOLLAR",
+    "unit": "$",
+    "steps": [
+      { "beat": "b1", "value": "8", "sub": "DOUBLES NON-STOP" },
+      { "beat": "b2", "value": "1048576", "sub": "ONE MINUTE LATER" },
+      { "beat": "b3", "value": "134217728", "sub": "THE HOUSE BURSTS" },
+      { "beat": "b4", "value": "8589934592", "sub": "HIP-DEEP IN CASH" },
+      { "beat": "b5", "value": "9999999999", "sub": "BREAD: A TRILLION" },
+      { "beat": "b6", "value": "9999999999", "sub": "OUTWEIGHS EARTH" },
+      { "beat": "b7", "value": "9999999999", "sub": "DWARFS THE SUN" },
+      { "beat": "b8", "value": "0", "sub": "GRAVITY WINS" },
+      { "beat": "b10", "value": "2", "sub": "ONE LAST DOLLAR SPLITS" }
+    ]
+  },
+  "timer": null,
+  "prop": { "style": "cash-bundles", "growth": "multiply", "anchor": "sidewalk-right" },
+  "world": [],
+  "shots": [
+    { "beat": "b1", "subject": "table", "size": "FS", "angle": "eye", "side": "auto", "move": "orbit_right", "place": "center", "energy": "calm", "style": "smooth" },
+    { "beat": "b2", "subject": "scene", "size": "WS", "angle": "high", "side": "auto", "move": "pull_out", "place": "auto", "energy": "normal", "style": "smooth" },
+    { "beat": "b3", "subject": "scene", "size": "EWS", "angle": "low", "side": "auto", "move": "crane_up", "place": "auto", "energy": "bold", "style": "handheld" },
+    { "beat": "b4", "subject": "hero", "size": "FS", "angle": "high", "side": "right34", "move": "truck_right", "place": "right_third", "energy": "bold", "style": "handheld" },
+    { "beat": "b5", "subject": "city_kit_commercial_building_a", "size": "MS", "angle": "eye", "side": "front", "move": "push_in", "place": "auto", "energy": "normal", "style": "handheld" },
+    { "beat": "b6", "subject": "planet", "size": "WS", "angle": "eye", "side": "auto", "move": "orbit_left", "place": "auto", "energy": "normal", "style": "smooth" },
+    { "beat": "b7", "subject": "scene", "size": "EWS", "angle": "low", "side": "auto", "move": "pull_out", "place": "auto", "energy": "bold", "style": "smooth" },
+    { "beat": "b8", "subject": "planet", "size": "MS", "angle": "dutch", "side": "auto", "move": "push_in", "place": "auto", "energy": "bold", "style": "smooth" },
+    { "beat": "b9", "subject": "scene", "size": "FS", "angle": "overhead", "side": "auto", "move": "dolly_zoom", "place": "auto", "energy": "bold", "style": "smooth" },
+    { "beat": "b10", "subject": "stars", "size": "CU", "angle": "eye", "side": "front", "move": "push_in", "place": "center", "energy": "calm", "style": "locked" }
+  ]
+}

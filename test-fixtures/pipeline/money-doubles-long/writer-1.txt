@@ -1,0 +1,92 @@
+```json
+{
+ "title": "The Money That Would Not Stop",
+ "hook": "What if your money doubled every three seconds?",
+ "mood": "upbeat",
+ "characters": [
+  {
+   "name": "Ana",
+   "gender": "female",
+   "age": "adult",
+   "look": "caf\u00e9 owner in a green apron"
+  }
+ ],
+ "beats": [
+  {
+   "say": "It begins with a single coin on a quiet caf\u00e9 table.",
+   "see": "One coin on a caf\u00e9 table, morning light",
+   "pace": "normal",
+   "stress": "coin",
+   "lines": []
+  },
+  {
+   "say": "Three seconds later there are two, and the owner leans in.",
+   "see": "Two coins, the owner leaning in",
+   "pace": "normal",
+   "stress": "two",
+   "lines": [
+    {
+     "who": "Ana",
+     "text": "Did you just drop that?"
+    }
+   ]
+  },
+  {
+   "say": "Within a minute your pockets bulge and coins spill onto the street.",
+   "see": "Notes bulging from pockets, coins on the street",
+   "pace": "quick",
+   "stress": "bulge",
+   "lines": []
+  },
+  {
+   "say": "By the hour you hold more than every bank on this street.",
+   "see": "Bank windows along the street, a queue forming",
+   "pace": "normal",
+   "stress": "banks",
+   "lines": []
+  },
+  {
+   "say": "Street lights flicker as payment systems fail to keep count.",
+   "see": "Street lights flickering, shop screens freezing",
+   "pace": "quick",
+   "stress": "flicker",
+   "lines": []
+  },
+  {
+   "say": "From orbit, the planet's economy tilts toward one ordinary wallet.",
+   "see": "Earth from orbit, city lights glowing",
+   "pace": "linger",
+   "stress": "planet",
+   "lines": []
+  },
+  {
+   "say": "Prices leap everywhere, because endless money stops meaning anything.",
+   "see": "Earth turning, light trails racing across continents",
+   "pace": "normal",
+   "stress": "prices",
+   "lines": []
+  },
+  {
+   "say": "Shops refuse cash, and people trade bread for shoes again.",
+   "see": "Earth at night, scattered lights going out",
+   "pace": "normal",
+   "stress": "trade",
+   "lines": []
+  },
+  {
+   "say": "Every three seconds the number doubles, bigger than the universe.",
+   "see": "Earth small against the stars",
+   "pace": "linger",
+   "stress": "doubles",
+   "lines": []
+  },
+  {
+   "say": "And on that caf\u00e9 table, the first coin is still waiting.",
+   "see": "Earth from far away, a single bright point",
+   "pace": "linger",
+   "stress": "waiting",
+   "lines": []
+  }
+ ]
+}
+```

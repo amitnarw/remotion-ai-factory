@@ -29,7 +29,8 @@ export interface StageSpan {
 
 export interface Job {
   id: string;
-  status: "queued" | "running" | "done" | "failed";
+  /** "cancelled": stopped with DELETE /api/jobs/:id (it stays listed). */
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   progress: number;
   stage?: string;
   etaSec?: number | null;
@@ -47,7 +48,7 @@ export interface Job {
   createdAt: number;
 }
 
-/* ---------- Spec engine: AI writes the plan → you review → approve → render ---------- */
+/* ---------- Spec engine: the AI writes the plan, you review and approve, then it renders ---------- */
 
 /** Start a plan job: the AI writes the shot spec. Nothing renders yet. */
 export async function planSpec(body: {
@@ -83,13 +84,15 @@ export async function getJobSpec(jobId: string): Promise<SpecResponse> {
   return json(await fetch(`${BASE}/spec/${jobId}`));
 }
 
-/** Render an approved plan. This is the only way a spec becomes a video. */
-export async function renderSpec(specId: string, audio?: unknown): Promise<{ jobId: string }> {
+/** Render an approved plan. This is the only way a spec becomes a video.
+ *  `opts.chunked` renders via the chunked, cached renderer (src/generator/render).
+ *  Only the chunks an edit changed are rendered; the rest is reused. */
+export async function renderSpec(specId: string, audio?: unknown, opts?: { chunked?: boolean }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/render-spec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specId, audio }),
+      body: JSON.stringify({ specId, audio, chunked: opts?.chunked }),
     }),
   );
 }
@@ -107,7 +110,16 @@ export async function setDefaultProvider(name: string): Promise<{ ok: boolean }>
 export async function deleteProvider(name: string): Promise<{ ok: boolean }> {
   return json(await fetch(`${BASE}/providers/${encodeURIComponent(name)}`, { method: "DELETE" }));
 }
-export async function getVoices(engine?: string): Promise<{ voices: VoiceInfo[]; available?: boolean; engines?: { id: string; label: string; note: string }[] }> {
+export interface VoicesResponse {
+  voices: VoiceInfo[];
+  available?: boolean;
+  engines?: { id: string; label: string; note: string }[];
+  /** VoxCPM2 only: what each preset voice sounds like. */
+  descriptions?: { id: string; description: string }[];
+  defaultNarrator?: string;
+  defaultCharacter?: string;
+}
+export async function getVoices(engine?: string): Promise<VoicesResponse> {
   const q = engine ? `?engine=${encodeURIComponent(engine)}` : "";
   return json(await fetch(`${BASE}/voices${q}`));
 }
@@ -143,9 +155,21 @@ export async function startTtsInstall(engine: string): Promise<{ jobId: string }
 export async function getTtsInstallJob(id: string): Promise<TtsInstallJob> {
   return json(await fetch(`${BASE}/tts/job/${id}`));
 }
-export async function cancelJob(id: string): Promise<{ cancelled: boolean }> {
+/** Stop a running job (it stays listed as cancelled); a finished job is removed. */
+export async function cancelJob(id: string): Promise<{ cancelled: boolean; deleted?: boolean }> {
   return json(await fetch(`${BASE}/jobs/${id}`, { method: "DELETE" }));
 }
+/** Give a character another voice; the server rebuilds the plan from its saved stages. */
+export async function recastVoice(specId: string, name: string, voice: string): Promise<{ spec: unknown; warnings: string[] }> {
+  return json(
+    await fetch(`${BASE}/plan/${specId}/recast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, voice }),
+    }),
+  );
+}
+
 export async function voiceSample(body: { engine: string; voice?: string; voiceDesc?: string; text?: string }): Promise<Blob> {
   const r = await fetch(`${BASE}/voice-sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(await r.text());
@@ -165,7 +189,8 @@ export interface Video {
   output?: string;
   thumbnail?: string;
   spec?: string;
-  generatedAt?: number;
+  /** Milliseconds, or an ISO date string in newer reports. */
+  generatedAt?: number | string;
   reviewFolder?: string;
 }
 
@@ -174,7 +199,7 @@ async function errorText(r: Response): Promise<string> {
   try {
     const body = (await r.json()) as { error?: string; fix?: string };
     if (body.error) text = body.error;
-    if (body.fix) text += `\n→ Fix: ${body.fix}`;
+    if (body.fix) text += `\nHow to fix it: ${body.fix}`;
   } catch {
     /* non-JSON error body, keep generic */
   }
@@ -304,6 +329,123 @@ export async function generateVideo(
   });
   if (!r.ok) throw new Error(await errorText(r));
   return (await r.json()) as { jobId: string };
+}
+
+/* ---------- Editor (Phase 4): one planned video, versioned edits, Ask AI ---------- */
+
+export type Film = import("../../src/generator/film/edits").Film;
+export type FilmEdit = import("../../src/generator/film/edits").Edit;
+export type FilmRedo = import("../../src/generator/film/edits").Redo;
+export type FilmHead = import("../../src/generator/film/store").FilmHead;
+export type FilmVersion = import("../../src/generator/film/store").FilmVersion;
+export type FieldInfo = import("../../src/generator/film/fields").FieldInfo;
+export type AudioReport = import("../../src/generator/audio-resolve").AudioReport;
+type PlayableSpec = import("../../src/generator/spec.schema").ShotSpec;
+
+/** What each editable thing has, and its choices (from the pipeline's schemas). */
+export interface EditorFields {
+  beat: Record<string, FieldInfo>;
+  scene: Record<string, FieldInfo>;
+  shot: Record<string, FieldInfo>;
+  sound: { moods: string[]; sounds: string[] };
+}
+
+/** The current version, re-prepared: the spec plays in the Player as is. */
+export interface FilmState {
+  head: FilmHead;
+  film: Film;
+  spec: PlayableSpec;
+  warnings: string[];
+  audio: AudioReport;
+  measured: boolean;
+  /** PUT only: how much the approved spec changed (story lines / captions). */
+  changed?: { lines: number; captions: number };
+  /** True while the server re-voices/re-measures edited lines in the background. */
+  measuring?: boolean;
+}
+
+export interface FilmResponse extends FilmState {
+  id: string;
+  fields: EditorFields;
+}
+
+export interface FilmChangeResponse extends FilmState {
+  redo: FilmRedo;
+  summary?: string[];
+}
+
+/** Wording saves through the approved spec (PUT /api/film/:id). */
+export type SaveEditsSpec = (mutate: (spec: import("../../src/generator/spec.schema").ShotSpec) => import("../../src/generator/spec.schema").ShotSpec) => Promise<string | null>;
+export type FilmTarget = { kind: "beat"; beat: string } | { kind: "video" };
+
+/** Ask AI's answer. Nothing is saved until it is sent back through editFilm. */
+export interface FilmProposal {
+  summary: string;
+  edits: FilmEdit[];
+  redo: FilmRedo;
+  changes: string[];
+}
+
+const filmUrl = (id: string, action = "") => `${BASE}/film/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
+
+function postJson(url: string, body?: unknown): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/** The film, its history, the playable spec and the Inspector's field choices. */
+export async function getFilm(id: string): Promise<FilmResponse> {
+  return json(await fetch(filmUrl(id)));
+}
+
+/** Is the background voice measurement still running (a text answer came back on estimates)? */
+export async function getFilmStatus(id: string): Promise<{ id: string; measuring: boolean; startedAt?: number; error?: string }> {
+  return json(await fetch(filmUrl(id, "status")));
+}
+
+/** The editor writes its edited spec here: story wording is adopted into the
+ *  film ("reflow": re-voice + re-time), caption wording is kept on its timing
+ *  window ("keep timing" - the voice is untouched). */
+export async function putFilm(
+  id: string,
+  body: { spec: unknown },
+): Promise<FilmChangeResponse & { changed?: { lines: number; captions: number }; measuring?: boolean }> {
+  return json(await fetch(filmUrl(id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+}
+
+/** Save edits as a new version. Throws the server's message when an edit is not allowed. */
+export async function editFilm(
+  id: string,
+  body: { edits: FilmEdit[]; source?: "user" | "ai"; summary?: string },
+): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "edit"), body));
+}
+
+/** Ask the Editor model for changes to one beat or the whole video. */
+export async function askFilm(id: string, target: FilmTarget, request: string): Promise<FilmProposal> {
+  return json(await postJson(filmUrl(id, "ask"), { target, request }));
+}
+
+export async function undoFilm(id: string): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "undo")));
+}
+
+export async function redoFilm(id: string): Promise<FilmChangeResponse> {
+  return json(await postJson(filmUrl(id, "redo")));
+}
+
+/** Every job the server knows (running, finished and failed), newest last. */
+export interface JobListItem {
+  id: string;
+  status: Job["status"];
+  premise: string;
+  createdAt: number;
+}
+export async function listJobs(): Promise<JobListItem[]> {
+  return json(await fetch(`${BASE}/jobs`));
 }
 
 export async function getJob(id: string): Promise<Job> {

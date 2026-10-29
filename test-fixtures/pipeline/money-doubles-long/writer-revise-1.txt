@@ -1,0 +1,1 @@
+{"edits": [{"beat": "b3", "say": "Within a minute your pockets bulge with coins."}, {"beat": "b8", "say": "Shops refuse cash; people trade bread for shoes."}]}

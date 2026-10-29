@@ -45,8 +45,22 @@ export const SCENE_KITS = [
 
 /** World-state events: the ENVIRONMENT reacts on screen (premise visibility).
  *  water-vanish/return/rise animate the ocean + pier water level; the other
- *  events are honoured where a stage supports them. */
-export const WORLD_EVENTS = ["water-vanish", "water-return", "water-rise", "rain-start", "rain-stop", "lights-out"] as const;
+ *  events are honoured where a stage supports them. gravity-off/on,
+ *  ground-break and snow-start/stop are world-place events only (the
+ *  assembler drops them on kit scenes). Lockstep with spec.schema.ts. */
+export const WORLD_EVENTS = [
+  "water-vanish",
+  "water-return",
+  "water-rise",
+  "rain-start",
+  "rain-stop",
+  "lights-out",
+  "gravity-off",
+  "gravity-on",
+  "ground-break",
+  "snow-start",
+  "snow-stop",
+] as const;
 
 /** Weather overlays (scenes[i].look.weather): particles + lightning that any
  *  stage can mount. Paired with worldEvents rain-start / rain-stop when the
@@ -194,7 +208,7 @@ WORLD + PRODUCTION GUIDE — you are the DIRECTOR. Choose with these exact tools
    - countryside / forest / river / ocean: also accept scene.cast entries
      from the ANIMAL_CAST_IDS list (rigged wildlife with Walk/Gallop/Idle/
      Eating animations) for wildlife/nature premises. Example:
-     { asset: "poly_deer", count: 3, action: "graze", zone: "midground" }.
+     { asset: "poly_deer", count: 3, action: "idle", zone: "midground" }.
    - A story MAY use 2-3 scenes tiling time (a CUT = location/time change,
      videos open at t=0 with the most striking setting). Scenes sharing one
      kit must differ in look.timeOfDay or accent so every shot feels new.
@@ -226,8 +240,9 @@ WORLD + PRODUCTION GUIDE — you are the DIRECTOR. Choose with these exact tools
      center strip and survive every zoom beat) }
    + accent ${STREET_ACCENTS.join(" | ")}, crowdCount 10-30, vehicleCount 4-10.
    The prop count tracks the SAME numbers the HUD shows. statPanel (escalation
-   stories): 5 beats {t, value, zoom, sub, bpm}, value/zoom double; title names
-   the SUBJECT ("YOUR MONEY", "THE MOON"). Timer HUD for "gone for N seconds"
+   stories): 5 beats {t, value, zoom, sub}, value/zoom double; title names
+   the SUBJECT ("YOUR MONEY", "THE MOON"). bpm belongs to the optional pulse
+   device (fear/urgency premises only) — never a default beat field. Timer HUD for "gone for N seconds"
    (timer {label, startT, endT}). Keep every beat >= 1.2s on screen and the
    last beat ending >= 1s before the video ends.
 

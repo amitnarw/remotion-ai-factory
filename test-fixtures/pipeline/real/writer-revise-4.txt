@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b1","say":"Your dollar doubles."},{"beat":"b2","say":"Pockets burst."},{"beat":"b3","say":"Sixty seconds, millionaire."},{"beat":"b4","say":"Money's worthless."},{"beat":"b5","say":"Cities buried."},{"beat":"b6","say":"Crushing weight."}]}

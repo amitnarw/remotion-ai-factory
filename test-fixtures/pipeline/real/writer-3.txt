@@ -1,0 +1,60 @@
+{
+  "title": "Money Doubles Every 3 Seconds",
+  "hook": "What if money doubled every 3 seconds?",
+  "mood": "upbeat",
+  "characters": [
+    { "name": "Victor", "gender": "male", "age": "adult", "look": "banker in a grey suit, loose tie" },
+    { "name": "Maya", "gender": "female", "age": "adult", "look": "street baker, flour-dusted apron" }
+  ],
+  "beats": [
+    {
+      "say": "Your one dollar doubles.",
+      "lines": [],
+      "see": "Open palms: a single bill splits into two, then four.",
+      "pace": "quick",
+      "stress": "doubles"
+    },
+    {
+      "say": "One minute: you're a millionaire.",
+      "lines": [],
+      "see": "A wristwatch ticks sixty; bills erupt from your jacket pockets.",
+      "pace": "quick",
+      "stress": "millionaire"
+    },
+    {
+      "say": "Everyone's pockets explode too.",
+      "lines": [],
+      "see": "A whole street waves overflowing cash; bills rain from windows.",
+      "pace": "quick",
+      "stress": "explode"
+    },
+    {
+      "say": "Bank vaults burst worldwide.",
+      "lines": [{ "who": "Victor", "text": "We can't count fast enough!" }],
+      "see": "Vault doors blast open; cash avalanches down marble bank steps.",
+      "pace": "quick",
+      "stress": "burst"
+    },
+    {
+      "say": "So bread costs a billion.",
+      "lines": [{ "who": "Maya", "text": "Bread's a billion, sorry!" }],
+      "see": "Maya's stall: endless zeros swallow her chalkboard price tag.",
+      "pace": "normal",
+      "stress": "billion"
+    },
+    {
+      "say": "One dollar outweighs Earth's banks.",
+      "lines": [],
+      "see": "Low-poly Earth from space, wrapped in glowing green bands of cash.",
+      "pace": "linger",
+      "stress": "outweighs"
+    },
+    {
+      "say": "Money's dead; bread is gold.",
+      "lines": [],
+      "see": "Dollars carpet the street; people trade warm loaves for shoes.",
+      "pace": "linger",
+      "stress": "gold"
+    }
+  ]
+}

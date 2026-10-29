@@ -1,0 +1,17 @@
+<think>Street for the human scale, then orbit for the planet scale.</think>
+{
+  "scenes": [
+    {"start": "b1", "kit": "street-block", "time": "golden", "weather": "none", "subject": "none", "crowd": "busy", "camera": "walk-through", "accent": "mint", "cast": []},
+    {"start": "B5", "kit": "space", "time": "night", "weather": "none", "subject": "earth", "crowd": "none", "camera": "steady-push", "accent": "classic", "cast": []}
+  ],
+  "counter": {"title": "Your money", "unit": "x", "steps": [
+    {"beat": "b1", "value": "1", "sub": "one coin"},
+    {"beat": "b2", "value": "2", "sub": "already double"},
+    {"beat": "b3", "value": "1,048,576", "sub": "one minute in"},
+    {"beat": "b5", "value": "10^30", "sub": "planet scale"},
+    {"beat": "b7", "value": "infinity", "sub": "it never stops"}
+  ]},
+  "timer": null,
+  "prop": {"style": "coin-stacks", "growth": "multiply", "anchor": "sidewalk-left"},
+  "world": [{"beat": "b4", "event": "lights-out"}]
+}

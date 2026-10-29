@@ -1,0 +1,92 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "hand-written test fixture"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "root",
+   "scale": [
+    100,
+    100,
+    100
+   ],
+   "rotation": [
+    0,
+    0.7071067811865476,
+    0,
+    0.7071067811865476
+   ],
+   "children": [
+    1
+   ]
+  },
+  {
+   "name": "door",
+   "translation": [
+    0,
+    0.5,
+    0
+   ],
+   "mesh": 0
+  },
+  {
+   "name": "not-in-scene",
+   "translation": [
+    1000,
+    1000,
+    1000
+   ],
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0
+     },
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "componentType": 5126,
+   "type": "VEC3",
+   "count": 36,
+   "min": [
+    -0.5,
+    0,
+    -0.05
+   ],
+   "max": [
+    0.5,
+    2.1,
+    0.05
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "wood"
+  }
+ ],
+ "animations": [
+  {
+   "name": "Open",
+   "channels": [],
+   "samplers": []
+  }
+ ]
+}

@@ -1,0 +1,88 @@
+{
+  "title": "The Money That Ate Earth",
+  "hook": "What if money doubled every 3 seconds?",
+  "mood": "epic",
+  "characters": [
+    { "name": "Mara", "gender": "female", "age": "adult", "look": "bank teller in a sharp gray suit" },
+    { "name": "Tomás", "gender": "male", "age": "adult", "look": "barista in a green apron, flour-dusted" },
+    { "name": "Lila", "gender": "female", "age": "child", "look": "kid with pigtails clutching a paper plane" }
+  ],
+  "beats": [
+    {
+      "say": "The dollar in your pocket splits in two.",
+      "lines": [],
+      "see": "a one-dollar bill on a cafe table splitting into two identical bills",
+      "pace": "quick",
+      "stress": "two"
+    },
+    {
+      "say": "One minute later, your wallet holds a million.",
+      "lines": [],
+      "see": "a man on a sidewalk pulling an overstuffed wallet, bills flapping out",
+      "pace": "quick",
+      "stress": "million"
+    },
+    {
+      "say": "Every register and wallet on Earth doubles too.",
+      "lines": [],
+      "see": "a city street where ATMs, registers, and wallets all spill fresh bills",
+      "pace": "quick",
+      "stress": "Earth"
+    },
+    {
+      "say": "Accounts blast past a quadrillion and bank systems freeze.",
+      "lines": [
+        { "who": "Mara", "text": "Lock everything! The numbers won't stop growing!" }
+      ],
+      "see": "bank doors slamming while a giant ticker spins past a quadrillion",
+      "pace": "normal",
+      "stress": "quadrillion"
+    },
+    {
+      "say": "A cup of coffee now costs a billion dollars.",
+      "lines": [
+        { "who": "Tomás", "text": "We trade in sandwiches and batteries now." }
+      ],
+      "see": "a cafe chalkboard with prices in billions beside a wheelbarrow of cash",
+      "pace": "normal",
+      "stress": "billion"
+    },
+    {
+      "say": "Cash becomes cheaper than firewood on street corners.",
+      "lines": [
+        { "who": "Lila", "text": "My paper plane cost a trillion dollars!" }
+      ],
+      "see": "people burning bill stacks in a barrel while kids fold cash planes",
+      "pace": "normal",
+      "stress": "cheaper"
+    },
+    {
+      "say": "Mountains of bills rise taller than the skyscrapers.",
+      "lines": [],
+      "see": "a low-poly city dwarfed by green mountains of banknotes, cranes pouring more",
+      "pace": "linger",
+      "stress": "skyscrapers"
+    },
+    {
+      "say": "The spreading paper soon outweighs the planet itself.",
+      "lines": [],
+      "see": "Earth from space wrapped in a drifting shell of glowing banknotes",
+      "pace": "normal",
+      "stress": "planet"
+    },
+    {
+      "say": "In nine minutes, the cash outweighs the whole universe.",
+      "lines": [],
+      "see": "galaxies sinking beneath endless oceans of green paper, stars flickering out",
+      "pace": "quick",
+      "stress": "universe"
+    },
+    {
+      "say": "The biggest fortune ever becomes one worthless black hole.",
+      "lines": [],
+      "see": "a green blizzard spiraling into a black void where Earth was",
+      "pace": "linger",
+      "stress": "worthless"
+    }
+  ]
+}

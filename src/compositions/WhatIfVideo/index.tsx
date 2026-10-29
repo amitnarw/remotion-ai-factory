@@ -15,11 +15,12 @@ import * as React from "react";
 import { Hook } from "../hud/Hook";
 import { TimerHUD } from "../hud/TimerHUD";
 import { Captions } from "../hud/Captions";
-import { StatHud, ZoomVignette } from "../hud/StatHud";
+import { StatHud, ZoomVignette, hasPulseRow } from "../hud/StatHud";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
-import { resolveCaptionStyle } from "../../generator/caption-style";
+import { resolveCaptionStyle, resolveHudStyle } from "../../generator/caption-style";
+import { hudStack, textHudMeetsHook } from "../../generator/layout";
 import { AssetStage } from "../AssetStage";
 import { StreetStage } from "../StreetStage";
 import { SpaceStage } from "../SpaceStage";
@@ -30,7 +31,13 @@ import { RiverStage } from "../RiverStage";
 import { InteriorStage } from "../InteriorStage";
 import { ThreeCanvas } from "@remotion/three";
 import { CityScene } from "../scenes/CityScene";
+import { TransitionOverlay, whipBlur } from "../TransitionOverlay";
+import { CinematicLook } from "../look/CinematicLook";
+import { lookFor } from "../../generator/look-choice";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
+import { WorldStage } from "./WorldStage";
+import { FlightView, flightScenes } from "./FlightView";
+import { TIMING, veilAt } from "../../world/flight";
 
 type SceneKey = "city" | "first-person";
 
@@ -63,70 +70,6 @@ interface WhatIfVideoProps {
   previewFrame?: number;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Cinematic texture overlays (pure HTML/CSS, zero dependencies)      */
-/* ------------------------------------------------------------------ */
-
-/** Film grain: animated SVG noise (feTurbulence) overlaid at low opacity,
- *  with a very soft color grade so blacks look crushed and highlights warm. */
-function FilmGrain() {
-  // The noise pattern is re-seeded from the frame number, so every frame gets
-  // a different grain that is still identical on every re-render. (The old
-  // CSS spin animation ran on wall-clock time and was not frame-accurate.)
-  const frame = useCurrentFrame();
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 25,
-        pointerEvents: "none",
-        mixBlendMode: "overlay",
-        opacity: 0.12,
-        filter: `contrast(1.08) saturate(1.04)`,
-      }}
-    >
-      <svg width="100%" height="100%" style={{ display: "block" }}>
-        <defs>
-          <filter id="grain" x="0" y="0" width="100%" height="100%">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.9"
-              numOctaves="3"
-              stitchTiles="stitch"
-              seed={frame % 97}
-            />
-            <feComponentTransfer>
-              <feFuncR type="linear" slope="0.6" intercept="0.7" />
-              <feFuncG type="linear" slope="0.6" intercept="0.7" />
-              <feFuncB type="linear" slope="0.6" intercept="0.7" />
-            </feComponentTransfer>
-          </filter>
-        </defs>
-        <rect width="100%" height="100%" filter="url(#grain)" />
-      </svg>
-    </div>
-  );
-}
-
-/** Vignette: darkens corners and top/bottom edges so the street stays
- *  centered and the frame reads like a lens-captured shot. */
-function Vignette() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 26,
-        pointerEvents: "none",
-        background: `radial-gradient(circle at 50% 55%, transparent 30%, rgba(0,0,0,0.35) 75%, rgba(0,0,0,0.55) 100%)`,
-        mixBlendMode: "multiply",
-        opacity: 0.55,
-      }}
-    />
-  );
-}
-
 export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   spec,
   previewFrame,
@@ -142,6 +85,28 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const SceneComp = sceneComponents[scene.scene as SceneKey];
   const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
   const captionLook = resolveCaptionStyle(spec.settings?.captions);
+  // The HUD follows the caption look: text over the picture on the serif
+  // looks (the reference default), white cards on the others. When a video
+  // has a counter and a timer, hudStack says where each one goes.
+  const hudLook = resolveHudStyle(spec.settings?.captions);
+  const hudSlots = hudStack(hudLook.kind, { counter: !!spec.statPanel, pulse: hasPulseRow(spec.statPanel), timer: !!spec.timer });
+  const hookFrames = { from: secToFrame(spec.hook.t, fps), to: secToFrame(spec.hook.t + spec.hook.duration, fps) };
+  // With the text HUD the hook sits high; the HUD waits for it only when its
+  // column reaches that high (a counter stacked on a timer).
+  const hudWaitsForHook =
+    hudLook.kind === "text" && textHudMeetsHook(width, height, hudLook.caption, hudSlots.column) ? hookFrames : undefined;
+  // A flight renders instead of the ground stage while its window runs (Phase 6).
+  const flightWindow = (spec.flights ?? []).find((f) => timeSec >= f.from && timeSec < f.to);
+  // Its opaque canvas covers the whole frame, so the stage canvas under it
+  // draws nothing meanwhile: a world stage drawn and graded there was paid
+  // for on every flight frame and never seen.
+  const flightCovers = !!flightWindow && flightScenes(spec, flightWindow) != null;
+  // The flight's cloud veil turns the frame white for a moment at each scale
+  // switch (the same path time FlightView's Sequence gives WorldFlight); the
+  // captions and the text HUD get a dark glow for exactly that long.
+  const veil = flightWindow
+    ? veilAt(((displayFrame - Math.round(flightWindow.from * fps)) / fps) * (TIMING.end / (flightWindow.to - flightWindow.from)))
+    : 0;
 
   return (
     <div
@@ -157,12 +122,17 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       <ThreeCanvas
         width={width}
         height={height}
-        style={{ width, height }}
+        // A whip pan blurs the picture at its fastest moment.
+        style={{ width, height, filter: whipBlur(spec.transitions, timeSec) > 0.3 ? `blur(${(whipBlur(spec.transitions, timeSec) * width) / 1080}px)` : undefined }}
         // Shadow maps: the stages already mark lights and meshes castShadow,
         // but without this flag every one of those is ignored.
         shadows
       >
-        {activeScene.kit === "street-block" ? (
+        {flightCovers ? null : activeScene.kit === "world" ? (
+          // The one-world place scene (Phase 6 step 1): a real place with its
+          // own sun, season and city style
+          <WorldStage scene={activeScene} spec={spec} fps={fps} />
+        ) : activeScene.kit === "street-block" ? (
           // The dense populated street world (time-of-day looks + StatHud
           // escalation + traffic + crowd + human camera operator)
           <StreetStage spec={spec} scene={activeScene} />
@@ -200,22 +170,44 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
             <ambientLight intensity={0.5} />
           </>
         )}
+        {/* The grade (Phase 3): tone mapping, bloom, colour, grain and vignette,
+            chosen per scene from its time of day and the story's mood. Grain is
+            kept light: per-frame grain makes the H.264 file far larger. */}
+        {!flightCovers && (
+          <CinematicLook
+            preset={lookFor(activeScene, spec.story?.mood)}
+            quality={spec.settings?.quality === "draft" ? "draft" : "final"}
+            grain={0.3}
+          />
+        )}
       </ThreeCanvas>
+
+      {/* Scene-to-scene dips and flashes */}
+      <TransitionOverlay transitions={spec.transitions} />
+
+      {/* The flight between two world places replaces the picture while its window runs */}
+      {flightWindow && <FlightView spec={spec} window={flightWindow} />}
 
       {/* Stat-panel escalation HUD + zoom vignette */}
       <ZoomVignette panel={spec.statPanel} fps={fps} />
-      <StatHud panel={spec.statPanel} fps={fps} />
-      {/* Cinematic texture: subtle film grain + edge vignette (always on). */}
-      <FilmGrain />
-      <Vignette />
+      <StatHud
+        panel={spec.statPanel}
+        fps={fps}
+        hud={hudLook}
+        glow={veil}
+        offsetY={hudSlots.counterOffsetY}
+        column={hudSlots.column}
+        hook={hudWaitsForHook}
+      />
 
       {/* Hook card */}
       <Hook
         text={spec.hook.text}
         style={captionLook}
         keywordHighlight={spec.hook.keywordHighlight}
-        startFrame={secToFrame(spec.hook.t, fps)}
-        endFrame={secToFrame(spec.hook.t + spec.hook.duration, fps)}
+        startFrame={hookFrames.from}
+        endFrame={hookFrames.to}
+        hud={hudLook.kind}
       />
 
       {/* Timer HUD */}
@@ -224,11 +216,18 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
           label={spec.timer.label}
           startFrame={secToFrame(spec.timer.startT, fps)}
           endFrame={secToFrame(spec.timer.endT, fps)}
+          fps={fps}
+          hud={hudLook}
+          glow={veil}
+          // Cards: below the counter card when a video has both; text: the column's base.
+          offsetY={hudSlots.timerOffsetY}
+          column={hudSlots.column}
+          hook={hudWaitsForHook}
         />
       )}
 
       {/* Captions */}
-      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} />
+      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} />
 
       {/* Audio cues */}
       <CompositionAudio spec={spec} fps={fps} />

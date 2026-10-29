@@ -1,0 +1,30 @@
+{
+ "count": 2,
+ "assets": [
+  {
+   "id": "blocky_walker",
+   "file": "assets/world/test/characters/walker.glb",
+   "pack": "blocky-characters",
+   "category": "characters",
+   "tags": [
+    "character",
+    "person"
+   ],
+   "animations": [
+    "walk"
+   ],
+   "license": "CC0 (kenney.nl)"
+  },
+  {
+   "id": "door_kit_door",
+   "file": "assets/world/test/door-kit/door.gltf",
+   "pack": "door-kit",
+   "category": "city",
+   "tags": [
+    "door"
+   ],
+   "animations": [],
+   "license": "CC0 (kenney.nl)"
+  }
+ ]
+}

@@ -1183,6 +1183,25 @@ function spaceCosmicWind(seed: number): Float32Array {
   return out.data;
 }
 
+/** engine_hum — a street-level parked engine idling (diesel box body). 10s bed. */
+function engineHum(seed: number): Float32Array {
+  const rng = new Rng(seed);
+  const out = new Buf(10.0);
+  const engine = new Osc();
+  const filter = new Svf();
+  const jitter = new Rng(seed + 1);
+  out.layer(0, 10.0, (_x, t) => {
+    // Idle with a slow putter and tiny speed wobble (jitter keeps the phase
+    // drift seeded, so every render is identical).
+    const f0 = 58 + 2.5 * Math.sin(t * 0.9) + 0.4 * (jitter.next() - 0.5);
+    const putter = 1 + 0.14 * Math.max(0, Math.sin(t * 2 * Math.PI * 1.1 + 0.5));
+    const g = 0.32 + 0.08 * Math.sin(t * 0.6) + 0.02 * (rng.next() - 0.5);
+    return filter.filter(engine.buzz(f0, 6), 210 + 60 * Math.sin(t * 0.4), 1.6).lp * g * putter;
+  });
+  out.scale((t) => smoothstep(t, 0.6) * smoothstep(10.0 - t, 0.6));
+  return out.data;
+}
+
 /** space_ship_engine — ship engine hum. 30s bed. */
 function spaceShipEngine(seed: number): Float32Array {
   const out = new Buf(30.0);
@@ -1408,6 +1427,7 @@ const SEEDS: Record<string, number> = {
   city_construction: 1304,
   city_metro: 1305,
   city_horn: 1306,
+  engine_hum: 1307,
   // Interior sounds
   interior_room_tone: 1401,
   interior_footsteps: 1402,
@@ -1586,6 +1606,16 @@ const ROLES: Record<string, RoleDef> = {
   },
 
   // ============ CITY SOUNDS ============
+  engine_hum: {
+    build: engineHum,
+    dur: 10,
+    peak: -8,
+    label: "Idle engine",
+    description: "A parked engine idling with a slow putter; street or vehicle bed.",
+    family: "ambient",
+    tags: ["ambient", "engine", "idle", "vehicle", "rumble", "bed", "street"],
+    checks: { low: 0.3, zcrMax: 2.5 },
+  },
   city_traffic_dense: {
     build: cityTrafficDense,
     dur: 30,

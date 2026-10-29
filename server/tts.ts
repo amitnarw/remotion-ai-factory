@@ -86,9 +86,9 @@ function setProgress(job: TtsInstallJob, stage: string, progress: number, messag
   job.lastActivityAt = Date.now();
 }
 
-function runCommand(cmd: string, args: string[], onLine: (line: string) => void): Promise<number> {
+function runCommand(cmd: string, args: string[], onLine: (line: string) => void, env?: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: env ?? process.env });
     let buf = "";
     const flush = (chunk: string) => {
       buf += chunk;
@@ -165,10 +165,27 @@ export function startInstall(engine: TtsEngineId): string {
       });
       if (code3 !== 0) throw new Error(`weight download failed — see log`);
 
-      // 4. verify
-      setProgress(job, "verify", 97, "Verifying install…");
-      const code4 = await runCommand(py, ["-c", `import ${eng.pip}; print("OK")`], (l) => { job.log.push(l); job.lastActivityAt = Date.now(); });
-      if (code4 !== 0) throw new Error("verification import failed");
+      // 4. verify by speaking one short line, with downloads allowed. The engine
+      // may fetch more models on its first real synthesis (Kitten 2 also needs
+      // ResembleAI/chatterbox-turbo); an import alone would pass while every
+      // later synthesis, which runs offline, fails.
+      setProgress(job, "verify", 97, "Verifying install by speaking one line…");
+      const verifyDir = join(TTS_ROOT, engine, "verify");
+      fs.mkdirSync(verifyDir, { recursive: true });
+      const verifyJob = join(verifyDir, "job.json");
+      fs.writeFileSync(verifyJob, JSON.stringify({ engine, outDir: verifyDir, lines: [{ id: "verify", text: "The factory can speak.", voice: engine === "kitten2" ? "Bruno" : undefined }] }));
+      let spoke = false;
+      const code4 = await runCommand(
+        py,
+        [join(ROOT, "scripts", "story-tts.py"), verifyJob, "--engine", engine],
+        (l) => {
+          job.log.push(l);
+          job.lastActivityAt = Date.now();
+          if (l.startsWith("@@")) spoke = true;
+        },
+        { ...process.env, HF_HUB_OFFLINE: "0", PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+      );
+      if (code4 !== 0 || !spoke) throw new Error("verification failed: the engine could not speak a test line — see log");
 
       setProgress(job, "done", 100, `${ENGINES[engine].label} is ready`);
       job.status = "done";

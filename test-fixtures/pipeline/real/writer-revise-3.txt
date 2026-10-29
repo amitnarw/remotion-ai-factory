@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b2","say":"Millionaire."},{"beat":"b3","say":"Everyone, too."},{"beat":"b4","say":"Vaults burst."},{"beat":"b5","say":"Bread: a billion."},{"beat":"b6","say":"One dollar outweighs banks."},{"beat":"b7","say":"Bread is gold."}]}

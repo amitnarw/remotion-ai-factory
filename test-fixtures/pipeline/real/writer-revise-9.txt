@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b1","say":"Pines uproot."},{"beat":"b2","say":"Groves stride downhill."},{"beat":"b3","say":"Ranger Mara sounds alarms."},{"beat":"b5","say":"Cities evacuate overnight."},{"beat":"b6","say":"They ignore cities."},{"beat":"b7","say":"They kneel here, healing."}]}

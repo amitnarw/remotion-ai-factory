@@ -1,0 +1,18 @@
+Here is the story you asked for.
+```json
+{
+  "title": "Money That Won't Stop",
+  "hook": "What if your money doubled every three seconds?",
+  "mood": "upbeat",
+  "characters": [{"name": "Ana", "gender": "female", "age": "adult", "look": "café owner in a green apron"}],
+  "beats": [
+    {"say": "It starts with one coin on a café table.", "lines": [], "see": "A single coin on a café table, morning light", "pace": "quick", "stress": "coin"},
+    {"say": "Three seconds later there are two of them.", "lines": [{"who": "Ana", "text": "Did you just drop that?"}], "see": "Two coins, the owner leans in", "pace": "normal", "stress": "two"},
+    {"say": "A minute in, your pockets are bursting with cash.", "lines": [], "see": "Notes spilling from a jacket on the busy street", "pace": "normal", "stress": "bursting"},
+    {"say": "The street lights flicker as banks overload.", "lines": [], "see": "Street lights dim, shop signs go dark", "pace": "quick", "stress": "banks"},
+    {"say": "By noon you own more money than the planet.", "lines": [], "see": "Earth from orbit, glowing city lights", "pace": "linger", "stress": "planet"},
+    {"say": "Every price on Earth tries to keep up.", "lines": [], "see": "Price signs spinning across the globe", "pace": "normal", "stress": "price"},
+    {"say": "And still, every three seconds, it doubles again.", "lines": [], "see": "Earth slowly turning in silence", "pace": "linger", "stress": "doubles"},
+  ],
+}
+```

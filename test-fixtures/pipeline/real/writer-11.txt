@@ -1,0 +1,90 @@
+{
+  "title": "The Walking Forest",
+  "hook": "What if the forest could walk?",
+  "mood": "epic",
+  "characters": [
+    { "name": "Ruth", "gender": "female", "age": "old", "look": "weathered farmer in a patched coat, gray braid" },
+    { "name": "Mara", "gender": "female", "age": "adult", "look": "field biologist in khaki beside a research van" },
+    { "name": "Tomas", "gender": "male", "age": "child", "look": "boy in a yellow raincoat at a high-rise window" }
+  ],
+  "beats": [
+    {
+      "say": "At midnight, the pines pull their roots free.",
+      "lines": [],
+      "see": "Moonlit pine forest; roots tear from dark soil, dirt raining down.",
+      "pace": "quick",
+      "stress": "roots"
+    },
+    {
+      "say": "Ten thousand trees rise and march as one.",
+      "lines": [],
+      "see": "A hillside of trees lifting together, walking over open farmland.",
+      "pace": "quick",
+      "stress": "march"
+    },
+    {
+      "say": "The whole forest crosses the interstate in nine steps.",
+      "lines": [],
+      "see": "Trees straddling a highway; tiny cars stopped beneath their trunks.",
+      "pace": "normal",
+      "stress": "nine"
+    },
+    {
+      "say": "By dawn, it surrounds Ruth's farmhouse in the fields.",
+      "lines": [
+        { "who": "Ruth", "text": "That wood stood a mile east yesterday." }
+      ],
+      "see": "Ruth frozen on her porch; a wall of trees beyond the barn.",
+      "pace": "normal",
+      "stress": "surrounds"
+    },
+    {
+      "say": "Then it steps over her roof, gentle as rain.",
+      "lines": [],
+      "see": "Giant roots arching above the farmhouse; leaves drifting onto Ruth.",
+      "pace": "linger",
+      "stress": "over"
+    },
+    {
+      "say": "Biologist Mara tracks a forest moving in a straight line.",
+      "lines": [
+        { "who": "Mara", "text": "It isn't wandering. It has a destination." }
+      ],
+      "see": "Research van; laptop map shows a straight green arrow north.",
+      "pace": "quick",
+      "stress": "straight"
+    },
+    {
+      "say": "It keeps moving toward Chicago, nine million people watching.",
+      "lines": [],
+      "see": "Chicago skyline at dusk; a green tide approaching the towers.",
+      "pace": "quick",
+      "stress": "Chicago"
+    },
+    {
+      "say": "Downtown empties as roots crack the boulevards apart.",
+      "lines": [
+        { "who": "Tomas", "text": "Mom, the trees are taller than the buildings." }
+      ],
+      "see": "Empty downtown street; trees wading between skyscrapers, glass reflecting green.",
+      "pace": "quick",
+      "stress": "empties"
+    },
+    {
+      "say": "It walks past the city toward a gray wasteland.",
+      "lines": [],
+      "see": "Aerial view: the forest flows past the skyline toward gray flats.",
+      "pace": "normal",
+      "stress": "wasteland"
+    },
+    {
+      "say": "It plants itself, and the wasteland turns green overnight.",
+      "lines": [
+        { "who": "Ruth", "text": "It wasn't chasing us. It was coming home." }
+      ],
+      "see": "Strip-mine flats blooming green; birds crossing a clearing river at sunrise.",
+      "pace": "linger",
+      "stress": "green"
+    }
+  ]
+}

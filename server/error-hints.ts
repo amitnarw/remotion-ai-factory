@@ -35,7 +35,7 @@ export function actionable(raw: string, provider?: string): ActionableError {
   if (/401|unauthorized|invalid\s?api\s?key|missing bearer|invalid x-api-key|api key not valid|invalid api key|requires an ollama account|sign in to ollama|not signed in/i.test(text)) {
     return {
       message: text,
-      fix: `API key is missing or wrong — create a fresh key at ${url}, Save it in the Providers tab, then click Test`,
+      fix: `API key is missing or wrong — create a fresh key at ${url}, Save it in Settings → AI models, then click Test`,
     };
   }
   if (/429|insufficient_quota|quota|billing|credit|rate\s?limit/i.test(text)) {

@@ -1,10 +1,10 @@
 /**
  * src/generator/tts-python.ts — the one place that decides which Python runs a
  * TTS engine. Used by the generator (tts.ts) and the server (voice audition,
- * voice list, Setup tab) so they can never disagree.
+ * voice list, Settings → Voice engines) so they can never disagree.
  *
  * Order: the env override (TTS_KITTEN_PYTHON / TTS_VOXCPM_PYTHON), then the
- * project venv at .tts/<engine>/.venv (created by the Setup tab). Nothing else:
+ * project venv at .tts/<engine>/.venv (created by Settings → Voice engines). Nothing else:
  * no machine-specific paths and no system Python, so "installed" always means
  * the engine's own environment is there.
  */

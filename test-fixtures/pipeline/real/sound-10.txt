@@ -1,0 +1,20 @@
+{
+  "music": [
+    { "start": "b1", "mood": "ambient" },
+    { "start": "b2", "mood": "epic" }
+  ],
+  "beds": [
+    { "start": "b1", "end": "b5", "sound": "forest_wind_leaves", "level": 0.4 },
+    { "start": "b1", "end": "b6", "sound": "forest_birds", "level": 0.3 },
+    { "start": "b2", "end": "b2", "sound": "engine_hum", "level": 0.15 },
+    { "start": "b5", "end": "b6", "sound": "countryside_wind", "level": 0.35 },
+    { "start": "b6", "end": null, "sound": "ocean_waves", "level": 0.5 },
+    { "start": "b6", "end": null, "sound": "ocean_gulls", "level": 0.2 }
+  ],
+  "hits": [
+    { "beat": "b1", "at": "start", "sound": "rumble_deep" },
+    { "beat": "b2", "at": "start", "sound": "impact_wood" },
+    { "beat": "b6", "at": "start", "sound": "ocean_splash" },
+    { "beat": "b7", "at": "start", "sound": "rise_short" }
+  ]
+}

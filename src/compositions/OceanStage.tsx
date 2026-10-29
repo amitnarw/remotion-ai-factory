@@ -16,13 +16,57 @@ import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import { statValueAt } from "../generator/statPanel";
+import { statScaleAt } from "../generator/statPanel";
 import { GlbSuspense, useGltfPaint } from "./glb";
 import { WaterSurface, seaSwellAt, GradientSkyDome, WATER_TOD } from "./water";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
+import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { clearestFacing, type Blocker } from "./ForestStage";
+import type { Subject } from "../generator/camera/solve";
+import type { Occluder } from "../generator/camera/occlusion";
+import { turnedBox } from "../generator/camera/shapes";
 
 const CANOE_FILE = "assets/nature/nature-kit/Models/GLTF format/canoe.glb";
+
+/* ------------------------------------------------------------------ */
+/*  Layout shared by the meshes and the camera anchors (so the shot      */
+/*  camera frames exactly what is drawn)                                 */
+/* ------------------------------------------------------------------ */
+
+/** Top of the wet sand slope at z (the slope runs z −4..10). */
+const slopeTop = (z: number) => 0.36 * (z - 6);
+/** Top of the dry sand apron (z 8..16). */
+const APRON_TOP = 1.45;
+/** Parasols on the wet band: [x, z, canopy colour]. */
+const PARASOLS: Array<[number, number, string]> = [
+  [-1.2, 8.0, "#e8654f"], [1.8, 8.8, "#f0d9a0"], [1.35, 7.2, "#4a9ec0"],
+];
+/** Towels just above the shoreline: [x, z, colour]. */
+const TOWELS: Array<[number, number, string]> = [[-1.4, 7.4, "#e8654f"], [1.6, 9.0, "#3d7ee8"], [-2.0, 6.9, "#f0d9a0"]];
+/** Jetty: centre line x, deck height, planks from z 10 out to z −9 (lamp). */
+const JETTY_X = 7;
+const JETTY_DECK = 1.6;
+/** Canoe hull after scaling (canoe.glb is 1.15 long, 0.3 wide, 0.18 tall; scaled to 4.2 m). */
+const CANOE_LEN = 4.2;
+const CANOE_H = 0.67;
+/** Gentle base swell of the wave model (sum of the layer amplitudes, water.tsx). */
+const SWELL = 0.46;
+
+/** Canoes: seeded positions INSIDE the narrow portrait view cone. */
+export function canoeLayout(specId: string): Array<{ x: number; z: number; rot: number }> {
+  const out: Array<{ x: number; z: number; rot: number }> = [];
+  for (let i = 0; i < 4; i++) {
+    const a1 = random(`${specId}-canoe-${i}-a`);
+    const a2 = random(`${specId}-canoe-${i}-b`);
+    out.push({
+      x: (a1 < 0.5 ? -1 : 1) * (1.5 + a2 * 4.5),
+      z: -16 - a1 * 42,
+      rot: a2 * 1.2 - 0.6,
+    });
+  }
+  return out;
+}
 
 /** Sky + light per time of day for the open sea. Fog reaches far (the
  *  horizon is hundreds of metres out) and blends water into sky. */
@@ -35,7 +79,7 @@ const OCEAN_TOD: Record<
   golden:    { sky: ["#f7a95f", "#f5dec6"], hemi: 0.8,  amb: 0.5,  dirI: 2.0,  dirColor: "#ffce8f", dirPos: [-60, 16, -110] },
   overcast:  { sky: ["#9fb4c8", "#cfd6dd"], hemi: 1.05, amb: 0.55, dirI: 0.6,  dirColor: "#e8eefc", dirPos: [20, 60, -40] },
   dawn:      { sky: ["#ffc08a", "#6a7099"], hemi: 0.65, amb: 0.5,  dirI: 0.95, dirColor: "#ffcfa3", dirPos: [-50, 14, -110] },
-  night:     { sky: ["#16223a", "#27364f"], hemi: 0.45, amb: 0.35, dirI: 0.55, dirColor: "#b9d0ff", dirPos: [-45, 55, -70] },
+  night:     { sky: ["#16223a", "#27364f"], hemi: 0.62, amb: 0.5,  dirI: 0.85, dirColor: "#b9d0ff", dirPos: [-45, 55, -70] },
 };
 
 /** Stat-beat value → how far the water climbs. Calibrated against the world
@@ -57,7 +101,7 @@ function shorelineZ(level: number): number {
  *  bring it back (return). Returns { level, visible, amp }. */
 function waterStateAt(spec: ShotSpec, t: number): { level: number; visible: boolean; amp: number } {
   const panel = spec.statPanel ?? null;
-  const value = panel ? statValueAt(panel, t) : 1;
+  const value = panel ? statScaleAt(panel, t) : 1;
   let base = panel ? waterLevelFromBeats(value) : 0;
   // bigger water = bigger waves (gentle base swell ±0.46 m)
   const amp = 1 + Math.min(Math.max(base, 0), 0.9) * 0.3;
@@ -106,25 +150,23 @@ function Beach({ tod }: { tod: string }) {
       </mesh>
       {/* Parasols ON the wet band inside the portrait view cone — low enough
           that the flood takes them (poles swim at 4x, canopies at 8x) */}
-      {[
-        [-1.2, 8.0, "#e8654f"], [1.8, 8.8, "#f0d9a0"], [1.35, 7.2, "#4a9ec0"],
-      ].map(([x, z, c], i) => (
-        <group key={`par-${i}`} position={[x as number, 0.36 * ((z as number) - 6) + 0.05, z as number]}>
+      {PARASOLS.map(([x, z, c], i) => (
+        <group key={`par-${i}`} position={[x, slopeTop(z) + 0.05, z]}>
           <mesh position={[0, 1.1, 0]} rotation={[0, 0, 0.06]} castShadow>
             <cylinderGeometry args={[0.04, 0.05, 2.2, 6]} />
             <meshStandardMaterial color="#8a6a45" roughness={0.9} />
           </mesh>
           <mesh position={[0, 2.25, 0]} castShadow>
             <coneGeometry args={[1.15, 0.75, 10]} />
-            <meshStandardMaterial color={c as string} roughness={0.8} />
+            <meshStandardMaterial color={c} roughness={0.8} />
           </mesh>
         </group>
       ))}
       {/* Towels on the lower slope, just above the shoreline */}
-      {[[-1.4, 7.4, "#e8654f"], [1.6, 9.0, "#3d7ee8"], [-2.0, 6.9, "#f0d9a0"]].map(([x, z, c], i) => (
-        <mesh key={`tow-${i}`} position={[x as number, 0.36 * ((z as number) - 6) + 0.03, z as number]} rotation={[0, i * 0.7, 0]} receiveShadow>
+      {TOWELS.map(([x, z, c], i) => (
+        <mesh key={`tow-${i}`} position={[x, slopeTop(z) + 0.03, z]} rotation={[0, i * 0.7, 0]} receiveShadow>
           <boxGeometry args={[1.4, 0.03, 0.7]} />
-          <meshStandardMaterial color={c as string} roughness={0.9} />
+          <meshStandardMaterial color={c} roughness={0.9} />
         </mesh>
       ))}
     </group>
@@ -138,9 +180,9 @@ function Beach({ tod }: { tod: string }) {
 function Jetty({ tod }: { tod: string }) {
   const night = tod === "night";
   return (
-    <group position={[7, 0, 0]}>
+    <group position={[JETTY_X, 0, 0]}>
       {Array.from({ length: 20 }, (_, i) => (
-        <mesh key={i} position={[0, 1.6, 10 - i * 1.0]} castShadow receiveShadow>
+        <mesh key={i} position={[0, JETTY_DECK, 10 - i * 1.0]} castShadow receiveShadow>
           <boxGeometry args={[2.0, 0.12, 0.72]} />
           <meshStandardMaterial color={["#a9825a", "#9c7850", "#b08a5e"][i % 3]} roughness={0.85} />
         </mesh>
@@ -152,7 +194,7 @@ function Jetty({ tod }: { tod: string }) {
         </mesh>
       ))}
       {/* End lamp: warm glow at night */}
-      <group position={[0, 1.6, -9]}>
+      <group position={[0, JETTY_DECK, -9]}>
         <mesh position={[0, 1.5, 0]} castShadow>
           <cylinderGeometry args={[0.06, 0.1, 3.0, 8]} />
           <meshStandardMaterial color="#3f4650" roughness={0.7} />
@@ -188,7 +230,7 @@ function FloatingCanoeModel({ x, z, rot, index, tod, level }: { x: number; z: nu
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const s = 4.2 / (Math.max(size.x, size.z) || 1);
+    const s = CANOE_LEN / (Math.max(size.x, size.z) || 1);
     const lift = -box.min.y * s;
     c.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -286,10 +328,23 @@ function NightSky() {
 /*  Camera: rides the swell, drifts, pushes gently toward the horizon   */
 /* ------------------------------------------------------------------ */
 
+/** The lens this rig was tuned with: three-fiber's default camera. */
+const RIG_LENS = { fov: 75, near: 0.1, far: 1000 };
+
 function CameraRig({ level }: { level: number }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
   useFrame(() => {
+    // The camera object outlives shots and other stages (a director's shot or
+    // the space rig may have changed the lens on an earlier frame), so put the
+    // rig's own lens back whenever it differs.
+    const cam = camera as THREE.PerspectiveCamera;
+    if (cam.fov !== RIG_LENS.fov || cam.near !== RIG_LENS.near || cam.far !== RIG_LENS.far) {
+      cam.fov = RIG_LENS.fov;
+      cam.near = RIG_LENS.near;
+      cam.far = RIG_LENS.far;
+      cam.updateProjectionMatrix();
+    }
     const t = frame / 30;
     // Stand ON the apron rim, close to the waterline, eye low over the sea:
     // the sand strip stays at the bottom and the sea fills the middle. As
@@ -307,6 +362,267 @@ function CameraRig({ level }: { level: number }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Shot anchors: what the director's camera can frame, per moment      */
+/* ------------------------------------------------------------------ */
+
+/** Mooring buoy position (x, z). */
+const BUOY: [number, number] = [-3.5, -13];
+
+/** Shortest distance from point p to the segment a-b (x, z). */
+function segDist(p: [number, number], a: [number, number], b: [number, number]): number {
+  const [dx, dz] = [b[0] - a[0], b[1] - a[1]];
+  const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz || 1)));
+  return Math.hypot(p[0] - a[0] - k * dx, p[1] - a[1] - k * dz);
+}
+
+/**
+ * The canoe the camera frames and the side to film it from. The hero is the
+ * canoe nearest the jetty's end that has no other canoe within 3 m (seeded
+ * layouts sometimes overlap two). It is filmed broadside (its hull runs along
+ * its local z): from the side with clear water out to 12 m (no other canoe or
+ * the buoy near the line of sight), else from the side the sun lights.
+ */
+function heroCanoe(specId: string, sunYaw: number): { x: number; z: number; rot: number; facing: number } {
+  const all = canoeLayout(specId);
+  const near = (c: { x: number; z: number }) => Math.hypot(c.x - JETTY_X, c.z + 9);
+  const alone = all.filter((c) => all.every((o) => o === c || Math.hypot(o.x - c.x, o.z - c.z) >= 3));
+  const hero = [...(alone.length ? alone : all)].sort((a, b) => near(a) - near(b))[0];
+  const obstacles: Array<[number, number]> = [...all.filter((c) => c !== hero).map((c) => [c.x, c.z] as [number, number]), BUOY];
+  const clear = (f: number) => {
+    const end: [number, number] = [hero.x + Math.sin(f) * 12, hero.z + Math.cos(f) * 12];
+    return Math.min(...obstacles.map((o) => segDist(o, [hero.x, hero.z], end)));
+  };
+  const offSun = (f: number) => Math.abs(Math.atan2(Math.sin(f - sunYaw), Math.cos(f - sunYaw)));
+  const sides = [hero.rot + Math.PI / 2, hero.rot - Math.PI / 2].sort((a, b) => {
+    const ca = clear(a) >= 3.5;
+    const cb = clear(b) >= 3.5;
+    return ca !== cb ? (ca ? -1 : 1) : offSun(a) - offSun(b);
+  });
+  return { ...hero, facing: sides[0] };
+}
+
+/** Owner ids of the props in the camera's blockers (parasol i: PARASOL_OWNER + i, canoe i: CANOE_OWNER + i). */
+const JETTY_OWNER = 800;
+const PARASOL_OWNER = 900;
+const CANOE_OWNER = 950;
+
+/**
+ * The beach and the jetty as the solver's shapes (Subject.blockers): the
+ * jetty from under the water to its deck (the lens neither stands under the
+ * deck nor films the shallows through the piles, with the deck across the
+ * frame) and its end lamp; each parasol's pole and canopy; the sand (the dry
+ * apron, and the wet slope stepped every metre at its higher edge, from where
+ * it rises out of the drained basin). And where the lens must not stand but
+ * may look across (Subject.keepOut): under each canopy.
+ */
+function shoreSolids(): { blockers: Occluder[]; keepOut: Occluder[] } {
+  const blockers: Occluder[] = [];
+  const keepOut: Occluder[] = [];
+  // Jetty: 20 planks 0.72 m deep from z 10 to -9, 2 m wide, the deck 0.06 m over JETTY_DECK; the lamp 3.3 m over it.
+  blockers.push({ kind: "box", minX: JETTY_X - 1, maxX: JETTY_X + 1, minY: -10, maxY: JETTY_DECK + 0.06, minZ: -9.36, maxZ: 10.36, owner: JETTY_OWNER });
+  blockers.push({ kind: "column", x: JETTY_X, z: -9, r: 0.2, bottom: JETTY_DECK, top: JETTY_DECK + 3.35, owner: JETTY_OWNER });
+  // Parasols: the pole, and the canopy (a cone 1.15 m round from 1.875 to 2.625 m over the pole's foot).
+  PARASOLS.forEach(([x, z], i) => {
+    const foot = slopeTop(z) + 0.05;
+    blockers.push({ kind: "column", x, z, r: 0.06, top: foot + 2.2, owner: PARASOL_OWNER + i });
+    blockers.push({ kind: "column", x, z, r: 1.15, bottom: foot + 1.875, top: foot + 2.625, owner: PARASOL_OWNER + i });
+    keepOut.push({ kind: "column", x, z, r: 1.15, top: foot + 1.875, owner: PARASOL_OWNER + i });
+  });
+  // Sand: the apron (z 8..16) and the slope below it (Beach: 160 m wide).
+  blockers.push({ kind: "box", minX: -80, maxX: 80, minY: -6, maxY: APRON_TOP, minZ: 8, maxZ: 16, owner: -1 });
+  for (let z = 2; z < 8; z++) blockers.push({ kind: "box", minX: -80, maxX: 80, minY: -6, maxY: slopeTop(z + 1), minZ: z, maxZ: z + 1, owner: -1 });
+  return { blockers, keepOut };
+}
+
+/**
+ * The ocean's subjects (KIT_SUBJECTS.ocean) as pure functions of t, measured
+ * from the layout above. The set is built to be seen looking out to sea
+ * (−z): the beach strip ends at z 16, so things on the beach face +z and the
+ * camera sits on the land side. `ground` keeps the lens above the wave
+ * crests (or the sand apron, or the jetty deck).
+ */
+export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anchors {
+  const waveAmp = (WATER_TOD[tod] ?? WATER_TOD.noon).waveAmp;
+  const sun = (OCEAN_TOD[tod] ?? OCEAN_TOD.noon).dirPos;
+  const canoe = heroCanoe(spec.id, Math.atan2(sun[0], sun[2]));
+  // Parasol cluster bounds (canopy radius 1.15, canopy top 2.625 above the pole foot).
+  const px = PARASOLS.map((p) => p[0]);
+  const pz = PARASOLS.map((p) => p[1]);
+  const bx = [Math.min(...px) - 1.15, Math.max(...px) + 1.15];
+  const bz = [Math.min(...pz, ...TOWELS.map((w) => w[1])) - 0.6, Math.max(...pz) + 1.15];
+  const by = [slopeTop(bz[0]), slopeTop(Math.max(...pz)) + 0.05 + 2.625];
+
+  /** Water at t: the mean level, the surface the camera must clear, and
+   *  where a subject on the water floats (a drained basin counts as calm). */
+  const water = (t: number) => {
+    const w = waterStateAt(spec, t);
+    const up = Math.max(0, w.level);
+    return { ...w, up, ground: up + SWELL * w.amp * waveAmp };
+  };
+  const landGround = (t: number) => Math.max(APRON_TOP, water(t).ground);
+
+  // The solver's blockers (Subject.blockers): the shore's (shoreSolids), and
+  // the canoes (hulls turned with them) and the buoy at the water's level, as
+  // high and as low as the swell takes them (the canoes ride seaSwellAt at
+  // amp 1). One list per water level, so a shot's frames share it and the
+  // solver's choice is made once; a drained basin has no boats.
+  const shore = shoreSolids();
+  const canoes = canoeLayout(spec.id);
+  const heroIndex = canoes.findIndex((c) => c.x === canoe.x && c.z === canoe.z);
+  const afloat = new Map<string, Occluder[]>();
+  const hull = (c: { x: number; z: number; rot: number }, i: number, level: number) => {
+    const bob = SWELL * waveAmp;
+    return turnedBox(c.x, c.z, 0.55, CANOE_LEN / 2, c.rot, level - bob - 0.06, level + bob - 0.06 + CANOE_H, CANOE_OWNER + i);
+  };
+  const seen = (t: number, own?: number[]): Pick<Subject, "blockers" | "keepOut" | "own"> => {
+    const w = water(t);
+    const key = w.visible ? w.level.toFixed(3) : "drained";
+    let blockers = afloat.get(key);
+    if (!blockers) {
+      const list = [...shore.blockers];
+      if (w.visible) {
+        const bob = SWELL * waveAmp;
+        canoes.forEach((c, i) => list.push(...hull(c, i, w.level)));
+        list.push({ kind: "column", x: BUOY[0], z: BUOY[1], r: 0.5, bottom: w.level - bob - 0.5, top: w.level + bob + 1.15, owner: -1 });
+      }
+      if (afloat.size > 64) afloat.clear();
+      afloat.set(key, list);
+      blockers = list;
+    }
+    return { blockers, keepOut: shore.keepOut, ...(own ? { own } : {}) };
+  };
+  // The hero canoe's own hull is a keep-out too, so the lens keeps a hand's
+  // width off it (an end-on close shot stood 0.2 m off its bow).
+  const heroRoom = new Map<string, Occluder[]>();
+  const heroKeepOut = (level: number): Occluder[] => {
+    const key = level.toFixed(3);
+    let list = heroRoom.get(key);
+    if (!list) {
+      list = heroIndex >= 0 ? [...shore.keepOut, ...hull(canoes[heroIndex], heroIndex, level)] : shore.keepOut;
+      if (heroRoom.size > 64) heroRoom.clear();
+      heroRoom.set(key, list);
+    }
+    return list;
+  };
+
+  const sea = (t: number): Subject => {
+    const w = water(t);
+    // a patch of open water well out: wide shots put the lens over the open
+    // sea (past the canoes, clear of the shore foam), looking further out
+    return { center: [0, w.up + 0.3, -70], radius: 2.5, height: 1.5, facing: 0, ground: w.ground, ...seen(t) };
+  };
+
+
+  // Parasol canopies as lens blockers (see the beach anchor): a close shot
+  // must never put the lens at or inside a canopy, over the sand apron.
+  const canopyBlockers: Blocker[] = PARASOLS.map((p, i) => ({
+    kind: "ball",
+    x: p[0],
+    y: slopeTop(p[1]) + 0.05 + 2.25,
+    z: p[1],
+    r: 1.15,
+    owner: PARASOL_OWNER + i,
+  }));
+  // The beach is filmed FROM THE SEA SIDE (facing +pi): on the land side the
+  // apron cameras sit 2-3 m behind a canopy with the poles in front of the
+  // subject for every bearing (the canopies are the subject's own base, so
+  // the clearance probes never charge them), and the lens kept ending up
+  // against a canopy. Sea-side candidate facings put the lens over the wet
+  // sand/water, outside every canopy radius; the canopies in the list still
+  // reject a bearing that grazes them and the wide bearings look down the
+  // shore line.
+  const seaFacing = [Math.PI, Math.PI + Math.PI / 6, Math.PI - Math.PI / 6, Math.PI + Math.PI / 3, Math.PI - Math.PI / 3] as const;
+  const beachFacing = clearestFacing(
+    {
+      center: [((bx[0] + bx[1]) / 2 + PARASOLS[1][0]) / 2, (by[0] + by[1]) / 2, (bz[0] + bz[1]) / 2],
+      radius: 9,
+      height: 4.5,
+      focus: "centre" as const,
+    },
+    ["WS", "MS", "FS"],
+    aspect,
+    canopyBlockers,
+    new Set<number>(),
+    Math.PI,
+    [...seaFacing],
+  ).facing;
+
+  return {
+    // the beach and the sea (widen: radius must span the whole sand strip, not just the parasol cluster - a tight beach "subject" makes every MS frame a canopy): the shallows just east of the jetty. Wide shots
+    // put them on the lower third with the sand strip in front, the jetty at
+    // the side and the horizon above. Faced 35° round to the east so every
+    // auto side keeps the lens east of the deck and away from the parasols
+    // (centred on the beach itself, the 16:9 and 1:1 cameras landed 2-3 m
+    // behind a canopy), over the sand apron or the shallows.
+    scene: (t) => {
+      const w = water(t);
+      return {
+        center: [JETTY_X + 2.5, w.up + 0.8, -1],
+        radius: 2.5,
+        height: 2.6,
+        facing: 0.6,
+        ground: Math.max(landGround(t), JETTY_DECK + 0.1),
+        ...seen(t),
+      };
+    },
+    sea,
+    // the parasol cluster on the wet band, towels at its foot; seen from the
+    // land side, so its width across the view (x) sets the radius. Centred
+    // halfway to the parasol nearest that side (PARASOLS[1]) so close shots,
+    // which frame the canopy tops, land on a canopy, not the gap between two.
+    beach: (t) => ({
+      // the beach strip: the parasol cluster plus the wet band and apron
+      // either side of it, centred on the cluster's tall pole; framed from
+      // the sea side (beachFacing) so the lens never sits in a canopy
+      center: [((bx[0] + bx[1]) / 2 + PARASOLS[1][0]) / 2, (by[0] + by[1]) / 2, (bz[0] + bz[1]) / 2],
+      radius: 9,
+      height: 4.5,
+      focus: "centre",
+      facing: beachFacing,
+      ground: landGround(t),
+      ...seen(t, PARASOLS.map((_, i) => PARASOL_OWNER + i)),
+    }),
+    // the seaward half of the jetty up to the lamp; faces 45° round to its +x
+    // side so every auto side (front, ±35°) keeps the lens east of the deck
+    // and the parasols (x < 3) never come between the lens and the jetty
+    jetty: (t) => ({
+      center: [JETTY_X, JETTY_DECK + 0.7, -3],
+      radius: 5.5,
+      height: 4.6,
+      facing: 0.8,
+      ground: Math.max(JETTY_DECK + 0.1, water(t).ground),
+      ...seen(t, [JETTY_OWNER]),
+    }),
+    // the hero canoe (see heroCanoe), riding the same swell as its mesh. The
+    // box reaches 0.25 m above the gunwale (close shots frame the top of a
+    // subject; the hull alone is too low to fill one). Gone with the water.
+    canoe: (t) => {
+      const w = water(t);
+      if (!w.visible) return sea(t);
+      const swell = seaSwellAt(canoe.x, canoe.z, 0, -120, t, 1, waveAmp);
+      const keel = w.level + swell - 0.06;
+      const height = CANOE_H + 0.55;
+      return {
+        center: [canoe.x, keel + CANOE_H + 0.25 - height / 2, canoe.z],
+        radius: CANOE_LEN / 2 + 0.05,
+        height,
+        facing: canoe.facing,
+        ground: w.ground,
+        ...seen(t, [CANOE_OWNER + heroIndex]),
+        keepOut: heroKeepOut(w.level),
+      };
+    },
+    // the band of sky over the far water line: centred well above the water
+    // so a low lens (held at the wave tops) tilts up and leaves the horizon
+    // low in frame with the sky above it
+    horizon: (t) => {
+      const w = water(t);
+      return { center: [0, w.up + 14, -160], radius: 4, height: 10, facing: 0, ground: w.ground, ...seen(t) };
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Stage                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -314,7 +630,8 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
   const tod = (scene.look?.timeOfDay ?? "noon") as string;
   const look = OCEAN_TOD[tod] ?? OCEAN_TOD.noon;
   const night = tod === "night";
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+  const aspect = width / Math.max(1, height);
   const frame = useCurrentFrame();
   const t = frame / (fps || 30);
   const { level, visible, amp } = waterStateAt(spec, t);
@@ -332,19 +649,9 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
   });
 
   // Canoes: seeded positions INSIDE the narrow portrait view cone
-  const canoes = useMemo(() => {
-    const out: Array<{ x: number; z: number; rot: number }> = [];
-    for (let i = 0; i < 4; i++) {
-      const a1 = random(`${spec.id}-canoe-${i}-a`);
-      const a2 = random(`${spec.id}-canoe-${i}-b`);
-      out.push({
-        x: (a1 < 0.5 ? -1 : 1) * (1.5 + a2 * 4.5),
-        z: -16 - a1 * 42,
-        rot: a2 * 1.2 - 0.6,
-      });
-    }
-    return out;
-  }, [spec.id]);
+  const canoes = useMemo(() => canoeLayout(spec.id), [spec.id]);
+  // What the director's shots can frame (spec.shots); without shots the rig films.
+  const anchors = useMemo(() => oceanAnchors(spec, tod, aspect), [spec, tod, aspect]);
 
   return (
     <>
@@ -374,7 +681,7 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
           {canoes.map((c, i) => (
             <FloatingCanoe key={i} x={c.x} z={c.z} rot={c.rot} index={i} tod={tod} level={level} />
           ))}
-          <MooringBuoy x={-3.5} z={-13} tod={tod} level={level} />
+          <MooringBuoy x={BUOY[0]} z={BUOY[1]} tod={tod} level={level} />
         </>
       )}
 
@@ -409,7 +716,7 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
         groundColor={look.sky[1]}
       />
       <ambientLight ref={ambRef} intensity={look.amb * (lightsOut ? 0.4 : 1)} />
-      <CameraRig level={level} />
+      <ShotCamera spec={spec} anchors={anchors} fallback={<CameraRig level={level} />} />
 
       {/* Birds: gulls over the ocean */}
       <Birds

@@ -981,6 +981,16 @@
         "~z-ai/glm-latest"
       ]
     },
+    "nvidia": {
+      "package": "openai",
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "models": [
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b"
+      ]
+    },
     "ollama": {
       "package": "ollama",
       "apiKeyEnv": "OLLAMA_API_KEY",
@@ -1008,6 +1018,12 @@
         "nemotron-3-super",
         "nemotron-3-ultra"
       ]
+    }
+  },
+  "roles": {
+    "writer": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
     }
   }
 }

@@ -10,9 +10,30 @@
  */
 import { z } from "zod";
 
-export const CAPTION_PRESET_NAMES = ["bold-pop", "clean", "documentary", "neon", "minimal"] as const;
+export const CAPTION_PRESET_NAMES = [
+  "reference",
+  "bold-pop",
+  "clean",
+  "documentary",
+  "neon",
+  "minimal",
+] as const;
 export const CAPTION_POSITIONS = ["top", "upper", "middle", "lower", "bottom"] as const;
-export const CAPTION_FONTS = ["inter", "archivo-black", "serif"] as const;
+export const CAPTION_FONTS = [
+  "inter",
+  "montserrat",
+  "poppins",
+  "bebas-neue",
+  "anton",
+  "oswald",
+  "playfair-display",
+  "merriweather",
+  "lora",
+  "nunito",
+  "roboto-condensed",
+  "archivo-black",
+  "serif",
+] as const;
 export const CAPTION_ANIMATIONS = ["none", "fade", "pop", "slide-up", "word-reveal"] as const;
 export const CAPTION_BACKGROUNDS = ["none", "box", "pill"] as const;
 
@@ -75,7 +96,11 @@ const BASE: CaptionLook = {
   animation: "fade",
 };
 
+// Phase 7 reference bar (quality-refs/): serif italic white captions with a
+// soft shadow and the keyword highlighted in gold (#d4af37 range), the default
+// look; the hook renders with the same one so it reads as a serif title.
 export const CAPTION_PRESETS: Record<(typeof CAPTION_PRESET_NAMES)[number], Partial<CaptionLook>> = {
+  reference: { font: "serif", weight: 400, italic: true, uppercase: false, size: 46, color: "#ffffff", highlight: "#d4af37", shadow: true, animation: "fade" },
   "bold-pop": { font: "inter", weight: 800, uppercase: true, size: 44, highlight: "#3b82f6", animation: "pop" },
   clean: { font: "inter", weight: 700, uppercase: false, size: 40, highlight: "#facc15", animation: "fade" },
   documentary: { font: "serif", weight: 400, italic: true, uppercase: false, size: 46, highlight: "#f5d68a", shadow: true, animation: "fade" },
@@ -85,25 +110,57 @@ export const CAPTION_PRESETS: Record<(typeof CAPTION_PRESET_NAMES)[number], Part
 
 /** Full look from an optional, partial user style: preset, then overrides. */
 export function resolveCaptionStyle(input?: CaptionStyleInput | null): CaptionLook {
-  const preset = CAPTION_PRESETS[input?.preset ?? "bold-pop"];
+  const preset = CAPTION_PRESETS[input?.preset ?? "reference"];
   const explicit = Object.fromEntries(
     Object.entries(input ?? {}).filter(([k, v]) => k !== "preset" && v !== undefined),
   );
   return { ...BASE, ...preset, ...explicit } as CaptionLook;
 }
 
-/** Vertical centre of the caption block, as a % of the frame height. */
-export const POSITION_PCT: Record<(typeof CAPTION_POSITIONS)[number], number> = {
-  top: 12,
-  upper: 30,
-  middle: 50,
-  lower: 68,
-  bottom: 88,
-};
+/**
+ * How the HUD (the counter and the timer) is drawn. It follows the caption
+ * look: the serif looks ("reference", the default, and "documentary") draw it
+ * as text over the picture like the reference channels (quality-refs/): a
+ * spaced-capitals label, a big serif value and a gold fact line, no card. The
+ * other presets keep the white cards.
+ */
+export interface HudLook {
+  kind: "text" | "card";
+  /** Text HUD: the value's serif. The look's own bundled serif, else Playfair Display. */
+  valueFont: string;
+  /** Text HUD: the fact line's colour, the look's highlight (gold on the serif looks), a touch lighter so small capitals read over a dark scene. */
+  accent: string;
+  /** Where the captions sit, so the text HUD keeps clear of them (layout.ts). */
+  caption: Pick<CaptionLook, "position" | "offsetPct" | "size">;
+}
+
+export const TEXT_HUD_PRESETS: ReadonlyArray<(typeof CAPTION_PRESET_NAMES)[number]> = ["reference", "documentary"];
+
+/** The HUD look for a caption style (the same optional, partial input as resolveCaptionStyle). */
+export function resolveHudStyle(input?: CaptionStyleInput | null): HudLook {
+  const look = resolveCaptionStyle(input);
+  const bundledSerif = look.font === "playfair-display" || look.font === "merriweather" || look.font === "lora";
+  return {
+    kind: TEXT_HUD_PRESETS.includes(input?.preset ?? "reference") ? "text" : "card",
+    valueFont: FONT_STACKS[bundledSerif ? look.font : "playfair-display"],
+    accent: mixHex(look.highlight, "#ffffff", 0.25),
+    caption: { position: look.position, offsetPct: look.offsetPct, size: look.size },
+  };
+}
 
 /** CSS font stacks. The bundled fonts are loaded in hud/fonts.ts. */
 export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
   inter: "'Inter', system-ui, sans-serif",
+  montserrat: "'Montserrat', system-ui, sans-serif",
+  poppins: "'Poppins', system-ui, sans-serif",
+  "bebas-neue": "'Bebas Neue', 'Arial Black', sans-serif",
+  anton: "'Anton', 'Arial Black', sans-serif",
+  oswald: "'Oswald', system-ui, sans-serif",
+  "playfair-display": "'Playfair Display', Georgia, serif",
+  merriweather: "'Merriweather', Georgia, serif",
+  lora: "'Lora', Georgia, serif",
+  nunito: "'Nunito', system-ui, sans-serif",
+  "roboto-condensed": "'Roboto Condensed', 'Roboto', sans-serif",
   "archivo-black": "'Archivo Black', 'Arial Black', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
@@ -111,4 +168,12 @@ export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
 export function hexToRgba(color: string, alpha: number): string {
   const n = parseInt(color.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/** `a` moved toward `b` by `t` (0..1), both "#rrggbb". */
+export function mixHex(a: string, b: string, t: number): string {
+  const ca = parseInt(a.slice(1), 16);
+  const cb = parseInt(b.slice(1), 16);
+  const ch = (s: number) => Math.round(((ca >> s) & 255) * (1 - t) + ((cb >> s) & 255) * t);
+  return `#${[16, 8, 0].map((s) => ch(s).toString(16).padStart(2, "0")).join("")}`;
 }

@@ -5,6 +5,7 @@ import { join, basename, isAbsolute } from "path";
 import { ROOT } from "./providers";
 const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { actionable } from "./error-hints";
+import { isLaterStage, nextProgress, PLAN_PROGRESS, readRenderLog, stageMarker } from "./progress";
 
 export interface StageSpan {
   stage: string;
@@ -32,6 +33,12 @@ export interface Job {
   storyboard?: unknown;
   /** Audio/TTS selection from the UI (narration/dialogs engine + voices). */
   audio?: unknown;
+  /** Plan jobs: the voice settings file passed to the CLI (output/plan-<id>-audio.json). */
+  audioFile?: string;
+  /** Plan jobs: the video settings passed to the CLI. */
+  settings?: unknown;
+  /** Plan jobs: false when the request named no provider/model (each role uses its own). */
+  explicitModel?: boolean;
   /** @internal handle to the spawned child process (for cancellation). */
   child?: import("child_process").ChildProcess;
   /** Spec-engine jobs: the <id> of output/<id>-spec.json once written. */
@@ -44,12 +51,135 @@ const jobs = new Map<string, Job>();
 const sseClients = new Map<string, Set<ServerResponse>>();
 let jobIdCounter = 0;
 
+/* ------------------------------------------------------------------ */
+/*  Disk persistence — jobs survive a server restart                   */
+/* ------------------------------------------------------------------ */
+
+const JOBS_DIR = join(ROOT, "output", "jobs");
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const MAX_PERSISTED_LOGS = 400;
+
+function writeJobFile(job: Job): void {
+  try {
+    fs.mkdirSync(JOBS_DIR, { recursive: true });
+    // The child handle is process-bound and is never saved.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { child, ...rest } = job;
+    const logs = rest.logs?.length > MAX_PERSISTED_LOGS ? rest.logs.slice(-MAX_PERSISTED_LOGS) : rest.logs ?? [];
+    fs.writeFileSync(join(JOBS_DIR, `${job.id}.json`), JSON.stringify({ ...rest, logs }));
+  } catch {
+    /* persistence must never break the job */
+  }
+}
+
+/** Persist a job. Debounced by default (progress can change several times a second). */
+function persist(job: Job, immediate = false): void {
+  if (immediate) {
+    const t = saveTimers.get(job.id);
+    if (t) clearTimeout(t);
+    saveTimers.delete(job.id);
+    writeJobFile(job);
+    return;
+  }
+  if (saveTimers.has(job.id)) return;
+  saveTimers.set(
+    job.id,
+    setTimeout(() => {
+      saveTimers.delete(job.id);
+      writeJobFile(job);
+    }, 1500),
+  );
+}
+
+/** Remove a job's file (used when a job is deleted from the dashboard). */
+function deleteJobFile(id: string): void {
+  const t = saveTimers.get(id);
+  if (t) clearTimeout(t);
+  saveTimers.delete(id);
+  try { fs.rmSync(join(JOBS_DIR, `${id}.json`), { force: true }); } catch { /* ignore */ }
+}
+
+/** POST /api/plan's voice settings for the CLI (output/plan-<jobId>-audio.json): only needed while the job runs. */
+function removePlanAudioFile(id: string): void {
+  if (!/^[0-9]+-[0-9]+$/.test(id)) return;
+  try { fs.rmSync(join(ROOT, "output", `plan-${id}-audio.json`), { force: true }); } catch { /* ignore */ }
+}
+
+/**
+ * Under FACTORY_LLM_FIXTURES no model wrote the plan, but the pipeline records
+ * the configured role models in plan.json: name the fixtures instead.
+ */
+function markFixtureModels(specId: string): void {
+  const fixtures = process.env.FACTORY_LLM_FIXTURES;
+  if (!fixtures || !/^[a-z0-9-]+$/.test(specId)) return;
+  const planPath = join(ROOT, "output", specId, "plan.json");
+  try {
+    const plan = JSON.parse(fs.readFileSync(planPath, "utf8")) as { models?: Record<string, unknown> };
+    const roles = Object.keys(plan.models ?? {});
+    plan.models = Object.fromEntries((roles.length ? roles : ["writer"]).map((r) => [r, { provider: "fixtures", model: fixtures }]));
+    fs.writeFileSync(planPath, JSON.stringify(plan, null, 2));
+  } catch { /* the plan check reports a missing plan */ }
+}
+
+/** Load jobs written by a previous server run; an in-flight job was killed with it. */
+function loadJobsFromDisk(): void {
+  if (!fs.existsSync(JOBS_DIR)) return;
+  for (const f of fs.readdirSync(JOBS_DIR)) {
+    if (!/^[0-9]+-[0-9]+\.json$/.test(f)) continue;
+    let j: Job;
+    try {
+      j = JSON.parse(fs.readFileSync(join(JOBS_DIR, f), "utf8")) as Job;
+    } catch {
+      continue;
+    }
+    if (!j || typeof j.id !== "string" || jobs.has(j.id)) continue;
+    if (j.status === "running" || j.status === "queued") {
+      // The spawned CLI died with the server: mark it so the dashboard shows why.
+      j.status = "failed";
+      j.error = `${j.error ? j.error + "\n" : ""}Interrupted: the server restarted while this job was running. Run it again.`;
+      const open = j.timeline?.[j.timeline.length - 1];
+      if (open && open.endedAt == null) open.endedAt = Date.now();
+      j.timeline = [...(j.timeline ?? []), { stage: "failed", startedAt: Date.now() }];
+      j.stage = "failed";
+      j.logs = [...(j.logs ?? []), "Server restarted — job lost."];
+    }
+    j.child = undefined;
+    j.logs ??= [];
+    j.timeline ??= [{ stage: j.stage ?? "script", startedAt: Date.now() }];
+    // Every restored job has ended: its plan voice-settings file is not needed any more.
+    removePlanAudioFile(j.id);
+    jobs.set(j.id, j);
+    sseClients.set(j.id, new Set());
+    const n = Number(j.id.split("-").pop());
+    if (Number.isFinite(n) && n > jobIdCounter) jobIdCounter = n;
+  }
+}
+loadJobsFromDisk();
+
+/**
+ * Plan voice-settings files left by older runs (their job is gone). The CLI
+ * reads the file as it starts, so one older than an hour is never needed, even
+ * by a job of another server sharing output/.
+ */
+function sweepPlanAudioFiles(): void {
+  const dir = join(ROOT, "output");
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const m = /^plan-([0-9]+-[0-9]+)-audio\.json$/.exec(f);
+      if (!m || jobs.get(m[1])?.status === "running") continue;
+      if (Date.now() - fs.statSync(join(dir, f)).mtimeMs > 60 * 60 * 1000) removePlanAudioFile(m[1]);
+    }
+  } catch { /* no output/ yet */ }
+}
+sweepPlanAudioFiles();
+
 function setStage(job: Job, stage: string) {
   if (job.stage === stage) return;
   const cur = job.timeline[job.timeline.length - 1];
   if (cur && cur.endedAt == null) cur.endedAt = Date.now();
   job.stage = stage;
   job.timeline.push({ stage, startedAt: Date.now() });
+  persist(job);
 }
 
 function broadcast(jobId: string, data: unknown) {
@@ -80,11 +210,31 @@ export function createJob(premise: string, provider?: string, model?: string): J
   };
   jobs.set(id, job);
   sseClients.set(id, new Set());
+  persist(job, true);
   evictOldJobs();
   return job;
 }
 
 export function getJob(id: string): Job | undefined { return jobs.get(id); }
+
+/**
+ * DELETE /api/jobs/:id. A running job is cancelled (it stays listed as
+ * cancelled); a finished one is removed from memory and disk, its SSE
+ * clients closed and its plan voice-settings file deleted. Null when unknown.
+ */
+export function deleteJob(id: string): "cancelled" | "deleted" | null {
+  const job = jobs.get(id);
+  if (!job) return null;
+  if (job.status === "running" || job.status === "queued") return cancelJob(id) ? "cancelled" : null;
+  for (const c of sseClients.get(id) ?? []) {
+    try { c.end(); } catch { /* ignore */ }
+  }
+  sseClients.delete(id);
+  jobs.delete(id);
+  deleteJobFile(id);
+  removePlanAudioFile(id);
+  return "deleted";
+}
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
 export function cancelJob(id: string): boolean {
   const job = jobs.get(id);
@@ -92,6 +242,7 @@ export function cancelJob(id: string): boolean {
   try { job.child?.kill("SIGTERM"); } catch { /* ignore */ }
   job.status = "cancelled";
   job.error = "Cancelled by user";
+  persist(job, true);
   broadcast(job.id, { type: "failed", error: job.error });
   return true;
 }
@@ -107,7 +258,7 @@ export function premiseSlug(premise: string): string {
 /** Keep the jobs map bounded — evict oldest finished jobs beyond 50. */
 function evictOldJobs() {
   if (jobs.size <= 50) return;
-  const finished = getAllJobs().filter((j) => j.status === "done" || j.status === "failed");
+  const finished = getAllJobs().filter((j) => j.status === "done" || j.status === "failed" || j.status === "cancelled");
   for (let i = finished.length - 1; i >= 0 && jobs.size > 50; i--) {
     const victim = finished[i];
     for (const c of sseClients.get(victim.id) ?? []) {
@@ -115,19 +266,23 @@ function evictOldJobs() {
     }
     sseClients.delete(victim.id);
     jobs.delete(victim.id);
+    deleteJobFile(victim.id);
   }
 }
 
 function latestReportFor(premise: string): { mp4: string; spec: unknown; report: string } | undefined {
   const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return undefined;
-  const matches: Array<{ report: unknown; file: string }> = [];
+  const matches: Array<{ report: unknown; file: string; videoDir: string }> = [];
   for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith("-report.json")) continue;
+    const videoDir = join(dir, f);
+    if (!fs.statSync(videoDir).isDirectory()) continue;
+    const reportFile = join(videoDir, "report.json");
+    if (!fs.existsSync(reportFile)) continue;
     try {
-      const report = JSON.parse(fs.readFileSync(join(dir, f), "utf8"));
+      const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
       if (report && typeof report === "object" && (report as Record<string, unknown>).premise === premise) {
-        matches.push({ report, file: f });
+        matches.push({ report, file: f, videoDir });
       }
     } catch { /* ignore */ }
   }
@@ -137,14 +292,15 @@ function latestReportFor(premise: string): { mp4: string; spec: unknown; report:
       Number((b.report as Record<string, unknown>).generatedAt || 0) -
       Number((a.report as Record<string, unknown>).generatedAt || 0),
   );
-  const latest = matches[0] as { report: unknown; file: string };
+  const latest = matches[0] as { report: unknown; file: string; videoDir: string };
   let spec: unknown = {};
   try {
     const specRaw = (latest.report as Record<string, unknown>).spec as string;
-    const sp = isAbsolute(specRaw) ? specRaw : join(dir, specRaw);
+    const sp = isAbsolute(specRaw) ? specRaw : join(latest.videoDir, specRaw);
     spec = JSON.parse(fs.readFileSync(sp, "utf8"));
   } catch { /* keep {} */ }
-  return { mp4: basename((latest.report as Record<string, unknown>).output as string), spec, report: latest.file };
+  // Relative to output/, so the dashboard's /media/<path> finds it: <id>/video.mp4.
+  return { mp4: `${latest.file}/${basename((latest.report as Record<string, unknown>).output as string)}`, spec, report: join(latest.videoDir, "report.json") };
 }
 
 // The CLI's FAILED log policy writes output/FAILED-<slug>.log on failure.
@@ -160,11 +316,13 @@ function failedLogError(premise: string): string | undefined {
   if (!match) return undefined;
   const text = fs.readFileSync(join(dir, match), "utf8");
   const lines = text.split(/\r?\n/);
-  const idx = lines.findIndex((l) => l.startsWith("Error:"));
+  // Skip warning lines (FutureWarning, DeprecationWarning, etc.)
+  const cleanLines = lines.filter((l) => !l.includes("FutureWarning") && !l.includes("DeprecationWarning") && !l.includes("UserWarning"));
+  const idx = cleanLines.findIndex((l) => l.startsWith("Error:"));
   if (idx >= 0) {
-    return lines.slice(idx, idx + 4).join("\n").trim();
+    return cleanLines.slice(idx, idx + 4).join("\n").trim();
   }
-  const tail = lines.filter((l) => l.trim()).slice(-5).join("\n");
+  const tail = cleanLines.filter((l) => l.trim()).slice(-5).join("\n");
   return tail || undefined;
 }
 
@@ -178,10 +336,16 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
   } else {
     args.push(job.premise);
     if (opts?.noRender) args.push("--no-render");
-    if (job.provider) args.push("--provider", job.provider);
-    if (job.model) args.push("--model", job.model);
-    const settings = (job as any).settings;
+    // Only a provider/model the request named explicitly; otherwise every
+    // pipeline role uses its own assignment from Settings -> AI models -> Model roles.
+    if (job.explicitModel !== false) {
+      if (job.provider) args.push("--provider", job.provider);
+      if (job.model) args.push("--model", job.model);
+    }
+    const settings = job.settings;
     if (settings) args.push("--settings-json", JSON.stringify(settings));
+    const audioFile = job.audioFile;
+    if (audioFile) args.push("--audio-file", audioFile);
   }
   const child = spawn("npx", ["--no-install", "tsx", ...args], {
     cwd: ROOT,
@@ -190,67 +354,47 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     // loader and reads process.env directly.
   });
   job.child = child;
+  // "@@STAGE <name>" lines from the pipeline drive the stage pills. Output
+  // arrives in chunks that can split a line, so keep the unfinished tail.
+  let pending = "";
+  const handleStageMarkers = (text: string) => {
+    pending += text;
+    const lines = pending.split(/\r?\n/);
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      const stage = stageMarker(line);
+      if (!stage) continue;
+      setStage(job, stage);
+      if (job.engine === "plan") job.progress = nextProgress(job.progress, PLAN_PROGRESS[stage]);
+      broadcast(job.id, { type: "progress", progress: job.progress, stage: job.stage, etaSec: job.etaSec });
+    }
+  };
   const handleOutput = (text: string) => {
+    handleStageMarkers(text);
     // Strip ANSI color escapes (Remotion prints colored output) so the
     // dashboard log console doesn't show raw escape garbage.
     // eslint-disable-next-line no-control-regex
     const clean = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
     job.logs.push(clean);
     broadcast(job.id, { type: "log", text: clean });
-    let pct: number | undefined;
-    let newStage: string | undefined;
-    let eta: number | undefined;
-
-    const rend = text.match(/Rendered\s+(\d+)\/(\d+)/);
-    if (rend) {
-      newStage = "render";
-      pct = 25 + (parseInt(rend[1], 10) / parseInt(rend[2], 10)) * 67;
-      const em = text.match(/time remaining:\s*(?:(\d+)m\s*([\d.]+)s|([\d.]+)s)/);
-      if (em) {
-        eta = em[1] ? parseInt(em[1], 10) * 60 + parseFloat(em[2]) : parseFloat(em[3]);
-      }
-    } else if (text.includes("[1/5]")) {
-      newStage = "script";
-    } else if (text.includes("[voice]")) {
-      newStage = "voice";
-      pct = 12;
-    } else if (text.includes("[3/5]")) {
-      // The CLI's own trace line marks the true bundle start — Remotion's
-      // "Bundling N%" lines only appear after esbuild's silent work.
-      newStage = "bundle";
-    } else if (text.includes("Getting composition")) {
-      newStage = "render";
-    } else if (text.includes("[5/5]")) {
-      newStage = "encode";
-    } else {
-      const bund = text.match(/Bundling\s+(\d+)%/);
-      if (bund) {
-        newStage = "bundle";
-        pct = 15 + parseInt(bund[1], 10) * 0.1;
-      } else {
-        const enc = text.match(/Encoded\s+(\d+)\/(\d+)/);
-        if (enc) {
-          newStage = "encode";
-          pct = 92 + (parseInt(enc[1], 10) / parseInt(enc[2], 10)) * 7;
-        }
-      }
-    }
+    // Plan jobs follow the @@STAGE markers only (a "[voice]" line used to pull
+    // a plan back to 12% after the voice stage set 30); render jobs also read
+    // the log lines. Stages only move forwards and progress never goes down.
+    const signal = job.engine === "plan" ? {} : readRenderLog(text);
 
     let dirty = false;
-    if (newStage) {
-      setStage(job, newStage);
+    if (signal.stage && isLaterStage(job.stage, signal.stage)) {
+      setStage(job, signal.stage);
       dirty = true;
     }
-    if (eta !== undefined) {
-      job.etaSec = eta;
+    if (signal.eta !== undefined) {
+      job.etaSec = signal.eta;
       dirty = true;
     }
-    if (pct !== undefined) {
-      const p = Math.min(99, Math.round(pct));
-      if (p !== job.progress) {
-        job.progress = p;
-        dirty = true;
-      }
+    const p = nextProgress(job.progress, signal.pct);
+    if (p !== job.progress) {
+      job.progress = p;
+      dirty = true;
     }
     if (dirty) {
       broadcast(job.id, {
@@ -259,6 +403,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
         stage: job.stage,
         etaSec: job.etaSec,
       });
+      persist(job);
     }
   };
   child.stdout.on("data", (buf) => handleOutput(buf.toString()));
@@ -267,7 +412,12 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     // Spec-engine plan jobs print a machine-readable PLAN_ID marker.
     const planLine = job.logs.join("").match(/PLAN_ID:\s*(\S+)/);
     if (planLine) job.specId = planLine[1];
-    if (code === 0) {
+    removePlanAudioFile(job.id);
+    if (job.status === "cancelled") {
+      // DELETE /api/jobs/:id killed it: keep "cancelled" (not a failure to explain).
+      setStage(job, "cancelled");
+    } else if (code === 0) {
+      if (job.engine === "plan" && job.specId) markFixtureModels(job.specId);
       job.status = "done";
       job.progress = 100;
       job.etaSec = 0;
@@ -276,9 +426,11 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       if (out) job.output = out;
       // Extract a poster thumbnail for the Videos tab (best-effort).
       if (out?.mp4) {
-        const vid = (out as any).id || job.specId || job.premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
-        const mp4Abs = join(ROOT, "output", basename(out.mp4));
-        const thumbAbs = join(ROOT, "output", `${vid}-thumb.jpg`);
+        const vid = out.mp4.split("/")[0] || job.specId || job.premise.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+        // Find the video directory
+        const videoDir = join(ROOT, "output", vid);
+        const mp4Abs = join(videoDir, "video.mp4");
+        const thumbAbs = join(videoDir, "thumb.jpg");
         try {
           spawnSync(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbAbs], { stdio: "ignore" });
         } catch { /* ignore */ }
@@ -291,7 +443,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       const logTail = job.logs
         .join("")
         .split(/\r?\n/)
-        .filter((l) => l.trim() && !l.includes("Rendered "))
+        .filter((l) => l.trim() && !l.includes("Rendered ") && !l.includes("FutureWarning") && !l.includes("DeprecationWarning") && !l.includes("UserWarning"))
         .slice(-4)
         .join("\n");
       job.error = logError ?? (logTail || `exit code ${code}`);
@@ -305,12 +457,23 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
       try { c.end(); } catch { /* ignore */ }
     }
     sseClients.delete(job.id);
+    persist(job, true);
   });
 }
 
 export function subscribeSSE(jobId: string, res: ServerResponse) {
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   res.write("\n");
+  // Already finished (done, failed, cancelled, or restored after a restart):
+  // send the final state and close; nothing would ever end this stream.
+  const job = jobs.get(jobId);
+  if (job && job.status !== "running" && job.status !== "queued") {
+    const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    send({ type: "progress", progress: job.progress, stage: job.stage, etaSec: job.etaSec });
+    send(job.status === "done" ? { type: "done", timeline: job.timeline } : { type: "failed", error: job.error ?? `job ${job.status}`, timeline: job.timeline });
+    res.end();
+    return;
+  }
   const clients = sseClients.get(jobId) ?? new Set();
   clients.add(res);
   sseClients.set(jobId, clients);

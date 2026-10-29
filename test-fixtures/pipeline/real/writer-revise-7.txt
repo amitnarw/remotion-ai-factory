@@ -1,0 +1,1 @@
+{"edits":[{"beat":"b1","say":"The Pacific vanishes."},{"beat":"b2","say":"Ships crash."},{"beat":"b4","say":"Divers stand exposed."},{"beat":"b5","say":"Wind sweeps the seabed."},{"beat":"b6","say":"Water returns."},{"beat":"b7","say":"Fish outlast ports."}]}
