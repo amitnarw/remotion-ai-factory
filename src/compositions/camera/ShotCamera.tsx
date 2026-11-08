@@ -40,6 +40,10 @@ function SolvedCamera({ shot, anchor, t, transitions }: { shot: SpecShot; anchor
       seconds,
       seed: `${shot.beat ?? shot.from}`,
       lagged: shot.move === "follow" ? anchor(t - FOLLOW_LAG) : undefined,
+      // the view round blockers is judged once, on the subject mid-shot
+      // (and, as it moves, at the shot's start and end)
+      rest: anchor((shot.from + shot.to) / 2),
+      ends: [anchor(shot.from), anchor(shot.to - 1 / 30)],
     });
     cam.position.set(...pose.position);
     cam.quaternion.set(...pose.quaternion);

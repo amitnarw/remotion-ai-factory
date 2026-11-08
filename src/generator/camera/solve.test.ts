@@ -106,6 +106,39 @@ test("bounds keep the camera inside the stage, and the subject keeps its screen 
   }
 });
 
+test("outdoor bounds: a shot over the roofs keeps its distance, a low one stays in the corridor", () => {
+  // A street: buildings either side of |x| > 4, roofs at 20 m.
+  const street: Subject = { center: [0, 4, -20], radius: 6, height: 8, facing: 0, ground: 0 };
+  const corridor = { minX: -4, maxX: 4, minZ: -90, maxZ: 40, openAbove: 20 };
+  for (const aspect of Object.values(ASPECTS)) {
+    const free = solveShot(shot({ size: "EWS", angle: "high", side: "left34" }), street, { aspect, u: 0.5, seconds: 3, seed: "o" });
+    assert.ok(free.position[1] > 20, `aerial at ${free.position[1].toFixed(1)} m`);
+    const aerial = solveShot(shot({ size: "EWS", angle: "high", side: "left34" }), { ...street, bounds: corridor }, { aspect, u: 0.5, seconds: 3, seed: "o" });
+    assert.deepEqual(aerial.position, free.position, "over the roofs: the x/z limits don't apply");
+    const low = solveShot(shot({ size: "EWS", angle: "eye", side: "left34" }), { ...street, bounds: corridor }, { aspect, u: 0.5, seconds: 3, seed: "o" });
+    assert.ok(Math.abs(low.position[0]) <= 4 + 1e-6, `eye-level wide at x ${low.position[0].toFixed(2)}`);
+    // Without openAbove the same aerial is pulled into the corridor.
+    const boxed = solveShot(shot({ size: "EWS", angle: "high", side: "left34" }), { ...street, bounds: { ...corridor, openAbove: undefined } }, { aspect, u: 0.5, seconds: 3, seed: "o" });
+    assert.ok(Math.abs(boxed.position[0]) <= 4 + 1e-6);
+  }
+});
+
+test("outdoor bounds: the over-the-roofs choice holds all shot long (no jump when a move crosses it)", () => {
+  const street: Subject = { center: [0, 4, -20], radius: 6, height: 8, facing: 0, ground: 0 };
+  const free = (u: number) => solveShot(shot({ size: "WS", angle: "high", side: "left34", move: "pull_out" }), street, { aspect: 9 / 16, u, seconds: 3, seed: "j" });
+  // A roof line the free camera rises through during the pull-out.
+  const line = (free(0).position[1] + free(1).position[1]) / 2;
+  assert.ok(free(0).position[1] < line && free(1).position[1] > line);
+  const bounded: Subject = { ...street, bounds: { minX: -4, maxX: 4, minZ: -90, maxZ: 40, openAbove: line } };
+  let prev = solveShot(shot({ size: "WS", angle: "high", side: "left34", move: "pull_out" }), bounded, { aspect: 9 / 16, u: 0, seconds: 3, seed: "j" });
+  for (let f = 1; f <= 90; f++) {
+    const p = solveShot(shot({ size: "WS", angle: "high", side: "left34", move: "pull_out" }), bounded, { aspect: 9 / 16, u: f / 90, seconds: 3, seed: "j" });
+    const step = Math.hypot(p.position[0] - prev.position[0], p.position[1] - prev.position[1], p.position[2] - prev.position[2]);
+    assert.ok(step < 0.5, `frame ${f}: camera jumped ${step.toFixed(2)} m`);
+    prev = p;
+  }
+});
+
 test("the camera never stands inside a big subject; small props can be filmed from low", () => {
   const cafe: Subject = { center: [0, 1, 0], radius: 1.4, height: 1.6, ground: 0 };
   const cu = solveShot(shot({ size: "CU" }), cafe, { aspect: 9 / 16, u: 0.5, seconds: 3, seed: "c" });

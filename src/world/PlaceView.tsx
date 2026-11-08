@@ -22,19 +22,22 @@ export type PlaceViewProps = {
   fov?: number;
   /** Optional story mood (the toon palette grade; inspecting a graded world). */
   mood?: string;
+  /** Kit core near radius (GroundWorld kitLod): 0 shows every kit building
+   *  as far cards, a huge value every one from its kit pieces. */
+  kitLod?: number;
 };
 
 const GL = { logarithmicDepthBuffer: true, antialias: true };
 const NO_PASSAGE: [number, number] = [-75, 0];
 
-export const PlaceView: React.FC<PlaceViewProps> = ({ place, moment, pos, target, fov, mood }) => {
+export const PlaceView: React.FC<PlaceViewProps> = ({ place, moment, pos, target, fov, mood, kitLod }) => {
   const { width, height } = useVideoConfig();
   const resolved = useMemo(() => resolvePlace(place, moment), [place, moment]);
   const pose = useMemo(() => ({ pos, target }), [pos, target]);
   return (
     <AbsoluteFill style={{ background: "#000" }}>
       <ThreeCanvas width={width} height={height} shadows gl={GL}>
-        <GroundWorld place={resolved} pose={pose} fov={fov ?? (width < height ? 62 : 42)} cloudPassage={NO_PASSAGE} mood={mood} />
+        <GroundWorld place={resolved} pose={pose} fov={fov ?? (width < height ? 62 : 42)} cloudPassage={NO_PASSAGE} mood={mood} kitLod={kitLod} />
       </ThreeCanvas>
     </AbsoluteFill>
   );

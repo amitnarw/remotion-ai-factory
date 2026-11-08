@@ -15,11 +15,12 @@ import * as React from "react";
 import { Hook } from "../hud/Hook";
 import { TimerHUD } from "../hud/TimerHUD";
 import { Captions } from "../hud/Captions";
-import { StatHud, ZoomVignette } from "../hud/StatHud";
+import { StatHud, ZoomVignette, hasPulseRow } from "../hud/StatHud";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
 import { ShotSpec } from "../../generator/spec.schema";
-import { resolveCaptionStyle } from "../../generator/caption-style";
+import { resolveCaptionStyle, resolveHudStyle } from "../../generator/caption-style";
+import { hudStack, textHudMeetsHook } from "../../generator/layout";
 import { AssetStage } from "../AssetStage";
 import { StreetStage } from "../StreetStage";
 import { SpaceStage } from "../SpaceStage";
@@ -35,7 +36,8 @@ import { CinematicLook } from "../look/CinematicLook";
 import { lookFor } from "../../generator/look-choice";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
 import { WorldStage } from "./WorldStage";
-import { FlightView } from "./FlightView";
+import { FlightView, flightScenes } from "./FlightView";
+import { TIMING, veilAt } from "../../world/flight";
 
 type SceneKey = "city" | "first-person";
 
@@ -83,8 +85,28 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const SceneComp = sceneComponents[scene.scene as SceneKey];
   const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
   const captionLook = resolveCaptionStyle(spec.settings?.captions);
+  // The HUD follows the caption look: text over the picture on the serif
+  // looks (the reference default), white cards on the others. When a video
+  // has a counter and a timer, hudStack says where each one goes.
+  const hudLook = resolveHudStyle(spec.settings?.captions);
+  const hudSlots = hudStack(hudLook.kind, { counter: !!spec.statPanel, pulse: hasPulseRow(spec.statPanel), timer: !!spec.timer });
+  const hookFrames = { from: secToFrame(spec.hook.t, fps), to: secToFrame(spec.hook.t + spec.hook.duration, fps) };
+  // With the text HUD the hook sits high; the HUD waits for it only when its
+  // column reaches that high (a counter stacked on a timer).
+  const hudWaitsForHook =
+    hudLook.kind === "text" && textHudMeetsHook(width, height, hudLook.caption, hudSlots.column) ? hookFrames : undefined;
   // A flight renders instead of the ground stage while its window runs (Phase 6).
   const flightWindow = (spec.flights ?? []).find((f) => timeSec >= f.from && timeSec < f.to);
+  // Its opaque canvas covers the whole frame, so the stage canvas under it
+  // draws nothing meanwhile: a world stage drawn and graded there was paid
+  // for on every flight frame and never seen.
+  const flightCovers = !!flightWindow && flightScenes(spec, flightWindow) != null;
+  // The flight's cloud veil turns the frame white for a moment at each scale
+  // switch (the same path time FlightView's Sequence gives WorldFlight); the
+  // captions and the text HUD get a dark glow for exactly that long.
+  const veil = flightWindow
+    ? veilAt(((displayFrame - Math.round(flightWindow.from * fps)) / fps) * (TIMING.end / (flightWindow.to - flightWindow.from)))
+    : 0;
 
   return (
     <div
@@ -106,7 +128,7 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         // but without this flag every one of those is ignored.
         shadows
       >
-        {activeScene.kit === "world" ? (
+        {flightCovers ? null : activeScene.kit === "world" ? (
           // The one-world place scene (Phase 6 step 1): a real place with its
           // own sun, season and city style
           <WorldStage scene={activeScene} spec={spec} fps={fps} />
@@ -151,11 +173,13 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         {/* The grade (Phase 3): tone mapping, bloom, colour, grain and vignette,
             chosen per scene from its time of day and the story's mood. Grain is
             kept light: per-frame grain makes the H.264 file far larger. */}
-        <CinematicLook
-          preset={lookFor(activeScene, spec.story?.mood)}
-          quality={spec.settings?.quality === "draft" ? "draft" : "final"}
-          grain={0.3}
-        />
+        {!flightCovers && (
+          <CinematicLook
+            preset={lookFor(activeScene, spec.story?.mood)}
+            quality={spec.settings?.quality === "draft" ? "draft" : "final"}
+            grain={0.3}
+          />
+        )}
       </ThreeCanvas>
 
       {/* Scene-to-scene dips and flashes */}
@@ -166,15 +190,24 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
 
       {/* Stat-panel escalation HUD + zoom vignette */}
       <ZoomVignette panel={spec.statPanel} fps={fps} />
-      <StatHud panel={spec.statPanel} fps={fps} />
+      <StatHud
+        panel={spec.statPanel}
+        fps={fps}
+        hud={hudLook}
+        glow={veil}
+        offsetY={hudSlots.counterOffsetY}
+        column={hudSlots.column}
+        hook={hudWaitsForHook}
+      />
 
       {/* Hook card */}
       <Hook
         text={spec.hook.text}
         style={captionLook}
         keywordHighlight={spec.hook.keywordHighlight}
-        startFrame={secToFrame(spec.hook.t, fps)}
-        endFrame={secToFrame(spec.hook.t + spec.hook.duration, fps)}
+        startFrame={hookFrames.from}
+        endFrame={hookFrames.to}
+        hud={hudLook.kind}
       />
 
       {/* Timer HUD */}
@@ -184,13 +217,17 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
           startFrame={secToFrame(spec.timer.startT, fps)}
           endFrame={secToFrame(spec.timer.endT, fps)}
           fps={fps}
-          // Below the counter card when a video has both.
-          offsetY={spec.statPanel ? 300 : 0}
+          hud={hudLook}
+          glow={veil}
+          // Cards: below the counter card when a video has both; text: the column's base.
+          offsetY={hudSlots.timerOffsetY}
+          column={hudSlots.column}
+          hook={hudWaitsForHook}
         />
       )}
 
       {/* Captions */}
-      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} />
+      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} />
 
       {/* Audio cues */}
       <CompositionAudio spec={spec} fps={fps} />

@@ -5,9 +5,9 @@
  * them: beats by id, shots / scenes / hits / music by their index in the film.
  *
  * Wording is different (Phase 4, keep-timing vs reflow): narration, dialog
- * and hook text go through PUT /api/film/:id with the edited spec — the
- * server adopts the story text (re-voices the changed line from the cache and
- * re-times) — and a caption's on-screen words are saved as keep-timing
+ * and hook text go through PUT /api/film/:id with the edited spec (the
+ * server adopts the story text, re-voices the changed line from the cache and
+ * re-times), and a caption's on-screen words are saved as keep-timing
  * overrides (the voice and the window stay, only the words change).
  */
 import { useState, type ReactNode } from "react";

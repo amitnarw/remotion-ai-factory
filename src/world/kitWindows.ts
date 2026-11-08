@@ -13,8 +13,16 @@
  *    perfectly aligned, no geometry, no recipe knowledge;
  *  - a bare glass material (no map; e.g. some panes) glows as a whole.
  * The original materials are never touched (day renders stay identical).
+ *
+ * Lights out (react/dark.ts): a glow copy whose instances carry a key
+ * [x, z, id] in their instanceColor (KitInstances: the building's lot centre
+ * and index) goes out with its building as the blackout wave passes. The
+ * colour itself is never used (the output below replaces it). Without
+ * instance keys (the far cards' bake, plain meshes) the glow stays on.
  */
 import * as THREE from "three";
+import { DARK_GLSL } from "./react/dark";
+import { bindDarkWave } from "./react/darkShader";
 
 const GLOW_CACHE = new Map<string, THREE.Material>();
 
@@ -30,6 +38,7 @@ uniform sampler2D uGlowMap;
 uniform mat3 uGlowT;
 #endif
 varying vec2 vGlowUv;
+flat varying float vDarkLit;
 `;
 
 /** The mask, from the part's own atlas (same uv, so it lines up): Kenney's
@@ -47,7 +56,7 @@ const GLOW_OUTPUT = /* glsl */ `
 #else
   gMask = 1.0;
 #endif
-  gl_FragColor.rgb = uGlowWarm * uGlowLevel * gMask;
+  gl_FragColor.rgb = uGlowWarm * uGlowLevel * gMask * vDarkLit;
 }
 `;
 
@@ -95,6 +104,7 @@ export function windowGlowMaterialFor(
     if (prev) prev(shader, renderer);
     shader.uniforms.uGlowWarm = { value: warm };
     shader.uniforms.uGlowLevel = { value: strength };
+    bindDarkWave(shader.uniforms);
     if (mapped) {
       const tex = std.map!;
       tex.updateMatrix?.();
@@ -102,7 +112,8 @@ export function windowGlowMaterialFor(
       shader.uniforms.uGlowT = { value: tex.matrix };
     }
     shader.vertexShader =
-      "varying vec2 vGlowUv;\n#ifdef USE_GLOWMAP\nuniform mat3 uGlowT;\n#endif\n" +
+      "varying vec2 vGlowUv;\nflat varying float vDarkLit;\n#ifdef USE_GLOWMAP\nuniform mat3 uGlowT;\n#endif\n" +
+      DARK_GLSL +
       shader.vertexShader.replace(
         "#include <uv_vertex>",
         [
@@ -110,6 +121,12 @@ export function windowGlowMaterialFor(
           "#ifdef USE_GLOWMAP",
           "  vec3 gUv3 = vec3( uv, 1.0 );",
           "  vGlowUv = ( uGlowT * gUv3 ).xy;",
+          "#endif",
+          // The instance's key rides in instanceColor (lights out, react/dark.ts).
+          "#ifdef USE_INSTANCING_COLOR",
+          "  vDarkLit = dkLit( instanceColor );",
+          "#else",
+          "  vDarkLit = 1.0;",
           "#endif",
         ].join("\n"),
       );

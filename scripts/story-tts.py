@@ -107,6 +107,17 @@ def run_kitten(job, out_dir):
 
     durations = {}
     for line in job["lines"]:
+        # Optional reproducibility pin: VoxCPM2 itself has no seed parameter,
+        # but its sampling uses torch's global RNG, so seeding it (and CUDA)
+        # recovers the same timbre when the same job is replayed.
+        seed = line.get("seed", job.get("seed"))
+        if seed is not None:
+            try:
+                torch.manual_seed(int(seed))
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(int(seed))
+            except (ValueError, TypeError):
+                pass
         path = os.path.join(out_dir, f"{line['id']}.wav")
         voice = line.get("voice") or KITTEN_DEFAULT_VOICE
         if voices and voice not in voices:
@@ -131,6 +142,30 @@ def run_kitten(job, out_dir):
     return durations, model.sample_rate
 
 
+
+def apply_voice_transform(wav, sr, tr):
+    """Apply a lightweight pitch/tempo/shape transform to a synthesised clip.
+    Graceful: any failure returns the original clip."""
+    if not isinstance(tr, dict):
+        return wav
+    try:
+        import numpy as np
+        import librosa
+        semitones = float(tr.get("semitones") or 0.0)
+        tempo = float(tr.get("tempo") or 1.0)
+        if abs(semitones) > 0.05:
+            wav = librosa.effects.pitch_shift(wav, sr=sr, n_steps=semitones)
+        if abs(tempo - 1.0) > 0.01:
+            wav = librosa.effects.time_stretch(wav, rate=tempo)
+        sat = float(tr.get("saturation") or 0.0)
+        if sat > 0.0:
+            wav = np.tanh(wav * (1.0 + sat)) / (1.0 + sat)
+        return wav
+    except Exception as e:
+        print(f"[voice-transform] {str(e)[:160]}", flush=True)
+        return wav
+
+
 def run_voxcpm(job, out_dir):
     use_all_cores()
     try:
@@ -147,25 +182,105 @@ def run_voxcpm(job, out_dir):
     model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device)
     sr = model.tts_model.sample_rate
     default_desc = job.get("defaultVoiceDesc")
-    # Voice descriptions are free text in parentheses. A bare preset id that
-    # reaches this point is left out rather than spoken as part of the line.
+    default_ref = job.get("defaultReferenceWav") or job.get("default_reference_wav")
+    default_style = job.get("defaultStyle") or job.get("default_style")
+    cfg_value = float(job.get("cfgValue", job.get("cfg_value", 2.0)))
+    timesteps = int(job.get("inferenceTimesteps", job.get("inference_timesteps", 20)))
+    if timesteps < 4:
+        timesteps = 4
+    if timesteps > 30:
+        timesteps = 30
+    default_ref_text = job.get("defaultReferenceText") or job.get("default_reference_text")
+    retry_threshold = float(job.get("retryBadcaseRatioThreshold", job.get("retry_badcase_ratio_threshold", 8.0)))
+    if retry_threshold < 4.0:
+        retry_threshold = 4.0
+    if retry_threshold > 12.0:
+        retry_threshold = 12.0
 
     durations = {}
     for line in job["lines"]:
+        # Optional reproducibility pin: VoxCPM2 itself has no seed parameter,
+        # but its sampling uses torch's global RNG, so seeding it (and CUDA)
+        # recovers the same timbre when the same job is replayed.
+        seed = line.get("seed", job.get("seed"))
+        if seed is not None:
+            try:
+                torch.manual_seed(int(seed))
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(int(seed))
+            except (ValueError, TypeError):
+                pass
         path = os.path.join(out_dir, f"{line['id']}.wav")
         text = line["text"]
-        desc = line.get("voiceDesc") or line.get("voice")
-        if desc and isinstance(desc, str) and " " in desc and not desc.startswith("("):
-            desc = f"({desc})"
-        if desc and isinstance(desc, str) and desc.startswith("("):
-            text = f"{desc}{text}"
-        elif default_desc:
-            text = f"{default_desc}{text}"
+        ref = line.get("referenceWav") or line.get("reference_wav") or default_ref
+        ref_text = line.get("referenceText") or line.get("reference_text") or default_ref_text
+        style = line.get("voiceStyle") or line.get("style") or default_style
+        si = ""
+        if style and isinstance(style, str) and style.strip():
+            si = style.strip()
+            if not si.startswith("("):
+                si = f"({si})"
+        target_text = f"{si}{text}" if si else text
+        if ref and ref_text and isinstance(ref_text, str) and ref_text.strip():
+            prompt_text = ref_text.strip() + " "
+            wav = model.generate(
+                text=prompt_text + target_text,
+                prompt_wav_path=ref,
+                prompt_text=prompt_text,
+                reference_wav_path=ref,
+                cfg_value=cfg_value,
+                inference_timesteps=timesteps,
+                normalize=True,
+                denoise=False,
+                retry_badcase=True,
+                retry_badcase_max_times=3,
+                retry_badcase_ratio_threshold=retry_threshold,
+            )
+        elif ref:
+            wav = model.generate(
+                text=target_text,
+                reference_wav_path=ref,
+                cfg_value=cfg_value,
+                inference_timesteps=timesteps,
+                normalize=True,
+                denoise=False,
+                retry_badcase=True,
+                retry_badcase_max_times=3,
+                retry_badcase_ratio_threshold=retry_threshold,
+            )
+        else:
+            desc = line.get("voiceDesc") or line.get("voice")
+            if desc and isinstance(desc, str) and " " in desc and not desc.startswith("("):
+                desc = f"({desc})"
+            if desc and isinstance(desc, str) and desc.startswith("("):
+                text = f"{desc}{text}"
+            elif default_desc:
+                text = f"{default_desc}{text}"
 
-        wav = model.generate(text=text, cfg_value=2.0, inference_timesteps=10)
+            wav = model.generate(
+                text=text,
+                cfg_value=cfg_value,
+                inference_timesteps=timesteps,
+                normalize=True,
+                denoise=False,
+                retry_badcase=True,
+                retry_badcase_max_times=3,
+                retry_badcase_ratio_threshold=retry_threshold,
+            )
+        # Per-voice transforms (semitones / tempo / saturation). Applied in-memory
+        # before trimming and caching so every consumer sees the finished clip.
+        line_transform = line.get("voiceTransform") or line.get("voice_transform")
+        if line_transform is None:
+            line_transform = job.get("defaultVoiceTransform") or job.get("default_voice_transform")
+        if line_transform:
+            wav = apply_voice_transform(wav, sr, line_transform)
         if os.path.exists(path):
             os.remove(path)
         sf.write(path, wav, sr)
+        try:
+            trim_silence(path, keep=0.08, max_pause=0.60)
+        except Exception:
+            pass
         durations[line["id"]] = round(wav_duration(path), 3)
         print(f"[voice/voxcpm] {line['id']}: {durations[line['id']]}s", flush=True)
     return durations, sr
@@ -241,6 +356,166 @@ def worker_kitten() -> None:
             print("@@ " + json.dumps({"ok": False, "id": lid, "error": str(e)[:300]}), flush=True)
 
 
+def worker_voxcpm() -> None:
+    """Keep VoxCPM2 loaded and synthesize lines as they arrive on stdin."""
+
+    import time  # noqa: PLC0415
+    import json
+    import os
+    import sys
+
+    import torch
+
+    try:
+        from voxcpm import VoxCPM  # noqa: E402
+    except Exception as e:  # pragma: no cover - load failure
+        print("@@ " + json.dumps({"ok": False, "id": None, "error": f"voxcpm import failed: {str(e)[:300]}"}), flush=True)
+        raise
+
+    t0 = time.time()
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device)
+        sr = model.tts_model.sample_rate
+    except Exception as e:
+        print("@@ " + json.dumps({"ok": False, "id": None, "error": f"model load failed: {str(e)[:300]}"}), flush=True)
+        raise
+
+    def trim_silence_local(path):
+        try:
+            trim_silence(path, keep=0.08, max_pause=0.60)
+        except Exception:
+            pass
+
+    print(f"[voice/worker] voxcpm ready in {time.time() - t0:.1f}s", flush=True)
+
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            req = json.loads(raw)
+        except Exception as e:
+            print("@@ " + json.dumps({"ok": False, "id": None, "error": f"bad request line: {str(e)[:120]}"}), flush=True)
+            continue
+        if req.get("op") == "quit":
+            break
+
+        lid = str(req.get("id") or "line")
+        text = str(req.get("text") or "")
+        out_dir = req.get("outDir") or "."
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{lid}.wav")
+
+        ref = req.get("referenceWav") or req.get("reference_wav")
+        ref_text = req.get("referenceText") or req.get("reference_text")
+        style = req.get("voiceStyle") or req.get("style")
+        voice_desc = req.get("voiceDesc") or req.get("voice")
+        default_desc = req.get("defaultVoiceDesc") or req.get("default_desc")
+        default_ref = req.get("defaultReferenceWav") or req.get("default_reference_wav")
+        default_ref_text = req.get("defaultReferenceText") or req.get("default_reference_text")
+        default_style = req.get("defaultStyle") or req.get("default_style")
+        ref = ref or default_ref
+        ref_text = ref_text or default_ref_text
+        style = style or default_style
+
+        seed = req.get("seed")
+        if seed is not None:
+            try:
+                torch.manual_seed(int(seed))
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(int(seed))
+            except (ValueError, TypeError):
+                pass
+        cfg_value = float(req.get("cfgValue", req.get("cfg_value", 2.0)))
+        timesteps = int(req.get("inferenceTimesteps", req.get("inference_timesteps", 20)))
+        if timesteps < 4:
+            timesteps = 4
+        if timesteps > 30:
+            timesteps = 30
+        retry_threshold = float(req.get("retryBadcaseRatioThreshold", req.get("retry_badcase_ratio_threshold", 8.0)))
+        if retry_threshold < 4.0:
+            retry_threshold = 4.0
+        if retry_threshold > 12.0:
+            retry_threshold = 12.0
+
+        si = ""
+        if style and isinstance(style, str) and style.strip():
+            si = style.strip()
+            if not si.startswith("("):
+                si = f"({si})"
+        target_text = f"{si}{text}" if si else text
+
+        try:
+            t1 = time.time()
+            if ref and ref_text and isinstance(ref_text, str) and ref_text.strip():
+                prompt_text = ref_text.strip() + " "
+                wav = model.generate(
+                    text=prompt_text + target_text,
+                    prompt_wav_path=ref,
+                    prompt_text=prompt_text,
+                    reference_wav_path=ref,
+                    cfg_value=cfg_value,
+                    inference_timesteps=timesteps,
+                    normalize=True,
+                    denoise=False,
+                    retry_badcase=True,
+                    retry_badcase_max_times=3,
+                    retry_badcase_ratio_threshold=retry_threshold,
+                )
+            elif ref:
+                wav = model.generate(
+                    text=target_text,
+                    reference_wav_path=ref,
+                    cfg_value=cfg_value,
+                    inference_timesteps=timesteps,
+                    normalize=True,
+                    denoise=False,
+                    retry_badcase=True,
+                    retry_badcase_max_times=3,
+                    retry_badcase_ratio_threshold=retry_threshold,
+                )
+            else:
+                desc = voice_desc or default_desc
+                gtext = text
+                if desc and isinstance(desc, str) and " " in desc and not desc.startswith("("):
+                    desc = f"({desc})"
+                if desc and isinstance(desc, str) and desc.startswith("("):
+                    gtext = f"{desc}{text}"
+                elif default_desc:
+                    gtext = f"{default_desc}{text}"
+                wav = model.generate(
+                    text=gtext,
+                    cfg_value=cfg_value,
+                    inference_timesteps=timesteps,
+                    normalize=True,
+                    denoise=False,
+                    retry_badcase=True,
+                    retry_badcase_max_times=3,
+                    retry_badcase_ratio_threshold=retry_threshold,
+                )
+
+            line_transform = req.get("voiceTransform") or req.get("voice_transform")
+            if line_transform is None:
+                line_transform = req.get("defaultVoiceTransform") or req.get("default_voice_transform")
+            if line_transform:
+                wav = apply_voice_transform(wav, sr, line_transform)
+            if os.path.exists(path):
+                os.remove(path)
+            try:
+                import soundfile as sfm
+                sfm.write(path, wav, sr)
+            except Exception as e:
+                raise RuntimeError(f"soundfile write failed: {e}")
+            trim_silence_local(path)
+            dur = round(wav_duration(path), 3)
+            print(f"[voice/voxcpm] {lid}: {dur}s in {time.time() - t1:.1f}s", flush=True)
+            print("@@ " + json.dumps({"ok": True, "id": lid, "dur": dur, "wav": os.path.abspath(path)}), flush=True)
+        except Exception as e:
+            print("@@ " + json.dumps({"ok": False, "id": lid, "error": str(e)[:300]}), flush=True)
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("job", nargs="?", default=None, help="path to job JSON")
@@ -255,10 +530,13 @@ def main() -> None:
     engine = args.engine or "kitten2"
 
     if args.worker:
-        if engine != "kitten2":
-            raise SystemExit("--worker is only implemented for kitten2")
-        worker_kitten()
-        return
+        if engine == "kitten2":
+            worker_kitten()
+            return
+        if engine == "voxcpm2":
+            worker_voxcpm()
+            return
+        raise SystemExit("--worker is only implemented for kitten2 and voxcpm2")
 
     if not args.job:
         parser.error("a job JSON file is required without --worker")

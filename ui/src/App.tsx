@@ -1,122 +1,82 @@
 /**
- * App shell, solid pill nav (tab lives in the URL), global Help, toasts.
- * Dark-first: index.html sets `class="dark"`; tokens live in index.css.
+ * App: the shell (sidebar or top bar), the four sections, and the editor
+ * full width. The screen lives in the URL (lib/routes.ts); old links are
+ * mapped onto the new screens before anything renders.
+ * Dark-first: index.html sets class="dark"; tokens live in index.css.
  */
 import * as React from "react";
-import { Clapperboard, Sparkles, Film, Plug, Settings } from "lucide-react";
 import { Toaster } from "sonner";
-import { toast } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { HelpDialog } from "./components/InfoTip";
-import { useQuery, setQuery } from "./lib/navigation";
-import Generate from "./pages/Generate";
-import Providers from "./pages/Providers";
-import Videos from "./pages/Videos";
-import Setup from "./pages/Setup";
-import { cn } from "./lib/utils";
+import { AppShell } from "./components/AppShell";
+import { LoadingState } from "./components/shared";
+import { navigate, useQuery } from "./lib/navigation";
+import { normalizeQuery, sectionOf, type Section } from "./lib/routes";
+import { startJobsPolling } from "./lib/jobs";
+import Create from "./pages/create/Create";
+import Library from "./pages/library/Library";
+import Settings from "./pages/settings/Settings";
+import Help from "./pages/Help";
 
 // The editor pulls in the 3D composition; load it only when it is opened.
 const Editor = React.lazy(() => import("./pages/editor/Editor"));
 
-export type TabKey = "generate" | "videos" | "providers" | "setup" | "editor";
-
-const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
-  { key: "generate", label: "Generate", icon: <Sparkles className="h-4 w-4" /> },
-  { key: "videos", label: "Videos", icon: <Film className="h-4 w-4" /> },
-  { key: "providers", label: "Providers", icon: <Plug className="h-4 w-4" /> },
-  { key: "setup", label: "Setup", icon: <Settings className="h-4 w-4" /> },
-];
-
-/** Coerce arbitrary ?tab= values onto a known tab. "editor" has no pill: it opens from a plan. */
-function safeTab(raw: string | undefined): TabKey {
-  return raw === "videos" || raw === "providers" || raw === "setup" || raw === "editor" ? raw : "generate";
-}
+/** The last screen seen in each section, so the sidebar returns you there. */
+const lastSeen: Partial<Record<Section, Record<string, string>>> = {};
 
 export default function App() {
   const query = useQuery();
-  const tab = safeTab(query.get("tab") ?? undefined);
-  const seenDone = React.useRef<Set<string>>(new Set());
+  const fix = normalizeQuery(query);
+  const section = sectionOf(query);
 
   React.useEffect(() => {
-    const poll = async () => {
-      try {
-        const r = await fetch("/api/jobs");
-        if (!r.ok) return;
-        const jobs = (await r.json()) as { id: string; status: string; premise: string }[];
-        for (const j of jobs) {
-          if (j.status === "done" && !seenDone.current.has(j.id)) {
-            seenDone.current.add(j.id);
-            // Only toast if not currently on the generate tab viewing that job.
-            toast.success("Your video is ready!", { description: j.premise });
-          }
-        }
-      } catch { /* ignore */ }
+    if (fix) navigate(fix, { replace: true });
+  }, [fix]);
+
+  React.useEffect(() => startJobsPolling(), []);
+
+  React.useEffect(() => {
+    if (!fix) lastSeen[section] = Object.fromEntries(query.entries());
+  }, [fix, query, section]);
+
+  const go = (s: Exclude<Section, "editor">) => {
+    // Pressing the section you are in starts it from the top.
+    const remembered = s !== section ? lastSeen[s] : undefined;
+    navigate(remembered ?? (s === "create" ? { tab: "create", step: "idea" } : { tab: s }));
+  };
+
+  let page: React.ReactNode = null;
+  if (!fix) {
+    if (section === "create") page = <Create />;
+    else if (section === "library") page = <Library />;
+    else if (section === "settings") page = <Settings />;
+    else if (section === "help") page = <Help />;
+  }
+
+  React.useEffect(() => {
+    const titles: Record<Section, string> = {
+      create: "Create",
+      library: "Library",
+      settings: "Settings",
+      help: "Help",
+      editor: "Editor",
     };
-    const t = window.setInterval(poll, 6000);
-    poll();
-    return () => window.clearInterval(t);
-  }, []);
-
-  // Default the URL to the primary tab on first paint (no history spam).
-  React.useEffect(() => {
-    if (!query.has("tab")) setQuery({ tab: "generate" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    document.title = `${titles[section]} | Video Factory`;
+  }, [section]);
 
   return (
-    <TooltipProvider delayDuration={100}>
-      <div className="min-h-dvh text-foreground">
-        <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md">
-          <div className="mx-auto flex h-16 max-w-5xl items-center gap-3 px-4 pt-2">
-            <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
-              <span className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/30">
-                <Clapperboard className="h-5 w-5" />
-              </span>
-              <span className="text-base font-extrabold tracking-tight">Video Factory</span>
-            </div>
-            <nav className="flex flex-1 items-center justify-center gap-2">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setQuery({ tab: t.key })}
-                  className={cn(
-                    "inline-flex h-11 items-center gap-2 rounded-2xl px-5 text-[15px] font-bold transition-all active:scale-[0.97]",
-                    tab === t.key || (tab === "editor" && t.key === "generate")
-                      ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
-                      : "bg-secondary text-secondary-foreground hover:brightness-125",
-                  )}
-                >
-                  {t.icon}
-                  {t.label}
-                </button>
-              ))}
-            </nav>
-            <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
-              <HelpDialog />
-            </div>
-          </div>
-        </header>
-
-        <main className={cn("mx-auto px-4 py-8", tab === "editor" ? "max-w-[1600px]" : "max-w-5xl")}>
-          {tab === "generate" && <Generate />}
-          {tab === "videos" && <Videos />}
-          {tab === "providers" && <Providers />}
-          {tab === "setup" && <Setup />}
-          {tab === "editor" && (
-            <React.Suspense
-              fallback={<div className="py-16 text-center text-sm font-semibold text-muted-foreground">Loading the editor...</div>}
-            >
-              <Editor />
-            </React.Suspense>
-          )}
+    <TooltipProvider delayDuration={150}>
+      {section === "editor" ? (
+        <main className="mx-auto w-full max-w-[1600px] px-3 pb-10 sm:px-4">
+          <React.Suspense fallback={<LoadingState className="mt-10" title="Loading the editor..." />}>
+            <Editor />
+          </React.Suspense>
         </main>
-
-        <footer className="pb-8 pt-2 text-center text-sm font-medium text-muted-foreground">
-          Everything runs on this computer. Nothing is uploaded anywhere, except
-          the accounts you set up yourself.
-        </footer>
-      </div>
-      <Toaster theme="dark" position="bottom-center" richColors />
+      ) : (
+        <AppShell section={section} onNavigate={go}>
+          {page}
+        </AppShell>
+      )}
+      <Toaster theme="dark" position="bottom-right" richColors closeButton />
     </TooltipProvider>
   );
 }

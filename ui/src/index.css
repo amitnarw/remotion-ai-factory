@@ -1,5 +1,5 @@
-/* Kid-simple dark theme: SOLID fills everywhere, ZERO borders/lines.
-   Separation = panel color + spacing + soft shadows. */
+/* Dark theme: solid fills, no hairline borders. Separation comes from panel
+   colour, spacing and soft shadows. Focus is always a visible ring. */
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
@@ -8,35 +8,39 @@
 .dark {
   --background: oklch(0.155 0.025 278);
   --foreground: oklch(0.98 0.006 280);
-  /* Panels: clearly lighter than bg, they "float" on it. */
+  /* The desktop sidebar sits a step above the page. */
+  --sidebar: oklch(0.185 0.028 278);
+  /* Panels: clearly lighter than the page, they float on it. */
   --card: oklch(0.215 0.03 278);
   --card-foreground: oklch(0.98 0.006 280);
   --popover: oklch(0.235 0.032 278);
   --popover-foreground: oklch(0.98 0.006 280);
-  --primary: oklch(0.55 0.21 292);
+  --primary: oklch(0.58 0.21 292);
   --primary-foreground: oklch(0.99 0.003 280);
-  /* Secondary = every "plain" button: solid slate fill, always visible. */
+  /* Secondary = every plain button: a solid slate fill, always visible. */
   --secondary: oklch(0.32 0.035 280);
   --secondary-foreground: oklch(0.96 0.008 280);
   --muted: oklch(0.3 0.03 280);
-  --muted-foreground: oklch(0.72 0.025 281);
-  /* Accent = amber "star" fill (Generate / Auto-best). */
-  --accent: oklch(0.78 0.16 80);
-  --accent-foreground: oklch(0.25 0.08 80);
-  --destructive: oklch(0.55 0.21 25);
+  --muted-foreground: oklch(0.74 0.025 281);
+  /* Accent = the amber fill of the one main action on each screen. */
+  --accent: oklch(0.8 0.16 80);
+  --accent-foreground: oklch(0.24 0.08 80);
+  --destructive: oklch(0.56 0.21 25);
   --destructive-foreground: oklch(0.99 0.003 280);
-  --success: oklch(0.62 0.17 155);
+  --success: oklch(0.64 0.17 155);
   --success-foreground: oklch(0.99 0.003 280);
-  /* Inputs are FILLED (no outline): lighter solid fill inside panels. */
+  /* Inputs are FILLED (no outline): a lighter solid fill inside panels. */
   --input: oklch(0.28 0.032 278);
   --border: transparent;
-  --ring: oklch(0.55 0.21 292 / 70%);
+  --ring: oklch(0.72 0.18 292 / 85%);
   --radius: 1rem;
 }
 
 @theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-sidebar: var(--sidebar);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -63,16 +67,22 @@
 
 html {
   color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   min-height: 100dvh;
   background:
-    radial-gradient(1000px 560px at 88% -12%, oklch(0.4 0.16 292 / 0.28), transparent 62%),
-    radial-gradient(760px 460px at -8% 24%, oklch(0.5 0.12 80 / 0.12), transparent 58%),
+    radial-gradient(1000px 560px at 88% -12%, oklch(0.4 0.16 292 / 0.22), transparent 62%),
+    radial-gradient(760px 460px at -8% 24%, oklch(0.5 0.12 80 / 0.08), transparent 58%),
     var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
-  font-size: 16.5px;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -96,4 +106,55 @@ body {
 *::before,
 *::after {
   border-color: transparent;
+}
+
+/* One focus style everywhere a keyboard can land. Components that draw their
+   own ring (focus-visible:ring-*) keep it; this covers the rest. The video
+   players (className "vf-player") focus their own play button on load so Space
+   plays; they keep their own styles. */
+:where(a, button, [role="button"], [role="tab"], [role="radio"], [role="switch"], summary, input, textarea, select, [tabindex]):focus-visible:not(.vf-player *) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Native range sliders in the caption options pick up the primary colour. */
+input[type="range"] {
+  accent-color: var(--primary);
+}
+
+/* Pointers on every genuinely clickable element. Components that set their own
+   cursor (e.g. drag handles) still override. */
+@layer base {
+  a[href],
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"],
+  [role="radio"],
+  [role="switch"],
+  [role="menuitem"],
+  summary,
+  label[for],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  input[type="file"]:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

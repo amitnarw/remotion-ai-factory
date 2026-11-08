@@ -15,6 +15,10 @@ import { makeRng } from "../rng";
 import { blockCentre, openBlocks, GROUND } from "../cityAnchors";
 import { lampSpots } from "./night";
 import { markWaterGeometry } from "./water";
+import { darkKeyAttribute, patchDarkBasic, patchDarkEmissive } from "../react/darkShader";
+
+/** First id of the lamps' lights-out keys (clear of the buildings' indices). */
+const LAMP_KEY_ID = 1_000_000;
 
 /** Point in a polygon ([x, z], even winding). */
 function pointInPolygon(x: number, z: number, poly: readonly [number, number][]): boolean {
@@ -134,6 +138,10 @@ export function plazaDressing(
   /** The shared drawn-water material for the fountain's pool (optional;
    *  without it the plain flat pool colour stays, as before). */
   poolMat?: THREE.Material,
+  /** The main plaza holds the kit-model market (market.ts): its random
+   *  stalls give way to the market's rows, and its benches face the
+   *  fountain from the ring the market keeps clear. */
+  market = false,
 ): THREE.Group {
   const r = makeRng(`dressing:${seed}`);
   const group = new THREE.Group();
@@ -141,6 +149,15 @@ export function plazaDressing(
   for (const [pi, plaza] of plazas.entries()) {
     const [cx, cz] = blockCentre(plaza.polygon);
     if (pi === 0) group.add(fountain(cx, cz, poolMat));
+    if (pi === 0 && market) {
+      // Four benches on a 6 m circle, on the diagonals between the aisles,
+      // each along the circle.
+      for (let i = 0; i < 4; i++) {
+        const a = Math.PI / 4 + (i * Math.PI) / 2;
+        group.add(bench(cx + Math.cos(a) * 6, cz + Math.sin(a) * 6, Math.PI / 2 - a));
+      }
+      continue;
+    }
     const ns = 3 + Math.floor(r() * 3);
     for (let i = 0; i < ns; i++) {
       const p = insidePoint(r, plaza.polygon as [number, number][], 5);
@@ -162,10 +179,13 @@ export function plazaDressing(
 
 /** Street lamps: one instanced pole per spot and one glowing head; at night
  *  the heads emit and a pool of warm light lies on the ground under each.
- *  The pole leans an arm toward the carriage. */
+ *  The pole leans an arm toward the carriage. Lights out (react/dark.ts):
+ *  each lamp's head and pool go out as the blackout wave reaches its spot. */
 export function lampGroup(style: RegionStyle, night: boolean): THREE.Group {
   const group = new THREE.Group();
   const spots = lampSpots(style);
+  const keys = new Float32Array(spots.length * 3);
+  spots.forEach((s, i) => keys.set([s.x, s.z, LAMP_KEY_ID + i], i * 3));
   const pools = new THREE.InstancedMesh(
     new THREE.CircleGeometry(3.4, 12).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({
@@ -209,6 +229,9 @@ export function lampGroup(style: RegionStyle, night: boolean): THREE.Group {
     m.castShadow = true;
     m.receiveShadow = true;
   }
+  for (const m of [heads, pools]) m.geometry.setAttribute("aDark", darkKeyAttribute(keys, true));
+  patchDarkEmissive(headMat);
+  patchDarkBasic(pools.material as THREE.Material);
   group.add(poles, arms, heads);
   if (night) group.add(pools);
   return group;

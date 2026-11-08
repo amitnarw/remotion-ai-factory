@@ -15,15 +15,15 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { CACHE_DIR, cachedDuration, synthesizeLines, tempoVoiceFile, type VoiceLine } from "../tts";
 import { resolveTtsPython } from "../tts-python";
-import { voxDescription } from "../voices";
+import { voxDescription, voxTransform } from "../voices";
 import type { WriterCharacter, WriterStory } from "./writer";
 
 type Engine = "kitten2" | "voxcpm2";
 
 /** Same shape the dashboard sends as the job's audio config. */
 export interface AudioConfig {
-  narration?: { enabled?: boolean; engine?: Engine; voice?: string };
-  dialogs?: { enabled?: boolean; engine?: Engine; defaultVoice?: string; voices?: Record<string, string> };
+  narration?: { enabled?: boolean; engine?: Engine; voice?: string; voiceDesc?: string; referenceWav?: string; referenceText?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number } } | null;
+  dialogs?: { enabled?: boolean; engine?: Engine; defaultVoice?: string; voices?: Record<string, string>; voiceDesc?: string; referenceWav?: string; referenceText?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number } } | null;
 }
 
 export interface PlannedLine {
@@ -35,6 +35,10 @@ export interface PlannedLine {
   engine: Engine;
   voice: string;
   voiceDesc?: string;
+  referenceWav?: string;
+  referenceText?: string;
+  voiceStyle?: string;
+  voiceTransform?: { semitones?: number; tempo?: number; saturation?: number };
   /** Seconds, measured (estimated = false) or from the word count (estimated = true). */
   dur: number;
   estimated: boolean;
@@ -48,6 +52,10 @@ export interface CastVoice {
   engine: Engine;
   voice: string;
   voiceDesc?: string;
+  referenceWav?: string;
+  referenceText?: string;
+  voiceStyle?: string;
+  voiceTransform?: { semitones?: number; tempo?: number; saturation?: number };
 }
 
 /**
@@ -67,26 +75,67 @@ function kittenFor(c: WriterCharacter, taken: Set<string>): string {
   return ordered.find((v) => !taken.has(v)) ?? ordered[0];
 }
 
-function voxFor(c: WriterCharacter): string {
-  const age = c.age === "child" ? "Young child" : c.age === "old" ? "Elderly" : "Adult";
-  const gender = c.gender === "female" ? "female" : c.gender === "male" ? "male" : "";
-  return `${age} ${gender} voice, natural and expressive${c.look ? `, ${c.look}` : ""}`.replace(/\s+/g, " ").trim();
+/** Curated VoxCPM2 preset for a character, honouring an explicit default voice. */
+function voxCastId(c: WriterCharacter, story: WriterStory, override?: string): string {
+  let preset = "character-hero";
+  if (c.age === "child") preset = c.gender === "female" ? "character-child-girl-6" : "character-child-boy-8";
+  else if (c.age === "old") preset = "narrator-animal-planet";
+  else if (/thriller|suspense|villain|antagonist|dark/i.test(story.mood ?? "")) preset = "character-villain";
+  if (override && /character-(hero|villain|child|elder)|narrator-/.test(override)) preset = override;
+  return preset;
+}
+
+/** Short curated casting note for a character, honouring age, gender and story mood. */
+function curatedVoiceDesc(c: WriterCharacter, story: WriterStory): string {
+  const ageWord = c.age === "child" ? "child aged 8" : c.age === "old" ? "elderly man" : "young adult";
+  const genderWord = c.gender === "female" ? "female" : c.gender === "male" ? "male" : "";
+  const archetype =
+    c.age === "child" ? "bright high-pitched, curious naive expressive delivery, family documentary dialogue" :
+    c.age === "old" ? "warm grainy textured, slow wise delivery with gentle tremor, oral-history narration" :
+    /thriller|suspense|villain|antagonist|dark/i.test(story.mood ?? "") ? "deep slow controlled baritone, dark resonant, deliberate menacing cadence, antagonist dialogue" :
+    "confident energetic mid-low voice, bright clear projection, adventure protagonist dialogue";
+  return `${ageWord} ${genderWord} voice, ${archetype}`.replace(/\s+/g, " ").trim();
 }
 
 /** A voice for the narrator and for each character, never two characters on one preset. */
 export function castVoices(story: WriterStory, audio: AudioConfig): { narrator: CastVoice; characters: Record<string, CastVoice> } {
   const nEngine: Engine = audio.narration?.engine ?? "kitten2";
   const nVoice = audio.narration?.voice ?? (nEngine === "kitten2" ? "Bruno" : "narrator-calm");
-  const narrator: CastVoice = { engine: nEngine, voice: nVoice, voiceDesc: nEngine === "voxcpm2" ? voxDescription(nVoice) : undefined };
+  const narrator: CastVoice = {
+    engine: nEngine,
+    voice: nVoice,
+    voiceDesc: nEngine === "voxcpm2" ? voxDescription(nVoice, audio.narration?.voiceDesc) : undefined,
+    referenceWav: audio.narration?.referenceWav,
+    voiceTransform: nEngine === "voxcpm2" ? (audio.narration?.voiceTransform ?? voxTransform(nVoice)) : undefined,
+    referenceText: audio.narration?.referenceText,
+    voiceStyle: audio.narration?.voiceStyle,
+  };
   const dEngine: Engine = audio.dialogs?.engine ?? "kitten2";
   const chosen = audio.dialogs?.voices ?? {};
   const taken = new Set<string>([nVoice]);
   const characters: Record<string, CastVoice> = {};
   for (const c of story.characters) {
     const explicit = chosen[c.name];
-    const voice = explicit ?? (dEngine === "kitten2" ? kittenFor(c, taken) : voxFor(c));
+    const defaultVoice = audio.dialogs?.defaultVoice;
+    const voice =
+      explicit ?? (dEngine === "kitten2" ? kittenFor(c, taken) : voxCastId(c, story, defaultVoice));
     taken.add(voice);
-    characters[c.name] = { engine: dEngine, voice, voiceDesc: dEngine === "voxcpm2" ? voxDescription(voice) : undefined };
+    const voxDesc = dEngine === "voxcpm2"
+    ? (audio.dialogs?.voiceDesc && audio.dialogs.voiceDesc.trim()
+        ? audio.dialogs.voiceDesc.trim()
+        : (/^character-child-(girl-6|boy-8)$/.test(voice)
+            ? (voxDescription(voice) ?? curatedVoiceDesc(c, story))
+            : curatedVoiceDesc(c, story)))
+    : undefined;
+    characters[c.name] = {
+      engine: dEngine,
+      voice,
+      voiceDesc: voxDesc,
+      referenceWav: audio.dialogs?.referenceWav,
+      referenceText: audio.dialogs?.referenceText,
+      voiceStyle: audio.dialogs?.voiceStyle,
+      voiceTransform: dEngine === "voxcpm2" ? (audio.dialogs?.voiceTransform ?? voxTransform(voxCastId(c, story, defaultVoice))) : undefined,
+    };
   }
   return { narrator, characters };
 }
@@ -105,7 +154,7 @@ export function planLines(story: WriterStory, audio: AudioConfig): PlannedLine[]
   const dialogsOn = audio.dialogs?.enabled ?? false;
   const cast = castVoices(story, audio);
   const out: PlannedLine[] = [];
-  const base = (v: CastVoice) => ({ engine: v.engine, voice: v.voice, voiceDesc: v.voiceDesc, dur: 0, estimated: true });
+  const base = (v: CastVoice) => ({ engine: v.engine, voice: v.voice, voiceDesc: v.voiceDesc, referenceWav: v.referenceWav, referenceText: v.referenceText, voiceStyle: v.voiceStyle, voiceTransform: v.voiceTransform, dur: 0, estimated: true });
   if (narrationOn && story.hook) {
     out.push({ id: "hook", beatId: "hook", who: "narrator", kind: "narration", text: story.hook, ...base(cast.narrator) });
   }
@@ -117,7 +166,8 @@ export function planLines(story: WriterStory, audio: AudioConfig): PlannedLine[]
     }
     if (dialogsOn) {
       b.lines.forEach((l, i) => {
-        const v = cast.characters[l.who] ?? { engine: audio.dialogs?.engine ?? "kitten2", voice: audio.dialogs?.defaultVoice ?? "Rosie" };
+        const fallback = audio.dialogs?.defaultVoice ?? (audio.dialogs?.engine === "voxcpm2" ? "character-hero" : "Rosie");
+        const v = cast.characters[l.who] ?? { engine: audio.dialogs?.engine ?? "kitten2", voice: fallback };
         out.push({ id: `${b.id}-d${i + 1}`, beatId: b.id, who: l.who, kind: "dialog", text: l.text, ...base(v) });
       });
     }
@@ -218,7 +268,7 @@ export async function voiceLines(
 
   const durations = new Map<string, { dur: number; file: string }>();
   if (real.length > 0) {
-    const vl: VoiceLine[] = real.map((l) => ({ id: l.id, text: l.text, at: 0, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc, kind: l.kind }));
+    const vl: VoiceLine[] = real.map((l) => ({ id: l.id, text: l.text, at: 0, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc, referenceWav: l.referenceWav, referenceText: l.referenceText, voiceStyle: l.voiceStyle, voiceTransform: l.voiceTransform, kind: l.kind }));
     try {
       const manifest = await synthesizeLines(vl, id);
       for (const e of manifest.lines) durations.set(e.id, { dur: e.dur ?? 0, file: e.file });
@@ -243,7 +293,7 @@ export async function voiceLines(
   }
   if (fromCache.length > 0) {
     try {
-      const vl: VoiceLine[] = fromCache.map((l) => ({ id: l.id, text: l.text, at: 0, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc, kind: l.kind }));
+      const vl: VoiceLine[] = fromCache.map((l) => ({ id: l.id, text: l.text, at: 0, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc, referenceWav: l.referenceWav, referenceText: l.referenceText, voiceStyle: l.voiceStyle, voiceTransform: l.voiceTransform, kind: l.kind }));
       const manifest = await synthesizeLines(vl, id);
       for (const e of manifest.lines) if (e.dur) durations.set(e.id, { dur: e.dur, file: e.file });
       console.log(`[voice] ${fromCache.length} measured line(s) reused from the cache (no synthesis needed)`);

@@ -92,7 +92,8 @@ export function travelCourse(a: ResolvedPlace, b: ResolvedPlace) {
   return { nA, nB, depart, arrive, distanceKm };
 }
 
-function veilAt(t: number): number {
+/** The cloud veil at path time t (0..1); the main video uses it to keep captions readable. */
+export function veilAt(t: number): number {
   const v = (seam: number) => smooth(1 - Math.abs(t - seam) / TIMING.veilRamp);
   return Math.max(v(TIMING.seam1), v(TIMING.seam2));
 }
@@ -143,6 +144,20 @@ function globePose(t: number, nA: Vec3, nB: Vec3): GlobePose {
     up: normalize([ahead[0] - here[0], ahead[1] - here[1], ahead[2] - here[2]]),
     altitudeKm,
   };
+}
+
+/** Every ground camera position on one side of the flight, sampled each
+ *  `step` seconds of path time (the kit city's levels of detail keep their
+ *  kit pieces near this path for the whole scene). */
+export function groundPath(side: "a" | "b", a: ResolvedPlace, b: ResolvedPlace, step = 0.1): Vec3[] {
+  const [t0, t1] = side === "a" ? [0, TIMING.seam1 - 1e-6] : [TIMING.seam2, TIMING.end];
+  const n = Math.max(1, Math.ceil((t1 - t0) / step));
+  const out: Vec3[] = [];
+  for (let i = 0; i <= n; i++) {
+    const g = flightAt(t0 + ((t1 - t0) * i) / n, a, b).ground;
+    if (g?.side === side) out.push(g.pose.pos);
+  }
+  return out;
 }
 
 export function flightAt(t: number, a: ResolvedPlace, b: ResolvedPlace): FlightFrame {

@@ -79,8 +79,11 @@ export async function prepareFilm(id: string, opts: { voice?: "measure" | "estim
       );
     }
   }
-  // The approved-plan file the render step reads keeps following the edits.
-  writeFileSync(join(process.cwd(), "output", `${id}-spec.json`), JSON.stringify(re.spec, null, 2));
+  // The approved-plan file the render step reads keeps following the edits:
+  // output/<id>/spec.json since the per-video folders (the render route,
+  // /api/spec and lastPrepared read it; writing the old flat file left them on
+  // the plan-time spec, so edits were not rendered).
+  writeFileSync(join(process.cwd(), "output", id, "spec.json"), JSON.stringify(re.spec, null, 2));
   const resolved = resolveAudio(re.spec, id);
   // Honest answer in both modes: voice.json now marks only the genuinely
   // unmeasured lines, so an all-cache "estimate" answer IS measured (and an

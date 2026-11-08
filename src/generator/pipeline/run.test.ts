@@ -6,7 +6,7 @@ import { SettingsSchema, validateSpec } from "../spec.schema";
 import { parseCounterValue } from "./assemble";
 import { matchesStress } from "./captions";
 import { resetFixtureCounters } from "./llm";
-import { mergeAudio, reassemble, runPlan } from "./run";
+import { approvedSettings, mergeAudio, reassemble, runPlan } from "./run";
 import { matchSound, soundVocabulary } from "./sound";
 import { resolveTtsPython } from "../tts-python";
 
@@ -80,6 +80,19 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     const saved = JSON.parse(readFileSync(join(process.cwd(), "output", ID, "story.json"), "utf8")) as { beats: Array<{ say: string }> };
     assert.ok(saved.beats.some((b) => b.say === beat.say), "the story edit persisted to the stage file");
 
+    // The approved spec's look settings (quality, caption style) reach the
+    // rebuilt spec and the plan's stage file; its format does not (warned).
+    const restyled = JSON.parse(JSON.stringify(again.spec)) as typeof spec;
+    restyled.settings = { ...restyled.settings!, quality: "draft", captions: { preset: "neon" }, format: "16:9" };
+    const styled = await reassemble(ID, "plan", undefined, validateSpec(restyled));
+    assert.equal(styled.spec.settings?.quality, "draft", "the approved quality is rendered");
+    assert.deepEqual(styled.spec.settings?.captions, { preset: "neon" }, "the approved caption style is rendered");
+    assert.equal(styled.spec.settings?.format, "9:16", "the planned format is kept");
+    assert.equal(styled.spec.width, 1080);
+    assert.ok(styled.warnings.some((w) => /format \(16:9\) differs/.test(w)), "the ignored format change is announced");
+    const savedPlan = JSON.parse(readFileSync(join(process.cwd(), "output", ID, "plan.json"), "utf8")) as { settings: { quality: string } };
+    assert.equal(savedPlan.settings.quality, "draft", "the approved look settings persist for later rebuilds");
+
     // Rebuilding from the saved files (no model calls) gives the same video length.
     if (!resolveTtsPython("kitten2")) {
       const re = await reassemble(ID, "plan");
@@ -89,6 +102,23 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     delete process.env.FACTORY_LLM_FIXTURES;
     rmSync(join(process.cwd(), "output", ID), { recursive: true, force: true });
   }
+});
+
+test("an approved spec's look settings override the plan's; timeline settings stay planned", () => {
+  const plan = SettingsSchema.parse({ format: "9:16", targetDuration: 25, sceneCount: 3, critic: true, captions: { preset: "clean" } });
+  const approved = SettingsSchema.parse({ format: "9:16", targetDuration: 25, sceneCount: 3, quality: "draft", captions: { preset: "neon", uppercase: true } });
+  const a = approvedSettings(plan, approved);
+  assert.equal(a.settings.quality, "draft");
+  assert.deepEqual(a.settings.captions, { preset: "neon", uppercase: true });
+  assert.equal(a.settings.critic, undefined, "a flag the approved spec leaves out is unset");
+  assert.deepEqual(a.warnings, []);
+  const b = approvedSettings(plan, { ...approved, format: "16:9", targetDuration: 60, sceneCount: 5 });
+  assert.equal(b.settings.format, "9:16");
+  assert.equal(b.settings.targetDuration, 25);
+  assert.equal(b.settings.sceneCount, 3);
+  assert.equal(b.settings.quality, "draft");
+  assert.equal(b.warnings.length, 3, b.warnings.join(" | "));
+  assert.equal(approvedSettings(plan, undefined).settings, plan, "no approved spec: the plan's settings");
 });
 
 test("a character recast in the review keeps its voice when the approval sends voice settings", () => {

@@ -8,7 +8,7 @@ import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import "./fonts";
 import { CaptionLook, FONT_STACKS, hexToRgba, resolveCaptionStyle } from "../../generator/caption-style";
-import { captionCentrePct, captionScale, centredTextMargin, textOutline } from "../../generator/layout";
+import { captionCentrePct, captionScale, centredTextMargin, textOutline, veilGlow } from "../../generator/layout";
 
 interface CaptionItem {
   text: string;
@@ -25,6 +25,8 @@ interface CaptionsProps {
   fps?: number;
   /** Resolved look. Omit for the default (bold pop). */
   style?: CaptionLook;
+  /** 0..1: a dark glow behind the words, for a frame that turns white (a flight's cloud veil). */
+  glow?: number;
 }
 
 /** Ease-out with a small overshoot: a caption "pops" into place. */
@@ -43,7 +45,7 @@ function markKeywords(text: string, keywords: string[] | undefined): Array<{ wor
   }));
 }
 
-export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style }) => {
+export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style, glow = 0 }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   const seconds = frame / fps;
@@ -76,6 +78,12 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
     if (look.animation !== "word-reveal") return true;
     return local >= (i / Math.max(1, words.length)) * duration * 0.8;
   };
+
+  // Bold looks get a thin dark outline so they read over any scene; light ones a soft shadow.
+  const shadow = look.shadow ? textOutline(scale, look.weight >= 700 && look.background === "none" ? "outline" : "soft") : "";
+  // White and gold words vanish into a white frame: a wide dark glow, only while it is white.
+  const halo = veilGlow(scale, glow);
+  const textShadow = [shadow, halo].filter(Boolean).join(", ") || "none";
 
   const box =
     look.background === "none"
@@ -112,8 +120,7 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style })
           lineHeight: 1.2,
           color: look.color,
           letterSpacing: look.uppercase ? 0.5 : 0,
-          // Bold looks get a thin dark outline so they read over any scene; light ones a soft shadow.
-          textShadow: look.shadow ? textOutline(scale, look.weight >= 700 && look.background === "none" ? "outline" : "soft") : "none",
+          textShadow,
           ...box,
         }}
       >

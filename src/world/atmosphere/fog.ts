@@ -31,6 +31,10 @@ export interface HeightFogOptions {
   sunColor?: string;
   sunDir?: [number, number, number];
   sunStrength?: number;
+  /** Lights out (react/dark.ts): the haze, sun in-scatter included, fades
+   *  toward a night sky by `amount` (0 .. 1, a shared uniform the caller
+   *  writes per frame). Without it the haze never changes. */
+  night?: { amount: { value: number }; horizon: string; zenith: string };
 }
 
 export function applyHeightFog(mat: THREE.Material, opts: HeightFogOptions): void {
@@ -42,6 +46,9 @@ export function applyHeightFog(mat: THREE.Material, opts: HeightFogOptions): voi
     shader.uniforms.uHFogMax = { value: opts.max ?? 0.85 };
     shader.uniforms.uHFogSun = { value: new THREE.Color(opts.sunColor ?? "#000000").multiplyScalar(opts.sunStrength ?? 0) };
     shader.uniforms.uHFogSunDir = { value: new THREE.Vector3(...(opts.sunDir ?? [0, 1, 0])) };
+    shader.uniforms.uHFogN = opts.night?.amount ?? { value: 0 };
+    shader.uniforms.uHFogNLo = { value: new THREE.Color(opts.night?.horizon ?? "#000000") };
+    shader.uniforms.uHFogNHi = { value: new THREE.Color(opts.night?.zenith ?? "#000000") };
     shader.vertexShader =
       "varying vec3 vHFogPos;\n" +
       shader.vertexShader.replace(
@@ -58,11 +65,13 @@ export function applyHeightFog(mat: THREE.Material, opts: HeightFogOptions): voi
     shader.fragmentShader =
       "varying vec3 vHFogPos;\n" +
       "uniform vec3 uHFogLo;\nuniform vec3 uHFogHi;\nuniform float uHFogK;\nuniform float uHFogL;\nuniform float uHFogMax;\nuniform vec3 uHFogSun;\nuniform vec3 uHFogSunDir;\n" +
+      "uniform float uHFogN;\nuniform vec3 uHFogNLo;\nuniform vec3 uHFogNHi;\n" +
       shader.fragmentShader.replace(
         "#include <fog_fragment>",
         `#include <fog_fragment>
   {
-    vec3 hfDir = normalize( vHFogPos - cameraPosition );
+    vec3 hfRay = vHFogPos - cameraPosition;
+    vec3 hfDir = hfRay / max( length( hfRay ), 1e-4 ); // no NaN at the eye
     float s = hfDir.y;
     float ca = clamp( cameraPosition.y, 0.0, 4000.0 );
     float cf = clamp( vHFogPos.y, -200.0, 4000.0 );
@@ -71,6 +80,7 @@ export function applyHeightFog(mat: THREE.Material, opts: HeightFogOptions): voi
     float hfF = clamp( 1.0 - exp( -max( tau, 0.0 ) ), 0.0, uHFogMax );
     vec3 hfC = mix( uHFogLo, uHFogHi, pow( max( s, 0.0 ), 0.5 ) );
     hfC += uHFogSun * pow( max( dot( hfDir, uHFogSunDir ), 0.0 ), 6.0 );
+    hfC = mix( hfC, mix( uHFogNLo, uHFogNHi, pow( max( s, 0.0 ), 0.5 ) ), uHFogN );
     gl_FragColor.rgb = mix( gl_FragColor.rgb, hfC, hfF );
   }`,
       );

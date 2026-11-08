@@ -1,0 +1,62 @@
+{
+  "engine": "voxcpm2",
+  "outDir": "output/seed-audit",
+  "lines": [
+    {
+      "id": "character-child-boy-8__s0",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 0
+    },
+    {
+      "id": "character-child-boy-8__s7",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 7
+    },
+    {
+      "id": "character-child-boy-8__s42",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 42
+    },
+    {
+      "id": "character-child-boy-8__s99",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 99
+    },
+    {
+      "id": "character-child-boy-8__s2024",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 2024
+    },
+    {
+      "id": "character-child-boy-8__s4096",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 4096
+    },
+    {
+      "id": "character-child-boy-8__s314",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 314
+    },
+    {
+      "id": "character-child-boy-8__s7777",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "character-child-boy-8",
+      "voiceDesc": "little boy, eight years old, bright clear high voice, eager quick curious delivery, energetic, adventure dialogue",
+      "seed": 7777
+    }
+  ]
+}

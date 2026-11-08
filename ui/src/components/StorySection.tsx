@@ -1,26 +1,22 @@
 /**
- * StorySection — the planned story on the review screen: the beats with their
- * lines and lengths, and each character's voice with ▶ audition and recast.
- * Recasting rebuilds the plan on the server from its saved stages (no AI calls).
+ * StorySection: the planned story on the review screen. Each character with
+ * a voice you can listen to and change, then the beats with their lines and
+ * lengths. Changing a voice rebuilds the plan on the server from its saved
+ * stages (no AI calls).
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Loader2, UserRound } from "lucide-react";
 import type { ShotSpec } from "../../../src/generator/spec.schema";
-import { getVoices, recastVoice, voiceSample } from "../api";
+import { getVoices, recastVoice } from "../api";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { AuditionButton, useVoiceAudition } from "./useVoiceAudition";
+import { prettyVoice } from "../lib/format";
 
 type Engine = "kitten2" | "voxcpm2";
 
-async function audition(engine: Engine, voice: string, text?: string) {
-  try {
-    const blob = await voiceSample({ engine, voice, text });
-    await new Audio(URL.createObjectURL(blob)).play();
-  } catch (e) {
-    toast.error(`Could not play the sample: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
+const PACE_LABELS: Record<string, string> = { quick: "Quick", normal: "Normal", linger: "Slow" };
 
 export function StorySection({
   spec,
@@ -35,6 +31,7 @@ export function StorySection({
   const engine: Engine = spec.audio?.dialogs?.engine ?? "kitten2";
   const [voices, setVoices] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const audition = useVoiceAudition();
 
   useEffect(() => {
     getVoices(engine)
@@ -51,7 +48,7 @@ export function StorySection({
     try {
       const r = await recastVoice(specId, name, voice);
       onSpec(r.spec as ShotSpec);
-      toast.success(`${name} now speaks as ${voice}`);
+      toast.success(`${name} now speaks as ${prettyVoice(voice)}`);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -60,67 +57,77 @@ export function StorySection({
   };
 
   return (
-    <div className="rounded-2xl bg-input/40 p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Story</div>
-        {anyEstimated ? <Badge variant="muted">timing estimated — the render measures the real voice</Badge> : null}
-      </div>
-
+    <div className="space-y-6">
       {story.characters.length > 0 ? (
-        <div className="space-y-2">
-          <div className="text-xs text-muted-foreground">
-            Voices were matched to each character by the preset's assumed gender and age (not checked by ear). Listen with ▶ and pick another if one doesn't fit.
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-base font-semibold">Characters and their voices</h3>
+            <p className="text-sm text-muted-foreground">
+              Voices were matched to each character by the voice's usual gender and age. Listen to each one and pick
+              another if it does not fit.
+            </p>
           </div>
           {story.characters.map((c) => (
-            <div key={c.name} className="flex flex-wrap items-center gap-2 rounded-xl bg-background/40 p-2">
-              <span className="font-bold">{c.name}</span>
-              {c.look ? <span className="text-xs text-muted-foreground">{c.look}</span> : null}
-              <span className="ml-auto flex items-center gap-2">
+            <div key={c.name} className="flex flex-wrap items-center gap-3 rounded-xl bg-input/50 p-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary/20 text-primary">
+                <UserRound className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">{c.name}</div>
+                {c.look ? <div className="truncate text-xs text-muted-foreground">{c.look}</div> : null}
+              </div>
+              <div className="flex w-full items-center gap-2 sm:w-auto">
                 <Select value={c.voice ?? ""} onValueChange={(v) => recast(c.name, v)} disabled={busy === c.name || voices.length === 0}>
-                  <SelectTrigger className="w-40"><SelectValue placeholder="voice" /></SelectTrigger>
+                  <SelectTrigger className="h-11 sm:w-48" aria-label={`Voice for ${c.name}`}>
+                    <SelectValue placeholder="Choose a voice" />
+                  </SelectTrigger>
                   <SelectContent>
                     {voices.map((v) => (
-                      <SelectItem key={v} value={v}>{v}</SelectItem>
+                      <SelectItem key={v} value={v}>{prettyVoice(v)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Listen to ${c.name}'s voice`}
-                  disabled={!c.voice}
-                  onClick={() => c.voice && audition(engine, c.voice)}
-                >
-                  ▶
-                </Button>
-              </span>
+                {busy === c.name ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                <AuditionButton
+                  state={c.voice ? audition.stateOf(engine, c.voice) : "idle"}
+                  label={`${c.name}'s voice`}
+                  disabled={!c.voice || (audition.busy && audition.stateOf(engine, c.voice) !== "loading")}
+                  onClick={() => c.voice && audition.toggle(engine, c.voice)}
+                />
+              </div>
             </div>
           ))}
-        </div>
+        </section>
       ) : null}
 
-      <div className="space-y-2 text-sm">
-        {story.beats.map((b) => (
-          <div key={b.id} className="rounded-xl bg-background/40 p-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="font-mono">{b.id}</span>
-              {b.from !== undefined && b.to !== undefined ? <span>{(b.to - b.from).toFixed(1)}s</span> : null}
-              {b.pace ? <span>· {b.pace}</span> : null}
-              {b.see ? <span className="truncate">· {b.see}</span> : null}
-            </div>
-            {(b.lines ?? []).length > 0 ? (
-              (b.lines ?? []).map((l) => (
-                <div key={l.id} className="mt-1">
-                  <span className="mr-1 font-semibold">{l.who === "narrator" ? "Narrator" : l.who}:</span>
-                  {l.text}
-                </div>
-              ))
-            ) : b.say ? (
-              <div className="mt-1 opacity-90">{b.say}</div>
-            ) : null}
-          </div>
-        ))}
-      </div>
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold">The story, beat by beat</h3>
+          {anyEstimated ? <Badge variant="muted">Timing is estimated until the video is made</Badge> : null}
+        </div>
+        <ol className="space-y-2 text-[15px]">
+          {story.beats.map((b, i) => (
+            <li key={b.id} className="rounded-xl bg-input/50 p-3">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground/80">Beat {i + 1}</span>
+                {b.from !== undefined && b.to !== undefined ? <span>{(b.to - b.from).toFixed(1)} s</span> : null}
+                {b.pace ? <span>{PACE_LABELS[b.pace] ?? b.pace} pace</span> : null}
+                {b.see ? <span className="min-w-0 truncate">We see: {b.see}</span> : null}
+              </div>
+              {(b.lines ?? []).length > 0 ? (
+                (b.lines ?? []).map((l) => (
+                  <p key={l.id} className="mt-1.5">
+                    <span className="mr-1.5 font-semibold">{l.who === "narrator" ? "Narrator" : l.who}:</span>
+                    {l.text}
+                  </p>
+                ))
+              ) : b.say ? (
+                <p className="mt-1.5 opacity-90">{b.say}</p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </section>
     </div>
   );
 }

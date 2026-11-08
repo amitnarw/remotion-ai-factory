@@ -61,8 +61,9 @@ export function createFBMSkyDome(opts: FBMSkyOptions): THREE.Mesh {
 
   const cloudSeedHash = hashString(`fbm-cloud:${seed}`);
 
-  // Fractal Brownian Motion for cloud formation
-  function fbmCloud(x: number, z: number, y: number): number {
+  // Fractal Brownian Motion for cloud formation (2D: the dome is sampled
+  // on its horizontal plane).
+  function fbmCloud(x: number, z: number): number {
     let sum = 0;
     let amp = 1;
     let freq = 1;
@@ -84,7 +85,7 @@ export function createFBMSkyDome(opts: FBMSkyOptions): THREE.Mesh {
     const y = v.y; // -1 (bottom) to 1 (top)
 
     // Base sky gradient
-    let c = new THREE.Color();
+    const c = new THREE.Color();
     const horizonT = smoothNoise((y + 1) * 0.5);
     c.lerpColors(horizon, zenith, horizonT);
 
@@ -100,9 +101,8 @@ export function createFBMSkyDome(opts: FBMSkyOptions): THREE.Mesh {
       // Project vertex onto plane for FBM sampling
       const planarX = v.x * cloudScale;
       const planarZ = v.z * cloudScale;
-      const planarY = v.y * cloudScale;
 
-      const cloudNoise = fbmCloud(planarX, planarZ, planarY);
+      const cloudNoise = fbmCloud(planarX, planarZ);
       const cloudMask = Math.max(0, (cloudNoise - (1 - cloudCoverage)) / cloudCoverage);
 
       if (cloudMask > 0) {

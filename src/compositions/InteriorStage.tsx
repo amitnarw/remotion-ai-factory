@@ -18,6 +18,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType, CastEntry } from "../generator/spec.schema";
 import type { Subject } from "../generator/camera/solve";
+import type { Occluder } from "../generator/camera/occlusion";
+import { turnedBox } from "../generator/camera/shapes";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
@@ -438,6 +440,9 @@ function castSpot(zone: CastEntry["zone"]): { x: number; z: number } {
 /** Sitting poses for the cast actions (the rest stand). */
 const SITTING = new Set(["sit", "kneel", "read"]);
 
+/** No cast: one shared empty list, so the anchors memo stays put. */
+const NO_CAST: CastEntry[] = [];
+
 /**
  * What the camera can frame in the room (KIT_SUBJECTS.interior), from the
  * fixed furniture layout below. The room spans x and z -4..4 and y 0..3; the
@@ -448,25 +453,110 @@ const SITTING = new Set(["sit", "kneel", "read"]);
  *  the lens stays a hand's width inside them (09-phase3-handoff.md 3.2). */
 const ROOM_BOUNDS = { minX: -3.6, maxX: 3.6, minZ: -3.6, maxZ: 3.6, maxY: 2.8 };
 
+/** Where the furniture stands: drawn by InteriorStage, measured by the camera. */
+const FURNITURE = {
+  table: { x: -1.2, z: 0.5, rot: 0, scale: 1 },
+  coffeeTable: { x: 1.8, z: -0.8, rot: Math.PI / 4, scale: 0.6 },
+  sofa: { x: -2, z: -1.5, rot: 0, scale: 1 },
+  lamp: { x: -2.8, z: -1.2 },
+} as const;
+
+/** Owner ids of the room's things in the camera's blockers (cast member i: OWNER.cast + i). */
+const OWNER = { window: 1, table: 2, coffeeTable: 3, sofa: 4, lamp: 5, cast: 10 };
+
+/** A cast member's height at scale 0.9: head top 1.64 m standing, 1.34 m sitting (unscaled). */
+const castHeight = (c: CastEntry) => 0.9 * (SITTING.has(c.action ?? "") ? 1.34 : 1.64);
+
+/**
+ * The room as the solver's shapes (Subject.blockers): the walls and the
+ * ceiling (beyond the room's box), the window (frame and pane), each table's
+ * top and legs, the sofa (frame and seat, back, arms), the floor lamp (base,
+ * pole, shade) and the cast at their spots. And where the lens must not stand
+ * but may look across (Subject.keepOut): under each table.
+ */
+function roomSolids(cast: CastEntry[]): { blockers: Occluder[]; keepOut: Occluder[] } {
+  const blockers: Occluder[] = [];
+  const keepOut: Occluder[] = [];
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, owner: number) =>
+    blockers.push({ kind: "box", minX: x0, maxX: x1, minY: y0, maxY: y1, minZ: z0, maxZ: z1, owner });
+  // Walls at x, z +/-4 and the ceiling at 3 m (its box starts 0.1 m higher:
+  // ROOM_BOUNDS lets the lens rise to 0.2 m under it, nearer than the
+  // solver's lens room, and a high shot held there is not in the ceiling).
+  box(4, 6, -1, 5, -6, 6, -1);
+  box(-6, -4, -1, 5, -6, 6, -1);
+  box(-6, 6, -1, 5, 4, 6, -1);
+  box(-6, 6, -1, 5, -6, -4, -1);
+  box(-6, 6, 3.1, 5, -6, 6, -1);
+  // Window: frame 0.1 m round a 2.5 x 2.0 m pane, centred 1.2 m up at z -3.02.
+  box(-1.35, 1.35, 0.1, 2.3, -3.07, -2.97, OWNER.window);
+  // Tables (Table scales its geometry and its group: sizes go with scale²):
+  // the top 0.06 x scale thick, four legs; the space under the top.
+  for (const [t, owner] of [[FURNITURE.table, OWNER.table], [FURNITURE.coffeeTable, OWNER.coffeeTable]] as const) {
+    const k = t.scale * t.scale;
+    const under = 0.75 * k - 0.03 * t.scale;
+    blockers.push(...turnedBox(t.x, t.z, 1.25 * k, 0.75 * k, t.rot, under, 0.75 * k + 0.03 * t.scale, owner));
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const lx = sx * 1.17 * k;
+        const lz = sz * 0.67 * k;
+        const x = t.x + lx * Math.cos(t.rot) + lz * Math.sin(t.rot);
+        const z = t.z - lx * Math.sin(t.rot) + lz * Math.cos(t.rot);
+        blockers.push({ kind: "column", x, z, r: 0.08 * k, top: 0.75 * k, owner });
+      }
+    }
+    keepOut.push(...turnedBox(t.x, t.z, 1.25 * k, 0.75 * k, t.rot, -1, under, owner));
+  }
+  // Sofa (2.2 x 0.9 m): frame and seat to 0.57 m, the back cushion to 1.11 m along its back edge, the arms to 0.8 m.
+  const so = FURNITURE.sofa;
+  blockers.push(...turnedBox(so.x, so.z, 1.1, 0.45, so.rot, 0, 0.57, OWNER.sofa));
+  blockers.push(...turnedBox(so.x - 0.4 * Math.sin(so.rot), so.z - 0.4 * Math.cos(so.rot), 1.05, 0.06, so.rot, 0, 1.11, OWNER.sofa));
+  for (const sx of [-1, 1]) blockers.push(...turnedBox(so.x + sx * 1.04 * Math.cos(so.rot), so.z - sx * 1.04 * Math.sin(so.rot), 0.06, 0.4, so.rot, 0, 0.8, OWNER.sofa));
+  // Floor lamp: base 0.2 m round, pole, shade a cone 0.25 m round from 1.75 to 2.15 m.
+  const la = FURNITURE.lamp;
+  blockers.push({ kind: "column", x: la.x, z: la.z, r: 0.2, top: 0.15, owner: OWNER.lamp });
+  blockers.push({ kind: "column", x: la.x, z: la.z, r: 0.05, top: 1.75, owner: OWNER.lamp });
+  blockers.push({ kind: "column", x: la.x, z: la.z, r: 0.25, bottom: 1.75, top: 2.15, owner: OWNER.lamp });
+  // The cast (Character, 0.35 m wide at scale 0.9).
+  cast.forEach((c, i) => {
+    const { x, z } = castSpot(c.zone);
+    blockers.push({ kind: "column", x, z, r: 0.22, top: castHeight(c), owner: OWNER.cast + i });
+  });
+  return { blockers, keepOut };
+}
+
 export function interiorAnchors(cast: CastEntry[]): Anchors {
-  const fixed = (s: Subject) => () => s;
+  // Each subject carries the room as the solver's blockers (roomSolids), its
+  // own piece of furniture as its own parts: a shot whose lens would stand in
+  // the table or the sofa, or see its subject through them (or the cast), or
+  // that the room's walls pull in onto its subject, takes another bearing,
+  // height or distance (solve.ts, clearView). The window, the sofa and the
+  // table keep the lens a hand's width off their own parts too (keepOut; a
+  // close shot from the sofa's end stood 0.1 m off its arm); the lamp and a
+  // person are too slight for that, a close-up comes nearer.
+  const solids = roomSolids(cast);
+  const fixed = (s: Subject, own: number[] = [], keepOff = false) => {
+    const keepOut = keepOff ? [...solids.keepOut, ...solids.blockers.filter((b) => own.includes(b.owner))] : solids.keepOut;
+    const subject: Subject = { ...s, ...solids, keepOut, ...(own.length ? { own } : {}) };
+    return () => subject;
+  };
   const anchors: Anchors = {
     scene: fixed({ center: [0, 1.5, 0], radius: 4, height: 3, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
     // Window: 2.5 x 2.0 m pane centred 1.2 m up at z -3.02 (frame 0.1 m round it).
-    window: fixed({ center: [0, 1.2, -3.02], radius: 1.4, height: 2.2, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
+    window: fixed({ center: [0, 1.2, -3.02], radius: 1.4, height: 2.2, facing: 0, ground: 0, bounds: ROOM_BOUNDS }, [OWNER.window], true),
     // Sofa: 2.2 m wide, back 1.11 m high, at (-2, -1.5), seat facing +z.
-    sofa: fixed({ center: [-2, 0.56, -1.5], radius: 1.15, height: 1.11, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
+    sofa: fixed({ center: [-2, 0.56, -1.5], radius: 1.15, height: 1.11, facing: 0, ground: 0, bounds: ROOM_BOUNDS }, [OWNER.sofa], true),
     // Floor lamp: 2.15 m tall at (-2.8, -1.2), by the sofa's end; seen a little from the room side.
-    lamp: fixed({ center: [-2.8, 1.08, -1.2], radius: 0.4, height: 2.15, facing: 0.35, ground: 0, bounds: ROOM_BOUNDS }),
+    lamp: fixed({ center: [-2.8, 1.08, -1.2], radius: 0.4, height: 2.15, facing: 0.35, ground: 0, bounds: ROOM_BOUNDS }, [OWNER.lamp]),
     // Table: the big one, 2.5 x 1.5 m top 0.75 m up at (-1.2, 0.5).
-    table: fixed({ center: [-1.2, 0.4, 0.5], radius: 1.45, height: 0.8, facing: 0, ground: 0, bounds: ROOM_BOUNDS }),
+    table: fixed({ center: [-1.2, 0.4, 0.5], radius: 1.45, height: 0.8, facing: 0, ground: 0, bounds: ROOM_BOUNDS }, [OWNER.table], true),
   };
   const who = cast[0];
   if (who) {
-    // Character at scale 0.9: head top 1.64 m standing, 1.34 m sitting (unscaled).
+    // The first cast member (and anyone at the same spot) is the person's own part.
     const { x, z } = castSpot(who.zone);
-    const h = 0.9 * (SITTING.has(who.action ?? "") ? 1.34 : 1.64);
-    anchors.person = fixed({ center: [x, h / 2, z], radius: 0.3, height: h, facing: 0, ground: 0, bounds: ROOM_BOUNDS });
+    const h = castHeight(who);
+    const own = cast.flatMap((c, i) => (c.zone === who.zone ? [OWNER.cast + i] : []));
+    anchors.person = fixed({ center: [x, h / 2, z], radius: 0.3, height: h, facing: 0, ground: 0, bounds: ROOM_BOUNDS }, own);
   }
   return anchors;
 }
@@ -486,7 +576,7 @@ export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneTy
   }, [look.fog, look.fogDensity, threeScene]);
 
   // Cast from spec
-  const cast = active?.cast ?? [];
+  const cast = active?.cast ?? NO_CAST;
 
   // Subjects for the director's shots (only built when the spec has shots).
   const hasShots = (spec.shots?.length ?? 0) > 0;
@@ -564,12 +654,11 @@ export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneTy
       />
 
       {/* Furniture */}
-      <Table x={-1.2} z={0.5} rot={0} woodCol={look.furnitureWood} scale={1} />
-      <Table x={1.8} z={-0.8} rot={Math.PI/4} woodCol={look.furnitureWood} scale={0.6} />
-      <Sofa x={-2} z={-1.5} rot={0} woodCol={look.furnitureWood} fabricCol={look.fabric} scale={1} />
+      <Table {...FURNITURE.table} woodCol={look.furnitureWood} />
+      <Table {...FURNITURE.coffeeTable} woodCol={look.furnitureWood} />
+      <Sofa {...FURNITURE.sofa} woodCol={look.furnitureWood} fabricCol={look.fabric} />
       <FloorLamp
-        x={-2.8}
-        z={-1.2}
+        {...FURNITURE.lamp}
         rot={0}
         baseCol={look.lampBase}
         shadeCol={look.lampShade}

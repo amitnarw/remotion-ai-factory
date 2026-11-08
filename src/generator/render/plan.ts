@@ -6,16 +6,20 @@
  *
  * CHUNK PLAN (frames, [start, end)):
  *   - Cut points are HARD cuts only: scene starts and shot boundaries, never a
- *     frame inside a transition window (spec.transitions, t ± dur/2).
+ *     frame inside a transition window (spec.transitions, t ± dur/2) or a
+ *     flight window (spec.flights, [from, to): the flight is drawn as one
+ *     Sequence over the cut, so a chunk must not start mid-flight).
  *   - Scene starts are kept (each scene begins a chunk), so a timing change in
  *     one scene leaves the other scenes' chunks alone. Inside a scene, shot
  *     cuts are packed greedily into chunks of at most MAX_CHUNK_SEC.
  *   - A stretch longer than MAX_CHUNK_SEC with no usable cut is split evenly
  *     (Remotion renders every frame independently, so any frame can start a
- *     chunk; the split is moved out of a transition window if it lands in one).
+ *     chunk; the split is moved out of a transition or flight window if it
+ *     lands in one, even if that makes the chunk a little longer).
  *   - Chunks shorter than MIN_CHUNK_SEC are merged into their shorter neighbour.
- *   The plan only reads scenes, shots, transitions, fps and the length, so the
- *   same spec always gives the same split and a caption edit never moves it.
+ *   The plan only reads scenes, shots, transitions, flights, fps and the
+ *   length, so the same spec always gives the same split and a caption edit
+ *   never moves it.
  *
  * CACHE KEY = sha1(global part + chunk frames + local part).
  *   global: the salt from the caller (bundle hash, Remotion and Chrome
@@ -31,6 +35,9 @@
  *   interval  captions[from,to], hook[t,t+duration], transitions[t±dur/2],
  *             scenes[from,to] (the last scene also covers the tail),
  *             story.beats[from,to], audio.voiceFiles[at,at+dur]
+ *   flights   spec.flights itself is global; a chunk that overlaps a flight
+ *             window also keys the two scenes that flight joins (FlightView
+ *             reads their places and looks, and they may lie outside the chunk)
  *   shots     interval, widened to whole same-subject runs (StreetStage picks
  *             one mover per run), plus "has shots" in the global part
  *   prefix    events, worldEvents, statPanel.beats, timer: state accumulates
@@ -44,7 +51,7 @@ import { createHash } from "crypto";
 import type { ShotSpec, SpecShot } from "../spec.schema";
 
 /** Bump to invalidate every cached chunk after a change to this module's rules. */
-export const PLAN_VERSION = 1;
+export const PLAN_VERSION = 2;
 export const MIN_CHUNK_SEC = 4;
 export const MAX_CHUNK_SEC = 20;
 export const MIN_PAD_SEC = 1;
@@ -107,14 +114,24 @@ export function transitionWindows(spec: ShotSpec, fps: number): Array<[number, n
   return (spec.transitions ?? []).map((tr) => [firstFrameAt(tr.t - tr.dur / 2, fps), firstFrameAt(tr.t + tr.dur / 2, fps)]);
 }
 
-/** True if a chunk boundary at frame `cut` would fall inside a transition window. */
+/** Flight windows (spec.flights, drawn by FlightView while from <= t < to) as frame ranges [first, end). */
+export function flightWindows(spec: ShotSpec, fps: number): Array<[number, number]> {
+  return (spec.flights ?? []).map((f) => [firstFrameAt(f.from, fps), firstFrameAt(f.to, fps)]);
+}
+
+/** Every window a chunk boundary must stay out of: transitions and flights. */
+export function noCutWindows(spec: ShotSpec, fps: number): Array<[number, number]> {
+  return [...transitionWindows(spec, fps), ...flightWindows(spec, fps)];
+}
+
+/** True if a chunk boundary at frame `cut` would fall inside a transition or flight window. */
 function insideWindow(cut: number, windows: Array<[number, number]>): boolean {
   return windows.some(([a, b]) => cut > a && cut < b);
 }
 
 /** Hard cuts usable as chunk boundaries, split into scene starts and shot cuts. */
 export function hardCuts(spec: ShotSpec, fps: number, durationInFrames: number): { scene: number[]; shot: number[] } {
-  const windows = transitionWindows(spec, fps);
+  const windows = noCutWindows(spec, fps);
   const ok = (f: number) => f > 0 && f < durationInFrames && !insideWindow(f, windows);
   const uniq = (xs: number[]) => Array.from(new Set(xs)).sort((a, b) => a - b);
   const scene = uniq(spec.scenes.slice(1).map((s) => firstFrameAt(s.from, fps)).filter(ok));
@@ -123,16 +140,24 @@ export function hardCuts(spec: ShotSpec, fps: number, durationInFrames: number):
   return { scene, shot };
 }
 
-/** Split [p, end) once, evenly, outside any transition window when possible. */
+/**
+ * Split [p, end) once, evenly, outside every window. The even point when it
+ * is clear; else the nearest window edge that keeps both sides within the
+ * limits; else the nearest clear window edge at all (a chunk off the size
+ * limits beats one that starts mid-flight); `end` (no split) when nothing is
+ * clear.
+ */
 function evenSplit(p: number, end: number, max: number, min: number, windows: Array<[number, number]>): number {
   const len = end - p;
   const k = Math.ceil(len / max);
   const c = p + Math.round(len / k);
-  const win = windows.find(([a, b]) => c > a && c < b);
-  if (!win) return c;
-  const options = [win[0], win[1]].filter((x) => x - p >= min && end - x >= min && x - p <= max);
-  if (options.length === 0) return c;
-  return options.sort((x, y) => Math.abs(x - c) - Math.abs(y - c) || x - y)[0];
+  if (!insideWindow(c, windows)) return c;
+  const clear = (x: number) => x > p && x < end && !insideWindow(x, windows);
+  const nearest = (xs: number[]) => xs.sort((x, y) => Math.abs(x - c) - Math.abs(y - c) || x - y)[0];
+  const edges = windows.flatMap(([a, b]) => [a, b]).filter(clear);
+  const inLimits = edges.filter((x) => x - p >= min && end - x >= min && x - p <= max);
+  if (inLimits.length > 0) return nearest(inLimits);
+  return edges.length > 0 ? nearest(edges) : end;
 }
 
 /** The chunk plan for a video (see the header for the rules). */
@@ -144,7 +169,7 @@ export function planChunks(
 ): ChunkRange[] {
   const min = Math.max(1, Math.round((limits.minSec ?? MIN_CHUNK_SEC) * fps));
   const max = Math.max(min * 2, Math.round((limits.maxSec ?? MAX_CHUNK_SEC) * fps));
-  const windows = transitionWindows(spec, fps);
+  const windows = noCutWindows(spec, fps);
   const cuts = hardCuts(spec, fps, durationInFrames);
   const groups: Array<[number, number]> = [];
   let g0 = 0;
@@ -160,6 +185,7 @@ export function planChunks(
     while (b - p > max) {
       const reach = inner.filter((c) => c >= p + min && c <= p + max && b - c >= min);
       const c = reach.length > 0 ? reach[reach.length - 1] : evenSplit(p, b, max, min, windows);
+      if (c <= p || c >= b) break; // no clear split: one longer chunk
       ranges.push([p, c]);
       p = c;
     }
@@ -199,6 +225,16 @@ function shotSlice(shots: SpecShot[], a: number, b: number): SpecShot[] {
   return shots.slice(lo, hi + 1);
 }
 
+/** The two scenes a flight window joins, found the way FlightView finds them
+ *  (the scene the window ends in, and the last world scene before it). The
+ *  whole scenes are keyed: the flight reads their places and their grade. */
+function flightEnds(spec: ShotSpec, win: { from: number; to: number }): Record<string, unknown> {
+  const idx = spec.scenes.findIndex((s) => win.to - 0.01 >= s.from && win.to - 0.01 < s.to);
+  if (idx <= 0) return { ...win, a: null, b: null };
+  const a = [...spec.scenes.slice(0, idx)].reverse().find((s) => s.world != null);
+  return { ...win, a: a ?? null, b: spec.scenes[idx] };
+}
+
 /** The time-sliced part of the spec that can affect frames in [aSec, bSec]. */
 export function localSlice(spec: ShotSpec, aSec: number, bSec: number, padSec: number): Record<string, unknown> {
   const wa = aSec - padSec;
@@ -206,6 +242,7 @@ export function localSlice(spec: ShotSpec, aSec: number, bSec: number, padSec: n
   const last = spec.scenes.length - 1;
   const hook = spec.hook;
   return {
+    flights: (spec.flights ?? []).filter((f) => overlaps(f.from, f.to, wa, wb)).map((f) => flightEnds(spec, f)),
     scenes: spec.scenes.filter((s, i) => overlaps(s.from, i === last ? Infinity : s.to, wa, wb)),
     captions: (spec.captions ?? []).filter((c) => overlaps(c.from, c.to, wa, wb)),
     hook: hook && overlaps(hook.t, hook.t + hook.duration, wa, wb) ? hook : null,

@@ -30,6 +30,28 @@ test("code checks flag look-alike cuts and a long hook", () => {
   assert.ok(w.some((x) => /hook lasts/.test(x)));
 });
 
+test("code checks compare world scenes by place and moment, never as the default street-block", () => {
+  const tl = buildTimeline({ beats: story.beats, lines: [], format: "9:16", target: 12, cap: 90, wps: 2.6 });
+  const looks = (scenes: unknown[]) => codeChecks(story, tl, DirectorSchema.parse(normalizeDirector({ scenes }))).filter((x) => /look the same/.test(x));
+  const paris = (time: string, date = "2026-06-21") => ({ world: { place: "paris", date, time }, time: "golden" });
+  // A world scene carries no kit, so it parses as street-block; a street-block
+  // scene at the same "time" before it is still a different picture.
+  assert.deepEqual(looks([{ start: "b1", kit: "street-block", time: "golden" }, { start: "b3", ...paris("19:30") }]), []);
+  assert.deepEqual(looks([{ start: "b1", ...paris("19:30") }, { start: "b3", kit: "street-block", time: "golden" }]), []);
+  // Another place, or the same place at another moment, is a change.
+  assert.deepEqual(looks([{ start: "b1", ...paris("19:30") }, { start: "b3", world: { place: "cairo", date: "2026-06-21", time: "19:30" }, time: "golden" }]), []);
+  assert.deepEqual(looks([{ start: "b1", ...paris("08:00") }, { start: "b3", ...paris("19:30") }]), []);
+  assert.deepEqual(looks([{ start: "b1", ...paris("19:30", "2026-01-10") }, { start: "b3", ...paris("19:30") }]), []);
+  // The same place at the same moment is flagged, named by the place.
+  const same = looks([{ start: "b1", ...paris("19:30") }, { start: "b3", ...paris("19:30"), weather: "rain" }]);
+  assert.equal(same.length, 1);
+  assert.match(same[0], /paris/);
+  // A place the assembler can't resolve falls back to its kit, so it is compared as that kit.
+  const fallback = looks([{ start: "b1", kit: "street-block", time: "golden" }, { start: "b3", world: { place: "atlantis", date: "2026-06-21", time: "19:30" }, time: "golden" }]);
+  assert.equal(fallback.length, 1);
+  assert.match(fallback[0], /street-block, golden/);
+});
+
 test("the critic's notes rewrite only the named beat", async () => {
   resetFixtureCounters();
   process.env.FACTORY_LLM_FIXTURES = dirWith({

@@ -17,9 +17,11 @@ interface HookProps {
   startFrame: number;
   endFrame: number;
   style?: CaptionLook;
+  /** The HUD's kind: with the text HUD the hook sits high, as in the references. */
+  hud?: "text" | "card";
 }
 
-export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style }) => {
+export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style, hud = "card" }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   if (frame < startFrame || frame > endFrame) return null;
@@ -30,7 +32,7 @@ export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFr
   const boxWidth = width * (1 - 2 * margin);
   const shown = look.uppercase ? text.toUpperCase() : text;
   const fontSize = fitFontSize(shown, 52 * scale, boxWidth, 3);
-  const centre = hookCentrePct(width, height);
+  const centre = hookCentrePct(width, height, hud);
   const keys = keywordHighlight.map((k) => k.toLowerCase()).filter(Boolean);
   const words = shown.split(/\s+/).filter(Boolean);
 

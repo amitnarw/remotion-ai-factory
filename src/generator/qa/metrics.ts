@@ -154,9 +154,15 @@ export const EXPOSURE_LIMITS = {
   // IS mostly black sky - the planet is what must be lit (its day MS read 0.53).
   // The limits below still catch a genuinely unlit frame (no stars/planet).
   space: { minMean: 0.02, maxCrushed: 0.985, maxClipped: 0.05 },
+  // After a lights-out world event the director made the world dark on
+  // purpose (sun or moon, sky and lamps fade to near-black). A frame still
+  // has to show something: the 2026-10-26 milestone's blackout night shots
+  // read 0.032-0.051 with 60-77% shadow and show the silhouettes; a hills CU
+  // at 0.014 showed almost nothing and stays flagged.
+  dark: { minMean: 0.02, maxCrushed: 0.97, maxClipped: 0.05 },
 } as const;
 
-/** `light`: true / "night" for night scenes, "space" for space, false / "day" otherwise. */
+/** `light`: true / "night" for night scenes, "space" for space, "dark" after a lights-out event, false / "day" otherwise. */
 export function exposureVerdict(stats: LumaStats, light: boolean | keyof typeof EXPOSURE_LIMITS): { ok: boolean; problems: string[] } {
   const lim = EXPOSURE_LIMITS[light === true ? "night" : light === false ? "day" : light];
   const problems: string[] = [];

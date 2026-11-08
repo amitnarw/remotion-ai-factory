@@ -142,11 +142,11 @@ export function ActorsLayer({
   }, [warnings, onWarnings]);
 
   const t = frame / (fps || 30);
-  useFrame(() => {
+  // The camera comes from the frame state (hooks may not run in a callback).
+  useFrame(({ camera }) => {
     if (!rigs) return;
-    const { camera } = useThree();
     const camPos = camera.position;
-    
+
     for (const [id, rig] of rigs) {
       const plan = plans.get(id);
       if (!plan) continue;
@@ -163,7 +163,7 @@ export function ActorsLayer({
         
         if (shouldBeBillboard && (!current || current.rig)) {
           // Create billboard texture
-          const texture = makeBillboardTexture(rig, useThree((s) => s.camera), gl);
+          const texture = makeBillboardTexture(rig, camera, gl);
           return new Map(prev).set(id, { id, rig: null, billboardTexture: texture, billboardSize: rig.height });
         } else if (!shouldBeBillboard && current && current.rig === null) {
           // Back to full rig
@@ -172,16 +172,7 @@ export function ActorsLayer({
         return prev;
       });
     }
-    
-    // Apply pose to all rigs (billboards don't need pose)
-    for (const [id, rig] of rigs) {
-      const plan = plans.get(id);
-      if (!plan) continue;
-      const lod = lodActors.get(id);
-      if (!lod || lod.rig) {
-        applyPose(rig, poseAt(plan, t), (aim) => aimPoint(aim, t, plans));
-      }
-    }
+    // (Each rig is posed once, above: posing it a second time gained nothing.)
   });
 
   useEffect(() => {

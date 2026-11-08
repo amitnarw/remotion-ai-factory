@@ -4,9 +4,10 @@
  *
  * Usage:
  *   npx tsx scripts/photographer.ts <id> [--bundle out/<folder>] [--scale 0.5]
- * Reads output/<id>-props.json (after a render) or output/<id>-spec.json (a plan).
+ * Reads output/<id>/props.json (after a render) or output/<id>/spec.json (a plan);
+ * the old flat output/<id>-props.json / -spec.json still work.
  * Writes output/<id>/qa/<beat>.png and output/<id>/qa/qa.json. Nothing is played.
- * When Providers -> Model roles has a "Photographer (vision)" model, each still
+ * When Settings -> AI models -> Model roles has a "Photographer (vision)" model, each still
  * also gets yes/no questions (src/generator/qa/vision.ts); --no-vision skips them.
  */
 import { existsSync, readFileSync } from "fs";
@@ -29,9 +30,12 @@ if (!id) {
 
 async function main() {
   const out = join(process.cwd(), "output");
-  const propsPath = join(out, `${id}-props.json`);
-  const specPath = join(out, `${id}-spec.json`);
-  const raw = existsSync(propsPath) ? JSON.parse(readFileSync(propsPath, "utf8")).spec : JSON.parse(readFileSync(specPath, "utf8"));
+  // Per-video folders (output/<id>/) first; the old flat files as a fallback.
+  const first = (...paths: string[]) => paths.find((p) => existsSync(p));
+  const propsPath = first(join(out, id!, "props.json"), join(out, `${id}-props.json`));
+  const specPath = first(join(out, id!, "spec.json"), join(out, `${id}-spec.json`));
+  if (!propsPath && !specPath) throw new Error(`no props.json or spec.json for ${id} in output/`);
+  const raw = propsPath ? JSON.parse(readFileSync(propsPath, "utf8")).spec : JSON.parse(readFileSync(specPath!, "utf8"));
   const spec = validateSpec(raw);
   if (!spec.shots?.length) throw new Error(`${id} has no shots (planned before Phase 3?)`);
   const bundleDir = opt("bundle");

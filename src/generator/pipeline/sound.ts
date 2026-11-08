@@ -2,7 +2,8 @@
  * src/generator/pipeline/sound.ts — the Sound designer: music, beds and hits.
  *
  * A rules baseline always exists (beds by kit, weather and time of day, music
- * from the writer's mood). The LLM sound designer may replace the music and
+ * from the writer's mood; a scene at a real world place sounds like that
+ * place at its moment, see placeSound). The LLM sound designer may replace the music and
  * beds and add hits, choosing ONLY from a fixed vocabulary of named sounds;
  * audio-resolve turns each name into a library file or its synthesized
  * fallback, so every name plays. If the LLM call fails, the baseline stands.
@@ -14,6 +15,9 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { z } from "zod";
 import { MOOD_TAGS, SOUND_QUERY } from "../audio-resolve";
+import { resolveWorldScene } from "../../world/director-context";
+import type { ResolvedPlace } from "../../world/places";
+import { Surface } from "../../world/surface";
 import { asArray, beatRef, callRole, fuzzyEnum, type RoleModel } from "./llm";
 import type { Direction } from "./director";
 import type { Timeline } from "./timeline";
@@ -57,7 +61,51 @@ const BEDS_BY_KIT: Record<string, Array<[string, number]>> = {
   interior: [["interior_room_tone", 0.35]],
 };
 
-/** The baseline: beds per scene (kit, weather, night), music from the story's mood. */
+type DirectedScene = Direction["scenes"][number];
+
+/**
+ * How a real place sounds at its moment (Phase 6 world scenes), from what the
+ * world engine knows about it: a city (crowd and traffic) or a town (a
+ * distant murmur), desert (dry wind) or coast (waves, gulls by day), and the
+ * light from the real sun (day, low sun, night: birds by day, insects on warm
+ * nights, everything human quieter after dark). Names come from the sound
+ * vocabulary. The world stage draws no weather, so none is heard.
+ */
+export function placeSound(rp: ResolvedPlace): { label: string; beds: Array<[string, number]> } {
+  const town = rp.style.id === "european-village";
+  const desert = rp.surface === Surface.Desert;
+  const coast = rp.surface === Surface.Ocean || rp.surface === Surface.Lake;
+  const light = rp.sun.elevation < -6 ? "night" : rp.sun.elevation < 10 ? "low sun" : "day";
+  const by = (day: number, low: number, night: number) => (light === "night" ? night : light === "low sun" ? low : day);
+  const beds: Array<[string, number]> = [];
+  if (town) beds.push(["street_murmur", by(0.25, 0.22, 0.12)]);
+  else beds.push(["street_murmur", by(0.5, 0.45, 0.3)], ["traffic", by(0.3, 0.25, 0.15)]);
+  // Birds by day (a coast has its gulls instead); crickets on warm nights.
+  if (light !== "night") {
+    if (!coast) beds.push(["forest_birds", town ? by(0.35, 0.4, 0) : desert ? 0.12 : by(0.15, 0.2, 0)]);
+  } else if (rp.season !== "winter") beds.push(["night_insects", town || desert ? 0.3 : 0.15]);
+  if (desert) beds.push(["wind_city", 0.2]);
+  if (coast) {
+    beds.push(["ocean_waves", 0.3]);
+    if (light !== "night") beds.push(["ocean_gulls", 0.2]);
+  }
+  const kind = `${desert ? "desert city" : town ? "town" : "city"}${coast ? " on the coast" : ""}`;
+  return { label: `${rp.place.id}, ${rp.moment.date} ${rp.moment.time} (${kind}, ${light})`, beds };
+}
+
+/** A scene's place sound when it happens at a world place the assembler can show (else null: its kit). */
+function worldSound(s: DirectedScene): ReturnType<typeof placeSound> | null {
+  if (!s.worldPlace) return null;
+  const w = resolveWorldScene(s.worldPlace);
+  return w.ok ? placeSound(w.place) : null;
+}
+
+/** What the sound designer is told a scene is: the place and moment for a world scene, else kit and look. */
+export function sceneSoundLabel(s: DirectedScene): string {
+  return worldSound(s)?.label ?? `${s.kit}, ${s.time}${s.weather !== "none" ? `, ${s.weather}` : ""}`;
+}
+
+/** The baseline: beds per scene (kit, weather, night; a world place by its character), music from the story's mood. */
 export function soundRules(story: WriterStory, direction: Direction): SoundPlan {
   const ids = story.beats.map((b) => b.id);
   const order = (id: string) => ids.indexOf(id);
@@ -65,6 +113,11 @@ export function soundRules(story: WriterStory, direction: Direction): SoundPlan 
   const beds: SoundPlan["beds"] = [];
   scenes.forEach((s, i) => {
     const end = scenes[i + 1]?.start ?? null;
+    const world = worldSound(s);
+    if (world) {
+      for (const [sound, level] of world.beds) beds.push({ start: s.start, end, sound, level });
+      return;
+    }
     for (const [sound, level] of BEDS_BY_KIT[s.kit] ?? []) {
       // birds sleep at night: crickets instead
       const swapped = s.time === "night" && sound === "forest_birds" ? "night_insects" : sound;
@@ -126,6 +179,33 @@ Use ONLY the sound names and moods listed. Refer to beats as "b1", "b2", ... Nev
 Hits are for moments that matter: a reveal, an impact, a change. At most one hit per beat, and not on every beat.
 Reply with JSON only.`;
 
+/** The sound designer's prompt: each beat with its length and its scene (a world scene by its place and moment). */
+export function soundPrompt(input: { story: WriterStory; direction: Direction; timeline: Timeline; rules: SoundPlan; vocab: string[] }): string {
+  const sceneAt = new Map<string, string>();
+  const order = input.story.beats.map((b) => b.id);
+  const sorted = [...input.direction.scenes].sort((a, b) => order.indexOf(a.start) - order.indexOf(b.start));
+  for (const b of input.story.beats) {
+    const s = [...sorted].reverse().find((sc) => order.indexOf(sc.start) <= order.indexOf(b.id));
+    if (s) sceneAt.set(b.id, sceneSoundLabel(s));
+  }
+  const len = new Map(input.timeline.beats.map((b) => [b.id, b.to - b.from]));
+  return `Story: "${input.story.title}" (mood: ${input.story.mood})
+Beats:
+${input.story.beats.map((b) => `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${sceneAt.get(b.id) ?? "?"}): ${b.see}`).join("\n")}
+
+Music moods: ${MOODS.join(", ")}
+Sound names: ${input.vocab.join(", ")}
+A scene at a real place (named with its date and local time) should sound like that place at that moment.
+
+A starting plan you may improve:
+${JSON.stringify(input.rules)}
+
+JSON shape:
+{ "music": [{ "start": "b1", "mood": "${input.story.mood}" }],
+  "beds": [{ "start": "b1", "end": null, "sound": "street_murmur", "level": 0.5 }],
+  "hits": [{ "beat": "b3", "at": "start", "sound": "impact_soft_bodies" }] }`;
+}
+
 export async function designSound(input: {
   story: WriterStory;
   direction: Direction;
@@ -134,28 +214,7 @@ export async function designSound(input: {
 }): Promise<{ plan: SoundPlan; source: "llm" | "rules"; warning?: string }> {
   const rules = soundRules(input.story, input.direction);
   const vocab = soundVocabulary();
-  const sceneAt = new Map<string, string>();
-  const order = input.story.beats.map((b) => b.id);
-  const sorted = [...input.direction.scenes].sort((a, b) => order.indexOf(a.start) - order.indexOf(b.start));
-  for (const b of input.story.beats) {
-    const s = [...sorted].reverse().find((sc) => order.indexOf(sc.start) <= order.indexOf(b.id));
-    if (s) sceneAt.set(b.id, `${s.kit}, ${s.time}${s.weather !== "none" ? `, ${s.weather}` : ""}`);
-  }
-  const len = new Map(input.timeline.beats.map((b) => [b.id, b.to - b.from]));
-  const prompt = `Story: "${input.story.title}" (mood: ${input.story.mood})
-Beats:
-${input.story.beats.map((b) => `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${sceneAt.get(b.id) ?? "?"}): ${b.see}`).join("\n")}
-
-Music moods: ${MOODS.join(", ")}
-Sound names: ${vocab.join(", ")}
-
-A starting plan you may improve:
-${JSON.stringify(rules)}
-
-JSON shape:
-{ "music": [{ "start": "b1", "mood": "${input.story.mood}" }],
-  "beds": [{ "start": "b1", "end": null, "sound": "street_murmur", "level": 0.5 }],
-  "hits": [{ "beat": "b3", "at": "start", "sound": "impact_soft_bodies" }] }`;
+  const prompt = soundPrompt({ ...input, rules, vocab });
   try {
     const result = await callRole({
       role: "sound",

@@ -29,7 +29,8 @@ export interface StageSpan {
 
 export interface Job {
   id: string;
-  status: "queued" | "running" | "done" | "failed";
+  /** "cancelled": stopped with DELETE /api/jobs/:id (it stays listed). */
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   progress: number;
   stage?: string;
   etaSec?: number | null;
@@ -47,7 +48,7 @@ export interface Job {
   createdAt: number;
 }
 
-/* ---------- Spec engine: AI writes the plan → you review → approve → render ---------- */
+/* ---------- Spec engine: the AI writes the plan, you review and approve, then it renders ---------- */
 
 /** Start a plan job: the AI writes the shot spec. Nothing renders yet. */
 export async function planSpec(body: {
@@ -99,8 +100,13 @@ export async function renderSpec(specId: string, audio?: unknown, opts?: { chunk
 /* Voice casting */
 export interface VoiceInfo {
   id: string;
-  pace: "fast" | "steady" | "slow";
-  sample: string | null;
+  pace?: "fast" | "steady" | "slow";
+  sample?: string | null;
+  sampleKey?: string;
+  previewReady?: boolean;
+  label?: string;
+  gender?: "male" | "female" | "neutral";
+  age?: string;
 }
 
 export async function setDefaultProvider(name: string): Promise<{ ok: boolean }> {
@@ -109,7 +115,16 @@ export async function setDefaultProvider(name: string): Promise<{ ok: boolean }>
 export async function deleteProvider(name: string): Promise<{ ok: boolean }> {
   return json(await fetch(`${BASE}/providers/${encodeURIComponent(name)}`, { method: "DELETE" }));
 }
-export async function getVoices(engine?: string): Promise<{ voices: VoiceInfo[]; available?: boolean; engines?: { id: string; label: string; note: string }[] }> {
+export interface VoicesResponse {
+  voices: VoiceInfo[];
+  available?: boolean;
+  engines?: { id: string; label: string; note: string }[];
+  /** VoxCPM2 only: what each preset voice sounds like. */
+  descriptions?: { id: string; description: string; quality?: string; tags?: string[] }[];
+  defaultNarrator?: string;
+  defaultCharacter?: string;
+}
+export async function getVoices(engine?: string): Promise<VoicesResponse> {
   const q = engine ? `?engine=${encodeURIComponent(engine)}` : "";
   return json(await fetch(`${BASE}/voices${q}`));
 }
@@ -145,7 +160,8 @@ export async function startTtsInstall(engine: string): Promise<{ jobId: string }
 export async function getTtsInstallJob(id: string): Promise<TtsInstallJob> {
   return json(await fetch(`${BASE}/tts/job/${id}`));
 }
-export async function cancelJob(id: string): Promise<{ cancelled: boolean }> {
+/** Stop a running job (it stays listed as cancelled); a finished job is removed. */
+export async function cancelJob(id: string): Promise<{ cancelled: boolean; deleted?: boolean }> {
   return json(await fetch(`${BASE}/jobs/${id}`, { method: "DELETE" }));
 }
 /** Give a character another voice; the server rebuilds the plan from its saved stages. */
@@ -159,8 +175,8 @@ export async function recastVoice(specId: string, name: string, voice: string): 
   );
 }
 
-export async function voiceSample(body: { engine: string; voice?: string; voiceDesc?: string; text?: string }): Promise<Blob> {
-  const r = await fetch(`${BASE}/voice-sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+export async function voiceSample(body: { engine: string; voice?: string; voiceDesc?: string; text?: string }, signal?: AbortSignal): Promise<Blob> {
+  const r = await fetch(`${BASE}/voice-sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
   if (!r.ok) throw new Error(await r.text());
   return r.blob();
 }
@@ -178,7 +194,8 @@ export interface Video {
   output?: string;
   thumbnail?: string;
   spec?: string;
-  generatedAt?: number;
+  /** Milliseconds, or an ISO date string in newer reports. */
+  generatedAt?: number | string;
   reviewFolder?: string;
 }
 
@@ -187,7 +204,7 @@ async function errorText(r: Response): Promise<string> {
   try {
     const body = (await r.json()) as { error?: string; fix?: string };
     if (body.error) text = body.error;
-    if (body.fix) text += `\n→ Fix: ${body.fix}`;
+    if (body.fix) text += `\nHow to fix it: ${body.fix}`;
   } catch {
     /* non-JSON error body, keep generic */
   }
@@ -425,6 +442,17 @@ export async function redoFilm(id: string): Promise<FilmChangeResponse> {
   return json(await postJson(filmUrl(id, "redo")));
 }
 
+/** Every job the server knows (running, finished and failed), newest last. */
+export interface JobListItem {
+  id: string;
+  status: Job["status"];
+  premise: string;
+  createdAt: number;
+}
+export async function listJobs(): Promise<JobListItem[]> {
+  return json(await fetch(`${BASE}/jobs`));
+}
+
 export async function getJob(id: string): Promise<Job> {
   return json(await fetch(`${BASE}/jobs/${id}`));
 }
@@ -437,4 +465,29 @@ export async function deleteVideo(id: string): Promise<{ ok: boolean; deleted: n
   const r = await fetch(`${BASE}/videos/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(await errorText(r));
   return (await r.json()) as { ok: boolean; deleted: number };
+}
+
+
+export interface VoiceReference {
+  id: string; label: string; archetype: string; tags: string[];
+  transcript: string; url: string; duration: number; sr: number; channels: number;
+  license: string; createdAt: number; notes?: string;
+}
+export async function listVoiceReferences(): Promise<VoiceReference[]> {
+  const r = await fetch(`${BASE}/voice-references`); if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function uploadVoiceReference(body: { id?: string; label: string; archetype?: string; tags?: string[]; audioBase64: string; transcript: string; license?: string; consent: boolean; notes?: string }): Promise<VoiceReference> {
+  const r = await fetch(`${BASE}/voice-references`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function deleteVoiceReference(id: string): Promise<void> {
+  const r = await fetch(`${BASE}/voice-references/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await r.text());
+}
+export async function auditionVoiceReference(id: string, body: { engine?: string; text?: string } = {}): Promise<Blob> {
+  const r = await fetch(`${BASE}/voice-references/${encodeURIComponent(id)}/audition`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.blob();
 }

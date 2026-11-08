@@ -26,6 +26,7 @@ import {
 } from "../camera/shot";
 import { KIT_SUBJECTS, subjectsFor } from "../camera/subjects";
 import type { SpecShot } from "../spec.schema";
+import { beatLevel } from "../../world/react/reaction";
 import { asArray, beatRef } from "./llm";
 import type { Timeline } from "./timeline";
 import type { WriterStory } from "./writer";
@@ -192,15 +193,15 @@ export function timeShots(input: {
       if (given.has(tb.id)) warnings.push(`shot at ${tb.id}: "${subject}" is not in the ${kit} set; filming the scene instead`);
       subject = "scene";
     }
-    const { beat: _beat, ...shot } = chosen;
+    // `beat` is overwritten below with the timed beat id.
     const len = tb.to - tb.from;
     if (len > 5) {
       // Two shots: the second pushes in (the jump-cut guard makes it two sizes tighter).
       const mid = Math.round(((tb.from + tb.to) / 2) * 30) / 30;
-      timed.push({ ...shot, subject, beat: tb.id, from: tb.from, to: mid });
-      timed.push({ ...shot, subject, beat: `${tb.id}-2`, from: mid, to: tb.to, move: shot.move === "push_in" ? "orbit_right" : "push_in" });
+      timed.push({ ...chosen, subject, beat: tb.id, from: tb.from, to: mid });
+      timed.push({ ...chosen, subject, beat: `${tb.id}-2`, from: mid, to: tb.to, move: chosen.move === "push_in" ? "orbit_right" : "push_in" });
     } else {
-      timed.push({ ...shot, subject, beat: tb.id, from: tb.from, to: tb.to });
+      timed.push({ ...chosen, subject, beat: tb.id, from: tb.from, to: tb.to });
     }
   }
   const guarded = guardJumpCuts(timed);
@@ -208,4 +209,73 @@ export function timeShots(input: {
   // The last shot runs to the end of the video (the closing tail).
   if (shots.length) shots[shots.length - 1].to = Math.max(shots[shots.length - 1].to, timeline.duration);
   return { shots, warnings };
+}
+
+/** How long a shot that films the place stays on after a strong reaction:
+ *  long enough to see buildings rise, the water climb, the snow settle
+ *  (docs/factory/11-world-reactions.md; buildings let go 0.45-0.85 s after
+ *  the beat and are clearly up by about 2 s). */
+export const REACTION_HOLD = 2.5;
+/** A following shot the hold leaves shorter than this is folded into it. */
+const MIN_AFTER_HOLD = 1.2;
+/** A counter step of at least this much level (a doubling is 0.25) is strong. */
+const STRONG_STEP = 0.25;
+/** Subjects that film the reaction's epicentre (the plaza, else the avenue). */
+const PLACE_SUBJECT = /^(plaza|avenue|sidewalk|park)/;
+/** Reactions that cover the whole place, so the whole-place shot sees them too. */
+const CITY_WIDE = new Set(["water", "snow", "dark"]);
+const CITY_WIDE_EVENTS = /^(water-|snow-|lights-out)/;
+
+/**
+ * Hold the shot on a world place's reaction: when a strong counter step or a
+ * world event lands in a shot that films the place, that shot runs on to at
+ * least REACTION_HOLD seconds after it (never past its scene), and the next
+ * shot starts later (folded in when too little of it is left). Without it a
+ * plaza shot could cut away 0.8 s after the beat and the buildings rose off
+ * screen. Shots elsewhere, and kit scenes, are untouched.
+ */
+export function holdReactions(
+  shots: SpecShot[],
+  ctx: {
+    scenes: readonly { from: number; to: number; kit?: string }[];
+    statPanel?: { react?: string; beats: readonly { t: number; value: string; scale?: number }[] } | null;
+    worldEvents?: readonly { t: number; name: string }[] | null;
+  },
+): SpecShot[] {
+  const sceneAt = (t: number) => ctx.scenes.find((s) => t >= s.from && t < s.to);
+  const moments: { t: number; cityWide: boolean }[] = [];
+  const react = ctx.statPanel?.react;
+  if (react) {
+    const beats = [...(ctx.statPanel?.beats ?? [])].sort((a, b) => a.t - b.t);
+    let prev = 0;
+    for (const b of beats) {
+      const level = beatLevel(b, beats[0]);
+      if (level - prev >= STRONG_STEP - 1e-9) moments.push({ t: b.t, cityWide: CITY_WIDE.has(react) });
+      prev = level;
+    }
+  }
+  for (const e of ctx.worldEvents ?? []) moments.push({ t: e.t, cityWide: CITY_WIDE_EVENTS.test(e.name) });
+  const out = shots.map((s) => ({ ...s }));
+  for (const m of moments.sort((a, b) => a.t - b.t)) {
+    const scene = sceneAt(m.t);
+    if (scene?.kit !== "world") continue;
+    const i = out.findIndex((s) => m.t >= s.from && m.t < s.to);
+    if (i < 0) continue;
+    const shot = out[i];
+    if (!PLACE_SUBJECT.test(shot.subject) && !(m.cityWide && shot.subject === "scene")) continue;
+    const until = Math.min(Math.round((m.t + REACTION_HOLD) * 30) / 30, scene.to);
+    if (shot.to >= until) continue;
+    shot.to = until;
+    // The shots after it start later; one left too short is folded in.
+    for (let j = i + 1; j < out.length && out[j].from < until; ) {
+      if (out[j].to - until < MIN_AFTER_HOLD) {
+        shot.to = Math.max(shot.to, out[j].to);
+        out.splice(j, 1);
+      } else {
+        out[j].from = until;
+        j++;
+      }
+    }
+  }
+  return out;
 }

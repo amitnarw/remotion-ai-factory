@@ -28,6 +28,9 @@ export interface SunShafts {
   group: THREE.Group;
   /** The daylight gate (0..1); 0 hides the fan. */
   setStrength(a: number): void;
+  /** The sun's own light (0..1, lights out's key): the halo and its rays
+   *  fade with it (1: as built). */
+  setFade(k: number): void;
   /** Where the camera stands (and how it is rolled) - the near-camera
    *  fade and the halo's screen alignment. */
   setCamera(pos: { x: number; y: number; z: number }, quat?: THREE.Quaternion): void;
@@ -49,7 +52,9 @@ function applyHalo(mat: THREE.MeshBasicMaterial): void {
   {
     vec2 hUv = vMapUv - 0.5;
     float hR = length( hUv ) * 2.0;
-    float hAng = atan( hUv.y, hUv.x );
+    // atan(0, 0) is undefined (NaN on some GPUs): one NaN pixel, spread by
+    // the look's bloom, blacked out a whole graded frame facing the sun.
+    float hAng = hR > 1e-4 ? atan( hUv.y, hUv.x ) : 0.0;
     float hStreak = 0.6 + 0.4 * pow( abs( sin( hAng * 9.0 + hR * 0.7 ) ), 2.0 );
     float hGlow = pow( clamp( 1.0 - hR, 0.0, 1.0 ), 1.5 );
     hGlow = hGlow * hGlow * ( 0.55 + 0.45 * hStreak ) + pow( hStreak, 2.0 ) * pow( clamp( 1.0 - hR * 1.15, 0.0, 1.0 ), 3.0 );
@@ -80,7 +85,7 @@ export function sunShafts(opts: {
   const d = new THREE.Vector3(...opts.sunDir).normalize();
   const up = new THREE.Vector3(0, 1, 0);
   // A horizontal axis perpendicular to the ray; blades hang along it.
-  let n0 = new THREE.Vector3().crossVectors(d, up);
+  const n0 = new THREE.Vector3().crossVectors(d, up);
   if (n0.lengthSq() < 1e-6) n0.set(1, 0, 0); // sun overhead: any horizontal
   n0.normalize();
   const group = new THREE.Group();
@@ -160,6 +165,10 @@ export function sunShafts(opts: {
       mat!.opacity = 0.24 * a;
       mat!.visible = a > 0.001;
     },
+    setFade(k: number) {
+      haloMat.opacity = 0.55 * opts.strength * k;
+      haloMat.visible = k > 0.001;
+    },
     setCamera(pos, quat) {
       camVec.set(pos.x, pos.y, pos.z);
       if (quat) cameraQuat.copy(quat);
@@ -192,7 +201,8 @@ function applyShaftShape(mat: THREE.MeshBasicMaterial): THREE.Vector3 {
         `#include <colorspace_fragment>
   {
     float sX = pow( max( 1.0 - abs( vShaftUv.x - 0.5 ) * 2.0, 0.0 ), 2.2 );
-    float sY = mix( 0.3, 1.0, pow( vShaftUv.y, 1.6 ) ) * smoothstep( 1.0, 6.0, vShaftW.y );
+    // pow of a negative is NaN: an edge uv interpolates a hair below 0.
+    float sY = mix( 0.3, 1.0, pow( clamp( vShaftUv.y, 0.0, 1.0 ), 1.6 ) ) * smoothstep( 1.0, 6.0, vShaftW.y );
     sY *= smoothstep( 10.0, 45.0, distance( vShaftW, uShaftCam ) );
     gl_FragColor.a = gl_FragColor.a * sX * 0.85;
     gl_FragColor.rgb *= sY * 2.2;

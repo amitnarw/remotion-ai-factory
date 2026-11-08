@@ -2,7 +2,7 @@
  * src/generator/ai/roles.ts
  *
  * Pipeline roles: each step of the factory can use its own AI model. The user
- * picks a provider and model per role in the Providers tab; the choice is
+ * picks a provider and model per role in Settings → AI models; the choice is
  * stored in ai.config.json under "roles".
  *
  * Only the writer is wired today. The other roles are declared now so the

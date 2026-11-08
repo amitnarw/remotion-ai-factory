@@ -1,16 +1,22 @@
 /**
  * src/world/actors/rig.ts
  *
- * One actor's three.js side: a clone of the model, its animation mixer, the
- * clip per key, the measured stride of its walk and run, and the bones the
+ * One actor's three.js side: a clone of the model, its clips, the measured
+ * gait of its walk and run, how its sit clip sits down, and the bones the
  * overlays move. applyPose() sets everything from a pose (script.ts) with no
  * memory of earlier frames, so any frame renders the same in any order.
+ *
+ * Clips are evaluated here, not by three's AnimationMixer: the mixer only
+ * writes a property when its value differs from the mixer's previous update,
+ * so anything else that touches a bone (the overlays, posing the same frame
+ * twice, frames rendered out of order) left bones in a stale or rest pose.
+ * The evaluator below writes every animated property on every call.
  */
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { findBones, findFeet, findThighs, mapClips } from "./rigs";
-import { type ActorPose, type Aim, type ClipKey, type V3, hash01 } from "./script";
+import { type ActorPose, type Aim, type ClipKey, type V3, GETUP_SECONDS, STANDUP_SECONDS, angleDelta, hash01, turnStepCount } from "./script";
 
 export interface ActorColors {
   shirt?: string;
@@ -20,9 +26,162 @@ export interface ActorColors {
   shoes?: string;
 }
 
-interface Track {
-  action: THREE.AnimationAction;
+// --- a pure clip evaluator -----------------------------------------------------
+
+/** One animated property of the model (a node's position, rotation or scale). */
+interface Channel {
+  binding: THREE.PropertyBinding;
+  offset: number;
+  size: number;
+  quat: boolean;
+}
+
+/** A clip, ready to sample. */
+export interface ClipEval {
+  name: string;
   duration: number;
+  tracks: { ch: number; interp: THREE.Interpolant }[];
+}
+
+/** The model's animated properties and its clips. */
+interface Animator {
+  channels: Channel[];
+  /** Every channel's value at rest. */
+  rest: Float64Array;
+  acc: Float64Array;
+  wsum: Float64Array;
+  clips: Map<string, ClipEval>;
+}
+
+/** A clip at a time, with a weight (weights of a pose sum to 1). */
+interface Layer {
+  clip: ClipEval;
+  time: number;
+  weight: number;
+}
+
+function makeAnimator(model: THREE.Object3D, clips: readonly THREE.AnimationClip[]): Animator {
+  const index = new Map<string, number>();
+  const channels: Channel[] = [];
+  let size = 0;
+  const evals = new Map<string, ClipEval>();
+  for (const clip of clips) {
+    const tracks: ClipEval["tracks"] = [];
+    for (const track of clip.tracks) {
+      const interp = track.createInterpolant();
+      const n = interp.valueSize;
+      let ch = index.get(track.name);
+      if (ch === undefined) {
+        const parsed = THREE.PropertyBinding.parseTrackName(track.name);
+        if (!THREE.PropertyBinding.findNode(model, parsed.nodeName)) continue;
+        ch = channels.length;
+        channels.push({ binding: new THREE.PropertyBinding(model, track.name), offset: size, size: n, quat: track.ValueTypeName === "quaternion" });
+        index.set(track.name, ch);
+        size += n;
+      }
+      if (channels[ch].size !== n) continue;
+      tracks.push({ ch, interp });
+    }
+    evals.set(clip.name, { name: clip.name, duration: Math.max(1e-3, clip.duration), tracks });
+  }
+  const rest = new Float64Array(size);
+  for (const c of channels) c.binding.getValue(rest, c.offset);
+  return { channels, rest, acc: new Float64Array(size), wsum: new Float64Array(channels.length), clips: evals };
+}
+
+const quatDot = (a: ArrayLike<number>, ao: number, b: ArrayLike<number>, bo: number) => a[ao] * b[bo] + a[ao + 1] * b[bo + 1] + a[ao + 2] * b[bo + 2] + a[ao + 3] * b[bo + 3];
+
+/** Poses the model from clip layers: weighted sums (normalised quaternions),
+ *  the rest pose filling whatever weight is missing. Writes every channel. */
+function evaluate(an: Animator, layers: readonly Layer[]) {
+  const { acc, wsum, rest, channels } = an;
+  acc.fill(0);
+  wsum.fill(0);
+  for (const l of layers) {
+    if (!(l.weight > 0)) continue;
+    for (const t of l.clip.tracks) {
+      const v = t.interp.evaluate(l.time);
+      const c = channels[t.ch];
+      const s = c.quat && wsum[t.ch] > 0 && quatDot(acc, c.offset, v, 0) < 0 ? -l.weight : l.weight;
+      for (let i = 0; i < c.size; i++) acc[c.offset + i] += s * v[i];
+      wsum[t.ch] += l.weight;
+    }
+  }
+  for (let k = 0; k < channels.length; k++) {
+    const c = channels[k];
+    const o = c.offset;
+    const w = wsum[k];
+    if (w > 1) for (let i = 0; i < c.size; i++) acc[o + i] /= w;
+    else if (w < 1 - 1e-9) {
+      const r = 1 - w;
+      const s = c.quat && w > 0 && quatDot(acc, o, rest, o) < 0 ? -r : r;
+      for (let i = 0; i < c.size; i++) acc[o + i] += s * rest[o + i];
+    }
+    if (c.quat) {
+      const len = Math.sqrt(quatDot(acc, o, acc, o));
+      if (len < 1e-9) for (let i = 0; i < 4; i++) acc[o + i] = rest[o + i];
+      else for (let i = 0; i < 4; i++) acc[o + i] /= len;
+    }
+    c.binding.setValue(acc, o);
+  }
+}
+
+// --- the rig -------------------------------------------------------------------
+
+/** A clip key's clip. */
+interface Track {
+  clip: ClipEval;
+  duration: number;
+}
+
+/** How a walk or run clip moves over the ground. */
+export interface Gait {
+  /** Metres covered per clip cycle, from the planted foot's speed. */
+  stride: number;
+  /** Clip phases (0..1) whose feet are closest to the idle stance: the best
+   *  one, then the best in the other half of the cycle. A move starts on the
+   *  first and stops on one of them, so the cross-fades from and to idle
+   *  don't drag the feet. */
+  phases: number[];
+  /** Walking off from the first phase, per foot (right, left): a foot planted
+   *  there first lifts `off` cycles in and lands `on` cycles in. Undefined
+   *  for a foot already in the air. */
+  lock?: ({ off: number; on: number } | undefined)[];
+}
+
+/** How the fall clip lies down. */
+interface FallInfo {
+  /** Metres to raise the model (lower, if negative) so the lying body's
+   *  lowest point is on the ground. */
+  lift: number;
+  /** How far down (0 standing .. 1 lying) over the clip, evenly sampled. */
+  progress: number[];
+}
+
+/** How the sit clip sits down. */
+interface SitInfo {
+  /** Where the clip puts the seat contact (under the hips), in actor space,
+   *  once seated. */
+  contact: THREE.Vector3;
+  /** Clip time by which the clip has sat down; 0 for a seated loop. */
+  settle: number;
+  /** How far down (0 standing .. 1 seated) over [0, settle], evenly sampled. */
+  progress: number[];
+}
+
+/** A leg, for placing its foot (on the ground under a seat, stepping round in a turn). */
+interface Leg {
+  thigh: THREE.Object3D;
+  shin: THREE.Object3D;
+  /** The shin's end: the foot bone, or an end node when the foot is its own
+   *  bone outside the leg chain (Quaternius rigs parent the feet to the
+   *  armature root, IK style). */
+  ankle: THREE.Object3D;
+  /** A foot bone outside the chain, moved along with the ankle. */
+  foot?: THREE.Object3D;
+  /** What the IK changes, at rest (put back before each pose, for bones no
+   *  clip animates). */
+  rest: { thigh: THREE.Quaternion; shin: THREE.Quaternion; ankle: THREE.Quaternion; foot?: { p: THREE.Vector3; q: THREE.Quaternion } };
 }
 
 interface AimBone {
@@ -40,14 +199,24 @@ export interface ActorRig {
   model: THREE.Object3D;
   /** model.position.y that stands the feet on the ground. */
   baseY: number;
-  mixer: THREE.AnimationMixer;
+  animator: Animator;
   tracks: Map<ClipKey, Track>;
   missing: Set<ClipKey>;
   /** Metres covered per walk / run cycle (feet don't slide). */
   stride: { walk: number; run: number };
+  /** Start and stop phases per gait clip (see Gait). */
+  gait: Partial<Record<"walk" | "run", Gait>>;
+  /** Foot bones (right, left), and where each clip's first frame stands
+   *  them, in the root's space (a move walks off from that stance). */
+  feet: THREE.Object3D[];
+  standFeet: Partial<Record<ClipKey, THREE.Vector3[]>>;
   /** Where the sit clip puts the seat contact (under the hips), in actor
    *  space: x, height, z. Undefined when the model can't sit or has no thighs. */
   sitContact?: THREE.Vector3;
+  sit?: SitInfo;
+  /** How the fall clip lies on the ground (when the model has one). */
+  fall?: FallInfo;
+  legs: Leg[];
   head?: AimBone;
   neck?: AimBone;
   armR: AimBone[];
@@ -146,53 +315,142 @@ function aimAt(b: AimBone, dir: THREE.Vector3, weight: number) {
   bone.updateWorldMatrix(true, false);
   const worldQ = bone.getWorldQuaternion(_q);
   const current = _v.copy(b.axis).applyQuaternion(worldQ).normalize();
-  const turn = _q2.setFromUnitVectors(current, _v2.copy(dir).normalize());
-  turn.slerp(new THREE.Quaternion(), 1 - weight);
+  turnBone(bone, worldQ, current, _v2.copy(dir).normalize(), weight);
+}
+
+/** Turns a bone by the rotation taking world direction `from` to `to`, by `weight`. */
+function turnBone(bone: THREE.Object3D, worldQ: THREE.Quaternion, from: THREE.Vector3, to: THREE.Vector3, weight: number) {
+  const turn = _q2.setFromUnitVectors(from, to);
+  if (weight < 1) turn.slerp(new THREE.Quaternion(), 1 - weight);
   const target = turn.multiply(worldQ);
   const parentQ = bone.parent ? bone.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
   bone.quaternion.copy(parentQ.invert().multiply(target));
   bone.updateMatrixWorld(true);
 }
 
-/** Stride per cycle from the feet: while a foot is the lower one it is
- *  planted, and the distance it slides back is how far the body moves. */
-function measureStride(model: THREE.Object3D, clip: THREE.AnimationClip, feet: string[], scale: number): number | undefined {
-  if (feet.length !== 2) return undefined;
-  const nodes = feet.map((n) => model.getObjectByName(n));
-  if (!nodes[0] || !nodes[1]) return undefined;
-  const mixer = new THREE.AnimationMixer(model);
-  const action = mixer.clipAction(clip);
-  action.play();
-  const N = 96;
-  let lowerPrev = -1;
-  let zPrev = 0;
-  let total = 0;
-  const footPoint = (n: THREE.Object3D) => {
-    // A blocky leg is a mesh pivoting at the hip: use the bottom of its box.
-    const mesh = n as THREE.Mesh;
-    if (mesh.isMesh && mesh.geometry) {
-      mesh.geometry.computeBoundingBox();
-      const bb = mesh.geometry.boundingBox!;
-      return _v.set((bb.min.x + bb.max.x) / 2, bb.min.y, (bb.min.z + bb.max.z) / 2).applyMatrix4(n.matrixWorld).clone();
-    }
-    return n.getWorldPosition(new THREE.Vector3());
-  };
-  const inv = _m.copy(model.matrixWorld).invert();
-  for (let i = 0; i <= N; i++) {
-    action.time = (clip.duration * i) / N;
-    mixer.update(0);
-    model.updateMatrixWorld(true);
-    const p = nodes.map((n) => footPoint(n!).applyMatrix4(inv));
-    const lower = p[0].y <= p[1].y ? 0 : 1;
-    const z = p[lower].z;
-    if (lower === lowerPrev) total += Math.max(0, zPrev - z);
-    lowerPrev = lower;
-    zPrev = z;
+/** A foot's ground point: the bone, or the bottom of a blocky leg's box. */
+function footPoint(n: THREE.Object3D): THREE.Vector3 {
+  const mesh = n as THREE.Mesh;
+  if (mesh.isMesh && mesh.geometry) {
+    mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox!;
+    return new THREE.Vector3((bb.min.x + bb.max.x) / 2, bb.min.y, (bb.min.z + bb.max.z) / 2).applyMatrix4(n.matrixWorld);
   }
-  action.stop();
-  mixer.uncacheRoot(model);
-  const metres = total * scale;
-  return metres > 0.05 ? metres : undefined;
+  return n.getWorldPosition(new THREE.Vector3());
+}
+
+/** Both feet in the model's own space for a clip at a time. */
+function feetAt(an: Animator, model: THREE.Object3D, clip: ClipEval, time: number, feet: THREE.Object3D[]): THREE.Vector3[] {
+  evaluate(an, [{ clip, time, weight: 1 }]);
+  model.updateMatrixWorld(true);
+  const inv = _m.copy(model.matrixWorld).invert();
+  return feet.map((n) => footPoint(n).applyMatrix4(inv));
+}
+
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? s[s.length >> 1] : NaN;
+};
+
+/**
+ * The gait of a walk or run clip. Stride: the speed at which the planted
+ * foot (the one at its lowest) slides back in the clip, times the clip
+ * length; that is how far the body must move per cycle for the foot to stay
+ * put. (Summing the lower foot's travel undercounts: in the clip's flight and
+ * heel-off moments the lower foot isn't planted, which made the clips play
+ * up to twice too fast and the feet slide back.) Phases: where the feet are
+ * closest to the idle stance.
+ */
+function measureGait(an: Animator, model: THREE.Object3D, clip: ClipEval, feet: THREE.Object3D[], scale: number, idle: THREE.Vector3[] | undefined): Gait | undefined {
+  if (feet.length !== 2) return undefined;
+  const N = 120;
+  const dt = clip.duration / N;
+  const samples: THREE.Vector3[][] = [];
+  for (let i = 0; i < N; i++) samples.push(feetAt(an, model, clip, i * dt, feet));
+  const speeds: number[] = [];
+  const planted: boolean[][] = [];
+  for (let f = 0; f < 2; f++) {
+    const ys = samples.map((s) => s[f].y);
+    const lo = Math.min(...ys);
+    const tol = Math.max(1e-4, (Math.max(...ys) - lo) * 0.08);
+    planted.push(ys.map((y) => y < lo + tol));
+    for (let i = 0; i < N; i++) {
+      const a = samples[i][f];
+      const b = samples[(i + 1) % N][f];
+      if (a.y < lo + tol && b.y < lo + tol) speeds.push((a.z - b.z) / dt);
+    }
+  }
+  const u = median(speeds);
+  if (!(speeds.length >= 4 && u > 1e-6)) return undefined;
+  const stride = u * clip.duration * scale;
+  if (stride < 0.05) return undefined;
+  let phases = [0, 0.5];
+  if (idle && idle.length === 2) {
+    const cost = samples.map((s) => s[0].distanceTo(idle[0]) + s[1].distanceTo(idle[1]));
+    const best = cost.indexOf(Math.min(...cost));
+    let other = -1;
+    for (let i = 0; i < N; i++) {
+      const d = Math.abs(((i - best + N + N / 2) % N) - N / 2);
+      if (d >= N / 4 && (other < 0 || cost[i] < cost[other])) other = i;
+    }
+    phases = [best / N, other / N];
+  }
+  const i0 = Math.round(phases[0] * N);
+  const lock = planted.map((p) => {
+    const at = (j: number) => p[(i0 + j) % N];
+    if (!at(0)) return undefined;
+    let off = 0;
+    while (off < N && at(off)) off++;
+    if (off >= N) return undefined;
+    let on = off;
+    while (on < off + N && !at(on)) on++;
+    return { off: off / N, on: on / N };
+  });
+  return { stride, phases, lock };
+}
+
+/**
+ * Clip phase (0..1) for `distance` metres into a move of `total` metres.
+ * Starts on the gait's first phase. The stride is stretched or squeezed (at
+ * most 18 %) so the move also ends on one of the gait's phases, so the feet
+ * stop near the idle stance. Pure.
+ */
+export function gaitPhase(g: Gait, distance: number, total?: number): number {
+  return ((((g.phases[0] ?? 0) + distance / gaitStride(g, total)) % 1) + 1) % 1;
+}
+
+/** The stride a move of `total` metres plays at (see gaitPhase). Pure. */
+export function gaitStride(g: Gait, total?: number): number {
+  const p0 = g.phases[0] ?? 0;
+  let stride = g.stride;
+  if (total !== undefined && total > 0.5 * g.stride) {
+    const c0 = total / g.stride;
+    let best = 0;
+    let bestErr = Math.log(1.18);
+    for (const pe of g.phases) {
+      const delta = (((pe - p0) % 1) + 1) % 1;
+      const m = Math.round(c0 - delta);
+      for (const k of [m - 1, m, m + 1]) {
+        const c = k + delta;
+        if (k < 0 || c < 0.4) continue;
+        const err = Math.abs(Math.log(c0 / c));
+        if (err < bestErr) {
+          bestErr = err;
+          best = c;
+        }
+      }
+    }
+    if (best > 0) stride = total / best;
+  }
+  return stride;
+}
+
+/** How much of a foot's start lock holds `cycles` into a move: all of it
+ *  until the foot first lifts, none once it has swung and landed. */
+function lockAt(l: { off: number; on: number } | undefined, cycles: number): number {
+  if (!l || cycles < 0) return 0;
+  if (cycles <= l.off) return 1;
+  return 1 - smooth01((cycles - l.off) / Math.max(1e-6, l.on - l.off));
 }
 
 /** Hip joint (midpoint of the thighs) in the actor's space, at the current pose. */
@@ -205,26 +463,122 @@ function hipJoint(model: THREE.Object3D, thighs: THREE.Object3D[]): THREE.Vector
 }
 
 /**
- * Where the seat contact is in the sit clip: below the hip joint by about a
- * ninth of the standing hip height (the hip joint of a seated adult is
- * ~10 cm above the seat).
+ * How the sit clip sits. Many sit clips start standing and sit down in their
+ * first half second, then hold (Quaternius' "Sitting"): those are played once
+ * and held, never looped back to standing. The seat contact is below the
+ * seated hip joint by about a ninth of the standing hip height (the hip joint
+ * of a seated adult is ~10 cm above the seat).
  */
-function measureSit(model: THREE.Object3D, clip: THREE.AnimationClip, thighNames: string[]): THREE.Vector3 | undefined {
+function measureSit(an: Animator, model: THREE.Object3D, clip: ClipEval, thighNames: string[]): SitInfo | undefined {
   const thighs = thighNames.map((n) => model.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
   if (thighs.length !== 2) return undefined;
+  evaluate(an, []);
   model.parent!.updateMatrixWorld(true);
   const standing = hipJoint(model, thighs);
-  const mixer = new THREE.AnimationMixer(model);
-  const action = mixer.clipAction(clip);
-  action.play();
-  action.time = clip.duration * 0.5;
-  mixer.update(0);
-  model.updateMatrixWorld(true);
-  const seated = hipJoint(model, thighs);
-  action.stop();
-  mixer.uncacheRoot(model);
+  const N = 60;
+  const ys: number[] = [];
+  const hipAt = (time: number) => {
+    evaluate(an, [{ clip, time, weight: 1 }]);
+    model.parent!.updateMatrixWorld(true);
+    return hipJoint(model, thighs);
+  };
+  for (let i = 0; i <= N; i++) ys.push(hipAt((clip.duration * i) / N).y);
+  const seatedY = ys[N];
+  const drop = standing.y - seatedY;
+  let settle = 0;
+  let progress = [1];
+  if (drop > 1e-6 && ys[0] > seatedY + drop * 0.5) {
+    // Starts standing: sat down once the hips are within 5 % of the end.
+    const i = ys.findIndex((y) => y - seatedY < drop * 0.05);
+    settle = (clip.duration * Math.max(1, i)) / N;
+    progress = [];
+    for (let k = 0; k <= 16; k++) {
+      const y = hipAt((settle * k) / 16).y;
+      progress.push(Math.min(1, Math.max(0, (standing.y - y) / drop)));
+    }
+  }
+  const seated = hipAt(settle > 0 ? Math.min(clip.duration, settle + 0.1) : clip.duration * 0.5);
   seated.y -= standing.y * 0.11;
-  return seated;
+  return { contact: seated, settle, progress };
+}
+
+/** Lowest point of the model's meshes (skinned or rigid) as posed, in world
+ *  space (the root's, while the root sits at the origin unturned). */
+function lowestPoint(model: THREE.Object3D): number {
+  let low = Infinity;
+  const v = new THREE.Vector3();
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const pos = mesh.isMesh ? mesh.geometry?.attributes.position : undefined;
+    if (!pos) return;
+    const skinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh ? (mesh as THREE.SkinnedMesh) : undefined;
+    for (let i = 0; i < pos.count; i++) {
+      if (skinned) skinned.getVertexPosition(i, v);
+      else v.fromBufferAttribute(pos, i);
+      v.applyMatrix4(mesh.matrixWorld);
+      if (v.y < low) low = v.y;
+    }
+  });
+  return low;
+}
+
+/**
+ * How the fall clip lies down: the lift that rests the lying body (the
+ * clip's last frame) on the ground rather than in it (the kid's Death clip
+ * lay 4 cm under), and how far down the clip is over time, from the hip
+ * joint's drop, so the lift grows as the body goes down and shrinks the same
+ * way as it gets up (the fall backwards).
+ */
+function measureFall(an: Animator, model: THREE.Object3D, clip: ClipEval, thighNames: string[]): FallInfo | undefined {
+  const end = clip.duration - 1e-3;
+  evaluate(an, [{ clip, time: end, weight: 1 }]);
+  model.parent!.updateMatrixWorld(true);
+  const lift = -lowestPoint(model);
+  if (!Number.isFinite(lift)) return undefined;
+  const thighs = thighNames.map((n) => model.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+  // Without thighs, down in step with the clip.
+  if (thighs.length !== 2) return { lift, progress: [0, 1] };
+  const hipAt = (time: number) => {
+    evaluate(an, [{ clip, time, weight: 1 }]);
+    model.parent!.updateMatrixWorld(true);
+    return hipJoint(model, thighs).y;
+  };
+  const N = 24;
+  const ys: number[] = [];
+  for (let i = 0; i <= N; i++) ys.push(hipAt((end * i) / N));
+  const drop = ys[0] - ys[N];
+  if (drop < 1e-3) return { lift, progress: [1] };
+  return { lift, progress: ys.map((y) => Math.min(1, Math.max(0, (ys[0] - y) / drop))) };
+}
+
+/** The fall's ground lift at a clip time. */
+function fallLift(f: FallInfo, time: number, duration: number): number {
+  const p = f.progress;
+  const x = Math.min(1, Math.max(0, time / duration)) * (p.length - 1);
+  const i = Math.floor(x);
+  return f.lift * (p[i] + (p[Math.min(i + 1, p.length - 1)] - p[i]) * (x - i));
+}
+
+/** Sit-down speed: a clip that sits down faster than this is slowed to it. */
+const SIT_DOWN_SECONDS = 0.9;
+
+/** Clip time for a sit layer, and how far down the actor is (0..1). */
+function sitTime(rig: ActorRig, time: number, duration: number): { time: number; down: number } {
+  const s = rig.sit;
+  if (!s || s.settle <= 0) return { time: ((time % duration) + duration) % duration, down: 1 };
+  const rate = Math.min(1, s.settle / SIT_DOWN_SECONDS);
+  const ct = Math.min(Math.max(0, time) * rate, duration - 1e-3);
+  if (ct >= s.settle) return { time: ct, down: 1 };
+  const x = (ct / s.settle) * (s.progress.length - 1);
+  const i = Math.floor(x);
+  const down = s.progress[i] + (s.progress[Math.min(i + 1, s.progress.length - 1)] - s.progress[i]) * (x - i);
+  return { time: ct, down };
+}
+
+/** Standing up: the sit layer time (as sitTime takes it) that a moment of
+ *  the stand-up plays: the sitting down backwards, over STANDUP_SECONDS. */
+function standUpTime(s: SitInfo, time: number): number {
+  return Math.max(s.settle, SIT_DOWN_SECONDS) * (1 - Math.min(1, Math.max(0, time / STANDUP_SECONDS)));
 }
 
 /**
@@ -246,10 +600,13 @@ export interface CarryProp {
   side: -1 | 1;
 }
 
+/** Box size (thin side across the body, so it hangs beside the leg, not
+ *  through it), colour, and how far the box's centre hangs below the hand
+ *  bone (half its height plus a hand's grip), for a 1.75 m adult. */
 const CARRY_SPEC: Record<CarryKind, { geo: () => THREE.BufferGeometry; color: string; y: number }> = {
-  bag: { geo: () => new THREE.BoxGeometry(0.24, 0.3, 0.12), color: "#a06a3c", y: -0.2 },
-  box: { geo: () => new THREE.BoxGeometry(0.4, 0.28, 0.28), color: "#caa55e", y: -0.21 },
-  briefcase: { geo: () => new THREE.BoxGeometry(0.44, 0.32, 0.13), color: "#2c3038", y: -0.23 },
+  bag: { geo: () => new THREE.BoxGeometry(0.12, 0.3, 0.24), color: "#a06a3c", y: -0.2 },
+  box: { geo: () => new THREE.BoxGeometry(0.28, 0.28, 0.4), color: "#caa55e", y: -0.19 },
+  briefcase: { geo: () => new THREE.BoxGeometry(0.13, 0.32, 0.44), color: "#2c3038", y: -0.21 },
 };
 
 function attachCarry(model: THREE.Object3D, armR: AimBone[], kind: CarryKind, height: number): CarryProp | undefined {
@@ -262,6 +619,25 @@ function attachCarry(model: THREE.Object3D, armR: AimBone[], kind: CarryKind, he
   node.visible = false;
   model.parent!.add(node); // the rig root
   return { kind, node, ...(hand ? { hand } : {}), side: 1 };
+}
+
+/** Thigh, shin and foot per leg, when the bones chain that way. */
+function findLegs(model: THREE.Object3D, names: string[]): Leg[] {
+  const thighs = findThighs(names);
+  const feet = findFeet(names);
+  if (thighs.length !== 2) return [];
+  const legs: Leg[] = [];
+  for (let i = 0; i < 2; i++) {
+    const thigh = model.getObjectByName(thighs[i]);
+    const foot = feet.length === 2 ? model.getObjectByName(feet[i]) : undefined;
+    const shin = thigh?.children.find((c) => (c as THREE.Bone).isBone);
+    const ankle = shin && (foot?.parent === shin ? foot : shin.children[0]);
+    if (!thigh || !shin || !ankle || ankle.position.lengthSq() < 1e-12) return [];
+    const own = foot && foot !== ankle ? foot : undefined;
+    const rest = { thigh: thigh.quaternion.clone(), shin: shin.quaternion.clone(), ankle: ankle.quaternion.clone(), ...(own ? { foot: { p: own.position.clone(), q: own.quaternion.clone() } } : {}) };
+    legs.push({ thigh, shin, ankle, ...(own ? { foot: own } : {}), rest });
+  }
+  return legs;
 }
 
 export function buildRig(
@@ -283,6 +659,18 @@ export function buildRig(
   const root = new THREE.Group();
   root.add(model);
   root.updateMatrixWorld(true);
+  // Culling: three keeps the bounding sphere a skinned mesh computes from the
+  // first pose it is culled in, so a body later lying down or reaching past
+  // that pose got culled (the kid's hands vanished in a close-up, on some
+  // render tabs). A sphere round the standing body, its radius 1.25 times
+  // the height, holds any pose (the kid lying, arms out, reached 1.02).
+  const centre = new THREE.Vector3(0, height / 2, 0);
+  model.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (!m.isSkinnedMesh) return;
+    const s = m.getWorldScale(new THREE.Vector3());
+    m.boundingSphere = new THREE.Sphere(m.worldToLocal(centre.clone()), (1.25 * height) / Math.max(1e-9, Math.min(s.x, s.y, s.z)));
+  });
 
   const names: string[] = [];
   model.traverse((o) => names.push(o.name));
@@ -294,49 +682,63 @@ export function buildRig(
   const armL = bones.armL.map((n) => aimBone(model, n, "limb")).filter((b): b is AimBone => !!b);
 
   const map = mapClips(gltf.animations.map((c) => c.name));
-  const mixer = new THREE.AnimationMixer(model);
+  const used = [...new Set(Object.values(map.clips))].map((name) => gltf.animations.find((c) => c.name === name)!);
+  const animator = makeAnimator(model, used);
   const tracks = new Map<ClipKey, Track>();
   for (const [key, name] of Object.entries(map.clips) as [ClipKey, string][]) {
-    const clip = gltf.animations.find((c) => c.name === name)!;
-    const action = mixer.clipAction(clip);
-    action.setLoop(THREE.LoopRepeat, Infinity);
-    action.play();
-    action.weight = 0;
-    tracks.set(key, { action, duration: Math.max(1e-3, clip.duration) });
+    const clip = animator.clips.get(name)!;
+    tracks.set(key, { clip, duration: clip.duration });
   }
 
-  // Stride: measured from the feet; else the plan's speed times the clip length.
-  const feet = findFeet(names);
+  // Gait: measured from the feet; else the plan's speed times the clip length.
+  const feetNames = findFeet(names);
+  const feet = feetNames.map((n) => model.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+  const idleTrack = tracks.get("idle");
+  const idleFeet = idleTrack && feet.length === 2 ? feetAt(animator, model, idleTrack.clip, 0, feet) : undefined;
+  const gait: ActorRig["gait"] = {};
   const strideOf = (key: "walk" | "run", fallbackSpeed: number) => {
-    const name = map.clips[key];
-    const clip = name ? gltf.animations.find((c) => c.name === name) : undefined;
-    if (!clip) return fallbackSpeed;
-    const measured = measureStride(model, clip, feet, scale);
-    return measured ?? fallbackSpeed * clip.duration;
+    const t = tracks.get(key);
+    if (!t) return fallbackSpeed;
+    const g = measureGait(animator, model, t.clip, feet, scale, idleFeet);
+    gait[key] = g ?? { stride: fallbackSpeed * t.duration, phases: [0, 0.5] };
+    return gait[key]!.stride;
   };
-  const restPose: [THREE.Object3D, THREE.Vector3, THREE.Quaternion, THREE.Vector3][] = [];
-  model.traverse((o) => {
-    if (o !== model) restPose.push([o, o.position.clone(), o.quaternion.clone(), o.scale.clone()]);
-  });
-  // The sit is measured first: it needs the standing hip height at rest.
-  const sitClip = map.clips.sit ? gltf.animations.find((c) => c.name === map.clips.sit) : undefined;
-  const sitContact = sitClip ? measureSit(model, sitClip, findThighs(names)) : undefined;
+  const sitTrack = tracks.get("sit");
+  const sit = sitTrack ? measureSit(animator, model, sitTrack.clip, findThighs(names)) : undefined;
+  const standFeet: ActorRig["standFeet"] = {};
+  if (feet.length === 2) for (const [key, t] of tracks) standFeet[key] = feetAt(animator, model, t.clip, 0, feet).map((p) => p.multiplyScalar(scale).add(model.position));
+  // A seated loop stands up into idle (see applyPose), so a move after it
+  // walks off from idle's stance.
+  if (!(sit && sit.settle > 0)) delete standFeet.sit;
+  const fallTrack = tracks.get("fall");
+  const fall = fallTrack ? measureFall(animator, model, fallTrack.clip, findThighs(names)) : undefined;
   const stride = { walk: strideOf("walk", 1.35), run: strideOf("run", 3.6) };
   // Back to the rest pose after measuring.
-  for (const [o, p, q, s] of restPose) {
-    o.position.copy(p);
-    o.quaternion.copy(q);
-    o.scale.copy(s);
-  }
+  evaluate(animator, []);
   model.updateMatrixWorld(true);
-  mixer.stopAllAction();
-  for (const t of tracks.values()) {
-    t.action.play();
-    t.action.weight = 0;
-  }
 
   const carry = opts.carry ? attachCarry(model, armR, opts.carry, height) : undefined;
-  return { root, model, baseY: model.position.y, mixer, tracks, missing: new Set(map.missing), stride, sitContact, head, neck, armR, armL, height, ...(carry ? { carry } : {}) };
+  return {
+    root,
+    model,
+    baseY: model.position.y,
+    animator,
+    tracks,
+    missing: new Set(map.missing),
+    stride,
+    gait,
+    feet,
+    standFeet,
+    ...(sit ? { sit, sitContact: sit.contact } : {}),
+    ...(fall ? { fall } : {}),
+    legs: findLegs(model, names),
+    head,
+    neck,
+    armR,
+    armL,
+    height,
+    ...(carry ? { carry } : {}),
+  };
 }
 
 /** Which tracked clip plays a key (posture keys fall back to idle). */
@@ -350,55 +752,224 @@ function bodyDir(rig: ActorRig, x: number, y: number, z: number): THREE.Vector3 
 }
 
 /**
- * Sets the rig to a pose. `aimAt3` resolves overlay aims to world points.
+ * On a seat: the model is moved by `shift` (in the root's space) so the hips
+ * land on the seat, up or down to its height and back onto it, which carries
+ * the feet off the ground and back toward the seat. Two-bone IK puts each
+ * foot back where the clip had it, knees bending in their own plane, the foot
+ * keeping its angle: the feet stay planted as the actor sits down, sits and
+ * stands up (only lifting them back down slid them 17 cm as Maria sat).
+ */
+function plantFeet(rig: ActorRig, shift: THREE.Vector3) {
+  if (shift.lengthSq() < 1e-12) return;
+  const back = shift.clone().negate();
+  for (const leg of rig.legs) moveFoot(rig, leg, 0, back);
+}
+
+const _up = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Moves a foot: the ankle turns `spin` radians about the vertical through the
+ * actor's root, then moves by `shift` in the root's space (a step's lift, or
+ * back to the ground under a seat). Two-bone IK bends the thigh and shin to
+ * reach it, the knee staying on its side of the hip-ankle line; the foot
+ * keeps its angle, turned by `spin`. A foot bone outside the leg chain
+ * (IK-style rigs) moves the same way.
+ */
+function moveFoot(rig: ActorRig, leg: Leg, spin: number, shift: THREE.Vector3) {
+  const turn = new THREE.Quaternion().setFromAxisAngle(_up, spin);
+  const target = (p: THREE.Vector3) => rig.root.localToWorld(rig.root.worldToLocal(p.clone()).applyAxisAngle(_up, spin).add(shift));
+  const A = leg.thigh.getWorldPosition(new THREE.Vector3());
+  const B = leg.shin.getWorldPosition(new THREE.Vector3());
+  const C = leg.ankle.getWorldPosition(new THREE.Vector3());
+  const ankleQ = turn.clone().multiply(leg.ankle.getWorldQuaternion(new THREE.Quaternion()));
+  const foot = leg.foot?.parent ? { p: target(leg.foot.getWorldPosition(new THREE.Vector3())), q: turn.clone().multiply(leg.foot.getWorldQuaternion(new THREE.Quaternion())) } : undefined;
+  const T = target(C);
+  const a = A.distanceTo(B);
+  const b = B.distanceTo(C);
+  const d = T.clone().sub(A);
+  const c = Math.min(a + b - 1e-4, Math.max(Math.abs(a - b) + 1e-4, d.length()));
+  const dh = d.normalize();
+  // The knee stays on its side of the hip-ankle line, turned with the foot.
+  const n = B.clone().sub(A).applyAxisAngle(_up, spin);
+  n.addScaledVector(dh, -n.dot(dh));
+  if (n.lengthSq() < 1e-10) n.copy(bodyDir(rig, 0, 0, 1));
+  n.normalize();
+  const cosA = Math.min(1, Math.max(-1, (a * a + c * c - b * b) / (2 * a * c)));
+  const K = A.clone().addScaledVector(dh, a * cosA).addScaledVector(n, a * Math.sqrt(1 - cosA * cosA));
+  turnBone(leg.thigh, leg.thigh.getWorldQuaternion(new THREE.Quaternion()), B.clone().sub(A).normalize(), K.clone().sub(A).normalize(), 1);
+  const B2 = leg.shin.getWorldPosition(new THREE.Vector3());
+  const C2 = leg.ankle.getWorldPosition(new THREE.Vector3());
+  turnBone(leg.shin, leg.shin.getWorldQuaternion(new THREE.Quaternion()), C2.sub(B2).normalize(), T.clone().sub(B2).normalize(), 1);
+  // The foot keeps its world angle (flat on the ground as in the clip).
+  const shinQ = leg.shin.getWorldQuaternion(new THREE.Quaternion());
+  leg.ankle.quaternion.copy(shinQ.invert().multiply(ankleQ));
+  leg.ankle.updateMatrixWorld(true);
+  if (foot && leg.foot?.parent) {
+    leg.foot.position.copy(leg.foot.parent.worldToLocal(foot.p));
+    leg.foot.quaternion.copy(leg.foot.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(foot.q));
+    leg.foot.updateMatrixWorld(true);
+  }
+}
+
+const smooth01 = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+
+/**
+ * Where each foot points during a turn on the spot, as a fraction of the
+ * turn (0 = the start yaw, 1 = the end yaw), and how high it is lifted
+ * (0..1). The feet take turns, the foot on the
+ * turning side first, each step landing a little ahead of where the body
+ * will face when it lands, each foot's last step on the end yaw (a foot
+ * stays within ~40 degrees of the body's facing, a hip's easy range). Pure.
+ */
+export function turnSteps(turn: number, u: number): { facing: [number, number]; lift: [number, number] } {
+  const n = turnStepCount(turn);
+  // A positive yaw turns toward +x, the actor's left: the left foot (index 1) leads.
+  const first = turn > 0 ? 1 : 0;
+  const facing: [number, number] = [0, 0];
+  const lift: [number, number] = [0, 0];
+  for (const k of [0, 1]) {
+    let psi = 0;
+    for (let j = k === first ? 0 : 1; j < n; j += 2) {
+      const a = j / n;
+      const b = (j + 1) / n;
+      const to = j >= n - 2 ? 1 : smooth01((j + 1.5) / n);
+      if (u >= b) {
+        psi = to;
+        continue;
+      }
+      if (u > a) {
+        const s = (u - a) / (b - a);
+        psi += (to - psi) * smooth01(s);
+        lift[k] = Math.sin(Math.PI * s);
+      }
+      break;
+    }
+    facing[k] = psi;
+  }
+  return { facing, lift };
+}
+
+/** Turning on the spot: each foot stays planted where it was last put down
+ *  (pivoting all feet under the turning body looked like a turntable) and
+ *  steps round in turn. `weight` fades it (e.g. out while sitting down). */
+function stepTurn(rig: ActorRig, pivot: NonNullable<ActorPose["pivot"]>, weight: number) {
+  if (rig.legs.length !== 2 || weight <= 0) return;
+  const d = angleDelta(pivot.from, pivot.to);
+  const body = smooth01(pivot.u);
+  const { facing, lift } = turnSteps(d, pivot.u);
+  const h = 0.06 * (rig.height / 1.75);
+  for (let k = 0; k < 2; k++) moveFoot(rig, rig.legs[k], d * (facing[k] - body) * weight, new THREE.Vector3(0, h * lift[k] * weight, 0));
+}
+
+/**
+ * Sets the rig to a pose. `resolveAim` resolves overlay aims to world points.
  * Everything is derived from the pose: no state carries between frames.
  */
 export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) => V3 | undefined) {
   rig.root.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
   rig.root.rotation.set(0, pose.yaw, 0);
+
+  // Bones the overlays and the leg IK move go back to rest first, so a
+  // change to a bone no clip animates can't carry into the next pose.
+  for (const b of [rig.head, rig.neck, ...rig.armR, ...rig.armL]) b?.bone.quaternion.copy(b.rest);
+  for (const leg of rig.legs) {
+    leg.thigh.quaternion.copy(leg.rest.thigh);
+    leg.shin.quaternion.copy(leg.rest.shin);
+    leg.ankle.quaternion.copy(leg.rest.ankle);
+    if (leg.foot && leg.rest.foot) {
+      leg.foot.position.copy(leg.rest.foot.p);
+      leg.foot.quaternion.copy(leg.rest.foot.q);
+    }
+  }
+
   // On a seat: move the model so the clip's seat contact lands on the seat
-  // (`back` metres behind where the actor stands), weighted by how far into
-  // the sit we are.
+  // (`back` metres behind where the actor stands), weighted by the sit
+  // layer's weight and by how far down the clip has sat.
   let lift = 0;
   let sx = 0;
   let sz = 0;
   const c = rig.sitContact;
-  if (c && rig.tracks.has("sit")) {
-    for (const l of pose.layers) {
-      if (l.clip !== "sit" || !l.seat) continue;
-      lift += l.weight * (l.seat.h - c.y);
-      sx -= l.weight * c.x;
-      sz += l.weight * (-l.seat.back - c.z);
-    }
-  }
-  rig.model.position.set(sx, rig.baseY + lift, sz);
-  rig.root.updateMatrixWorld(true);
+  // Lying down: the fall's lift that rests the body on the ground.
+  let ground = 0;
+  // How seated (sit layers' weight times how far down they are).
+  let sitting = 0;
+  // Walking off: the newest gait layer, cycles into its move.
+  let start: { g: Gait; cycles: number; distance: number; hold: number; stance?: THREE.Vector3[] } | undefined;
 
-
-  // Bones the overlays move go back to rest first, so an overlay on a bone
-  // no clip animates can't compound across frames.
-  for (const b of [rig.head, rig.neck, ...rig.armR, ...rig.armL]) b?.bone.quaternion.copy(b.rest);
-
-  for (const t of rig.tracks.values()) t.action.weight = 0;
+  const layers: Layer[] = [];
   const procedural: { key: ClipKey; weight: number; time: number }[] = [];
   for (const layer of pose.layers) {
     const track = trackFor(rig, layer.clip);
     if (!track) continue;
     if (rig.missing.has(layer.clip) && layer.clip !== "run") procedural.push({ key: layer.clip, weight: layer.weight, time: layer.time });
+    const d = track.duration;
     let time: number;
-    if (layer.distance !== undefined && (layer.clip === "walk" || layer.clip === "run") && rig.tracks.has(layer.clip)) {
-      const stride = layer.clip === "walk" ? rig.stride.walk : rig.stride.run;
-      time = ((layer.distance / stride) % 1) * track.duration;
+    let weight = layer.weight;
+    const gaitKey = layer.clip === "run" && !rig.tracks.has("run") ? "walk" : layer.clip;
+    const g = gaitKey === "walk" || gaitKey === "run" ? rig.gait[gaitKey] : undefined;
+    if (layer.distance !== undefined && g) {
+      time = gaitPhase(g, layer.distance, layer.total) * d;
+      // Held fully while the move is the newest layer; fading out with it
+      // when a short move arrives before the lock lets go.
+      if (g.lock && weight > 0) {
+        const hold = layer === pose.layers[pose.layers.length - 1] ? 1 : weight;
+        start = { g, cycles: layer.distance / gaitStride(g, layer.total), distance: layer.distance, hold, stance: rig.standFeet[layer.after ?? "idle"] ?? rig.standFeet.idle };
+      }
+    } else if (layer.clip === "sit" && rig.tracks.has("sit")) {
+      let t = layer.time;
+      if (layer.reverse) {
+        const idle = rig.tracks.get("idle");
+        if (rig.sit && rig.sit.settle > 0) t = standUpTime(rig.sit, layer.time);
+        else if (idle) {
+          // A seated loop has no sitting down to play backwards: it fades to
+          // idle over the stand-up instead.
+          const up = smooth01(layer.time / STANDUP_SECONDS);
+          layers.push({ clip: idle.clip, time: layer.time % idle.duration, weight: weight * up });
+          weight *= 1 - up;
+        }
+      }
+      const s = sitTime(rig, t, d);
+      time = s.time;
+      sitting += weight * s.down;
+      if (c && layer.seat) {
+        const w = weight * s.down;
+        lift += w * (layer.seat.h - c.y);
+        sx -= w * c.x;
+        sz += w * (-layer.seat.back - c.z);
+      }
+    } else if (layer.reverse && rig.tracks.has(layer.clip)) {
+      // Getting up: the whole clip backwards over GETUP_SECONDS.
+      time = Math.max(0, (d - 1e-3) * (1 - layer.time / GETUP_SECONDS));
     } else if (layer.once) {
-      time = Math.min(layer.time, track.duration - 1e-3);
+      time = Math.min(layer.time, d - 1e-3);
     } else {
-      time = ((layer.time % track.duration) + track.duration) % track.duration;
+      time = ((layer.time % d) + d) % d;
     }
-    track.action.time = time;
-    track.action.weight += layer.weight;
+    if (layer.clip === "fall" && rig.fall) ground += weight * fallLift(rig.fall, time, d);
+    layers.push({ clip: track.clip, time, weight });
   }
-  rig.mixer.update(0);
-  rig.model.updateMatrixWorld(true);
+  rig.model.position.set(sx, rig.baseY + lift + ground, sz);
+  evaluate(rig.animator, layers);
+  rig.root.updateMatrixWorld(true);
+  // Feet back where the clip has them, under a seat of another height and
+  // in front of it.
+  plantFeet(rig, new THREE.Vector3(sx, lift, sz));
+  // Walking off from a stand: a foot that is down when the first step starts
+  // stays where the posture before stood it until the gait first lifts it,
+  // then swings into the walk (cross-fading the wider idle stance into the
+  // walk dragged the planted foot ~10 cm).
+  if (start?.stance && rig.legs.length === 2) {
+    for (let k = 0; k < 2; k++) {
+      const w = lockAt(start.g.lock?.[k], start.cycles) * start.hold;
+      if (w <= 0) continue;
+      const at = rig.root.worldToLocal(footPoint(rig.feet[k]));
+      const want = start.stance[k];
+      moveFoot(rig, rig.legs[k], 0, new THREE.Vector3((want.x - at.x) * w, 0, (want.z - start.distance - at.z) * w));
+    }
+  }
+  // Turning on the spot: the feet step round (not while sitting down; once
+  // stood up, the sit clip's standing first frame steps like any other pose).
+  if (pose.pivot) stepTurn(rig, pose.pivot, Math.max(0, 1 - sitting));
 
   // The carried prop rides under the posed hand bone, in the root's own
   // space (or at the hip when the rig has no arm bones). Pure per pose.
@@ -408,10 +979,9 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
     const bone = arm.length ? arm[arm.length - 1].bone : undefined;
     if (bone) {
       const p = rig.root.worldToLocal(bone.getWorldPosition(_v).clone());
-      const drop = (cp.kind === "bag" ? 0.28 : 0.24) * (rig.height / 1.75);
-      const bob = Math.abs(Math.sin((pose.layers[0]?.time ?? 0) * 2.2)) * 0.02;
+      const drop = -CARRY_SPEC[cp.kind].y * (rig.height / 1.75);
       cp.node.visible = true;
-      cp.node.position.set(p.x, p.y - drop - bob, p.z);
+      cp.node.position.set(p.x, p.y - drop, p.z);
       cp.node.rotation.set(0, 0, 0);
     } else {
       cp.node.visible = true;

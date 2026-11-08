@@ -46,7 +46,8 @@ export const STAGE_SPOTS: Record<string, Spot> = {
   "cafe-chair": { pos: [-3, 0, 3.4], facing: Math.PI },
   "cafe-table": { pos: [-3, 0.6, 2.5] },
   "cafe-side": { pos: [-1.9, 0, 2.3], facing: -Math.PI / 2 },
-  planter: { pos: [0, 0, -4], facing: 0 },
+  // The planter is 2 x 2 m around [0, -5]: stand clear of its front edge.
+  planter: { pos: [0, 0, -3.5], facing: 0 },
   hydrant: { pos: [5.5, 0, 2.4] },
   "left-edge": { pos: [-9, 0, 1] },
   "right-edge": { pos: [9, 0, 0.5] },
@@ -63,9 +64,11 @@ export const DEFAULT_SCRIPTS: ActorScriptInput[] = [
     start: "lamp",
     steps: [
       { at: 0.3, action: "walk", to: "bench-front" },
-      { at: 6.3, action: "sit", to: "bench-seat" },
+      { at: 6.8, action: "sit", to: "bench-seat" },
       { at: 8.5, action: "wave", target: "tom" },
       { at: 11, action: "talk", target: "tom", for: 3 },
+      // Stands up off the bench (the sit-down backwards), then turns and walks off.
+      { at: 12.4, action: "walk", to: "hydrant" },
     ],
   },
   {
@@ -83,12 +86,14 @@ export const DEFAULT_SCRIPTS: ActorScriptInput[] = [
     id: "kid",
     role: "kid",
     start: "back-left",
+    // Timed to the run (it turns on the spot, then arrives at ~5.6 s) and the
+    // get-up (1.2 s), so the fall lands at 7.5 s, when the farmer flinches.
     steps: [
-      { at: 0.5, action: "run", to: "front" },
-      { at: 4.5, action: "cheer" },
+      { at: 0.2, action: "run", to: "front" },
+      { at: 5.2, action: "cheer", for: 1.9 },
       { at: 7.5, action: "fall" },
-      { at: 10, action: "idle" },
-      { at: 10.5, action: "run", to: "right-edge" },
+      { at: 9.6, action: "idle" },
+      { at: 10.8, action: "run", to: "right-edge" },
     ],
   },
   {

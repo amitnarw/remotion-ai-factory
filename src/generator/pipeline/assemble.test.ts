@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SettingsSchema, validateSpec } from "../spec.schema";
-import { assemble } from "./assemble";
+import { loadLibrary, pickEntry } from "../audio-library";
+import { SOUND_QUERY } from "../audio-resolve";
+import { SettingsSchema, STAT_REACTS, validateSpec } from "../spec.schema";
+import { assemble, REACT_HIT } from "./assemble";
 import { buildCaptions } from "./captions";
 import { DirectorSchema, normalizeDirector } from "./director";
 import { matchSound, soundRules, soundVocabulary } from "./sound";
@@ -146,6 +148,15 @@ test("world scenes carry the place choice and a place change becomes a flight (P
   assert.equal(s.flights?.length, 1, "one flight window planned");
   const win = s.flights![0];
   assert.ok(win.to <= s.scenes[2].to && win.from >= 0.5, "the flight window sits inside the scenes");
+  assert.ok(win.from < w3.from && win.to > w3.from, "the flight spans the cut to the new place");
+  // B's first shot ends 2-5 s after the cut, so the flight ends with it
+  // instead of leaving a stub of that shot on screen. (A's side has no shot
+  // start 2-6 s before the cut that is not the scene's own cut, so it keeps
+  // the fixed edge.)
+  const cutAtEnd = (s.shots ?? []).filter((sh) => sh.from < win.to - 0.002 && sh.to > win.to + 0.002);
+  assert.equal(cutAtEnd.length, 0, `the flight ends on a shot edge (cut part-way: ${cutAtEnd.map((sh) => `${sh.from}-${sh.to}`).join(", ")})`);
+  assert.ok(!(s.transitions ?? []).some((t) => t.t === w3.from), "the flight is the transition: no dip or whip at its cut");
+  assert.ok((s.transitions ?? []).some((t) => t.t === s.scenes[1].from), "the plain cut before it keeps its transition");
   // The featured performer: scene-relative director seconds became video seconds.
   const actor = w1.actors?.[0];
   assert.ok(actor, "the director's actor survives validation");
@@ -192,6 +203,81 @@ test("sound rules give each world its beds; night swaps birds for insects", () =
   assert.ok(sounds.includes("night_insects") && !sounds.includes("forest_birds"));
   assert.ok(sounds.includes("rain_hiss"));
   assert.equal(plan.music[0].mood, "upbeat");
+});
+
+/** The story at street-block (b1-b2) then Paris (b3-b5), with a counter on b1-b4. */
+function worldBuild(counter: Record<string, unknown>, world: unknown[] = []) {
+  const input = {
+    scenes: [
+      { start: "b1", kit: "street-block", time: "golden" },
+      { start: "b3", world: { place: "paris", date: "2026-06-21", time: "12:00" }, time: "noon" },
+    ],
+    counter: { title: "your money", unit: "x", steps: messyDirector.statPanel.steps.slice(0, 4), ...counter },
+    world,
+  };
+  const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, 2.6) }));
+  const timeline = buildTimeline({ beats: story.beats, lines, format: "9:16", target: 20, cap: 90, wps: 2.6 });
+  const captions = buildCaptions(timeline, story.beats, "9:16", true);
+  const direction = DirectorSchema.parse(normalizeDirector(input));
+  const out = assemble({ id: "t", premise: "p", settings, story, timeline, captions, direction, sound: soundRules(story, direction), casting: castVoices(story, audio), audio });
+  return { s: validateSpec(out.spec), warnings: out.warnings };
+}
+
+test("world reactions: the counter carries react, and every step in a world scene hits with its reaction", () => {
+  for (const react of STAT_REACTS) {
+    const { s } = worldBuild({ react });
+    assert.equal(s.statPanel?.react, react, "react is carried as chosen");
+    const paris = s.scenes.find((sc) => sc.kit === "world")!;
+    const hits = s.events.filter((e) => e.name.startsWith("counter-"));
+    const inWorld = hits.filter((e) => e.t >= paris.from && e.t < paris.to);
+    assert.ok(inWorld.length >= 1 && hits.length > inWorld.length, `${react}: steps both in the street and in Paris`);
+    for (const e of hits) {
+      const cue = e.sfx![0];
+      if (e.t >= paris.from && e.t < paris.to) {
+        assert.equal(cue.tag, REACT_HIT[react].tag, `${react}: ${e.name} in Paris sounds like its reaction`);
+        const cut = REACT_HIT[react].cut;
+        if (cut) assert.ok(cue.volume === "ramp-down" && Math.abs((cue.to as number) - (e.t + cut)) < 0.002, `${react}: a long sound is faded out`);
+      } else assert.equal(cue.tag, "pop_light", `${react}: ${e.name} in the street keeps the pop`);
+    }
+  }
+});
+
+test("world reactions: every reaction's hit is a sound audio-resolve resolves", () => {
+  const library = loadLibrary();
+  for (const react of STAT_REACTS) {
+    const { tag } = REACT_HIT[react];
+    const q = SOUND_QUERY[tag];
+    assert.ok(q, `${react}: "${tag}" is in audio-resolve's vocabulary`);
+    // On a machine with the library built, it finds real files.
+    if (library.length) assert.ok(pickEntry(library, q.kinds, q.sets, "react-test"), `${react}: "${tag}" has library files`);
+  }
+});
+
+test("world reactions: without react a world step keeps the pop and the plan says so", () => {
+  const { s, warnings } = worldBuild({});
+  assert.equal(s.statPanel?.react, undefined, "the assembler never invents a reaction");
+  assert.ok(s.events.filter((e) => e.name.startsWith("counter-")).every((e) => e.sfx![0].tag === "pop_light"));
+  assert.ok(warnings.some((w) => /no react/.test(w)), warnings.join(" | "));
+});
+
+test("world reactions: places show water, lights-out and the place events; kits drop the place events", () => {
+  const events = ["lights-out", "water-rise", "gravity-off", "snow-start", "ground-break", "gravity-on", "snow-stop"];
+  // b2 (street) gets ground-break and gravity-on: a kit can't show them.
+  const { s, warnings } = worldBuild({ react: "lift" }, [
+    { beat: "b3", event: "lights-out" },
+    { beat: "b3", event: "water-rise" },
+    { beat: "b4", event: "gravity-off" },
+    { beat: "b5", event: "snow-start" },
+    { beat: "b2", event: "ground-break" },
+    { beat: "b2", event: "gravity-on" },
+    { beat: "b5", event: "snow-stop" },
+  ]);
+  assert.deepEqual(s.worldEvents.map((w) => w.name).sort(), ["gravity-off", "lights-out", "snow-start", "snow-stop", "water-rise"]);
+  for (const name of ["ground-break", "gravity-on"]) assert.ok(warnings.some((w) => w.startsWith(`${name} at b2 dropped`)), `${name} dropped on the street`);
+  for (const name of events.filter((n) => s.worldEvents.some((w) => w.name === n))) {
+    const ev = s.events.find((e) => e.name.startsWith(`world-${name}-`))!;
+    assert.ok(SOUND_QUERY[ev.sfx![0].tag], `${name}'s hit "${ev.sfx![0].tag}" is in the vocabulary`);
+  }
 });
 
 test("free-text sound names map onto the vocabulary", () => {

@@ -28,7 +28,7 @@
  * purpose (iGPU cost, halo/leak artefacts); add them behind quality="final"
  * once there is GPU headroom. Avoid N8AO's temporal accumulate mode.
  */
-import { useThree } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { EffectComposer } from "@react-three/postprocessing";
 import {
   BlendFunction,
@@ -42,9 +42,9 @@ import {
   VignetteEffect,
   type Effect,
 } from "postprocessing";
-import { memo, useEffect, useLayoutEffect, useMemo } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useCurrentFrame } from "remotion";
-import { HalfFloatType, Vector2 } from "three";
+import { HalfFloatType, Vector2, WebGLRenderTarget, type Mesh } from "three";
 import { GradeEffect } from "./GradeEffect";
 import { LOOK_PRESETS, type LookPreset, type LookPresetId, type ToneMapOperator } from "./presets";
 import { RenderAfterMount } from "./renderAfterMount";
@@ -149,6 +149,40 @@ const GrainSeed: React.FC<{ effect: GradeEffect; offset: number }> = ({ effect, 
   return null;
 };
 
+/**
+ * Asks for every program the scene draws with before the frame draws it.
+ * three compiles a program at its first use and waits for it right there,
+ * one program after another; asked for all at once, the driver compiles
+ * them side by side, so a scene's first frame in a render tab waits once
+ * (the flight's first ground frame, six tabs: about 17 s to 11-13 s).
+ * The composer draws the scene into a half-float buffer, so a target like
+ * it is bound meanwhile: colour space and tone mapping are part of each
+ * program, and the programs asked for are exactly the ones drawn with.
+ * Again only when the scene's meshes change (a kit model arrives); it draws
+ * nothing, so no pixel changes.
+ */
+function Precompile() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const meshes = useRef(-1);
+  useFrame(() => {
+    let n = 0;
+    scene.traverse((o) => {
+      if ((o as Mesh).isMesh) n++;
+    });
+    if (n === meshes.current) return;
+    meshes.current = n;
+    const target = new WebGLRenderTarget(1, 1, { type: HalfFloatType });
+    const prev = gl.getRenderTarget();
+    gl.setRenderTarget(target);
+    gl.compile(scene, camera);
+    gl.setRenderTarget(prev);
+    target.dispose();
+  }, -1000);
+  return null;
+}
+
 function CinematicLookImpl({ preset, quality = "final", grainSeed = 0, grain = 1, grainSize = 1 }: CinematicLookProps) {
   const look = LOOK_PRESETS[preset] ?? LOOK_PRESETS.neutral;
   const gl = useThree((s) => s.gl);
@@ -187,6 +221,7 @@ function CinematicLookImpl({ preset, quality = "final", grainSeed = 0, grain = 1
         {children}
       </EffectComposer>
       <GrainSeed effect={chain.grade} offset={grainSeed} />
+      <Precompile />
       <RenderAfterMount ready={ready} />
     </>
   );

@@ -1024,6 +1024,26 @@
     "writer": {
       "provider": "nvidia",
       "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    },
+    "director": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    },
+    "sound": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    },
+    "critic": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    },
+    "vision": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    },
+    "editor": {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b"
     }
   }
 }

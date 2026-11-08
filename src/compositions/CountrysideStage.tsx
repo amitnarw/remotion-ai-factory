@@ -21,6 +21,8 @@ import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
 import type { Subject } from "../generator/camera/solve";
 import type { ShotSize } from "../generator/camera/shot";
+import type { Occluder } from "../generator/camera/occlusion";
+import { discColumns, turnedBox, turnedRoof } from "../generator/camera/shapes";
 import { statScaleAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { GradientSkyDome } from "./water";
@@ -354,22 +356,27 @@ function Haystack({ x, z, scale, col, rot }: { x: number; z: number; scale: numb
   );
 }
 
-function FenceLine({ x0, z0, x1, z1, col, specId }: { x0: number; z0: number; x1: number; z1: number; col: string; specId: string }) {
+type FenceRun = { x0: number; z0: number; x1: number; z1: number };
+
+/** A fence line's posts (about every 1.8 m, jittered) and the rail panel width: shared by FenceLine and the camera's blockers. */
+function fencePosts({ x0, z0, x1, z1 }: FenceRun, specId: string): { posts: Array<{ x: number; z: number; rot: number }>; len: number; count: number } {
   const dx = x1 - x0;
   const dz = z1 - z0;
   const len = Math.sqrt(dx * dx + dz * dz);
   const count = Math.max(2, Math.floor(len / 1.8));
-  const posts = useMemo(() => {
-    const arr: Array<{ x: number; z: number; rot: number }> = [];
-    for (let i = 0; i <= count; i++) {
-      const t = i / count;
-      const px = x0 + dx * t + (seeded(specId, `fence-${i}-x`, 0) - 0.5) * 0.15;
-      const pz = z0 + dz * t + (seeded(specId, `fence-${i}-z`, 0) - 0.5) * 0.15;
-      const rot = Math.atan2(dx, dz) + (seeded(specId, `fence-${i}-r`, 0) - 0.5) * 0.08;
-      arr.push({ x: px, z: pz, rot });
-    }
-    return arr;
-  }, [x0, z0, dx, dz, count, specId]);
+  const posts: Array<{ x: number; z: number; rot: number }> = [];
+  for (let i = 0; i <= count; i++) {
+    const t = i / count;
+    const px = x0 + dx * t + (seeded(specId, `fence-${i}-x`, 0) - 0.5) * 0.15;
+    const pz = z0 + dz * t + (seeded(specId, `fence-${i}-z`, 0) - 0.5) * 0.15;
+    const rot = Math.atan2(dx, dz) + (seeded(specId, `fence-${i}-r`, 0) - 0.5) * 0.08;
+    posts.push({ x: px, z: pz, rot });
+  }
+  return { posts, len, count };
+}
+
+function FenceLine({ x0, z0, x1, z1, col, specId }: FenceRun & { col: string; specId: string }) {
+  const { posts, len, count } = useMemo(() => fencePosts({ x0, z0, x1, z1 }, specId), [x0, z0, x1, z1, specId]);
 
   return (
     <group>
@@ -531,16 +538,144 @@ function CountrysideCameraRig({ spec }: { spec: ShotSpec }) {
   return null;
 }
 
-type CountryLayout = {
+export type CountryLayout = {
   houses: Array<{ x: number; z: number; rot: number; scale: number }>;
   barn: { x: number; z: number; rot: number; scale: number };
   windmill: { x: number; z: number; rot: number; scale: number };
   haystacks: Array<{ x: number; z: number; scale: number; rot: number }>;
   roadPoints: Array<[number, number]>;
+  fences: FenceRun[];
+  cropBounds: { x0: number; x1: number; z0: number; z1: number };
 };
 
-/** Owner ids of the props, for the clearance check. */
-const OWN = { barn: 10, windmill: 11, hay: 20 };
+/** The procedural layout, seeded by spec.id: what the stage draws and the camera measures. */
+export function countryLayout(specId: string): CountryLayout {
+  const houses: Array<{ x: number; z: number; rot: number; scale: number }> = [];
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    const r = 18 + seeded(specId, `house-${i}-r`, 0) * 8;
+    houses.push({
+      x: Math.sin(angle) * r,
+      z: Math.cos(angle) * r - 15,
+      rot: angle + Math.PI / 2 + (seeded(specId, `house-${i}-rot`, 0) - 0.5) * 0.2,
+      scale: 0.9 + seeded(specId, `house-${i}-s`, 0) * 0.25,
+    });
+  }
+  const barn = {
+    x: 35 + seeded(specId, "barn-x", 0) * 10,
+    z: -25 + seeded(specId, "barn-z", 0) * 10,
+    rot: seeded(specId, "barn-rot", 0) * Math.PI * 0.5,
+    scale: 1.1,
+  };
+  const windmill = {
+    x: -30 + seeded(specId, "wm-x", 0) * 10,
+    z: -35 + seeded(specId, "wm-z", 0) * 10,
+    rot: seeded(specId, "wm-rot", 0) * Math.PI * 0.5,
+    scale: 1.0,
+  };
+  const haystacks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
+  for (let i = 0; i < 6; i++) {
+    haystacks.push({
+      x: (seeded(specId, `hay-${i}-x`, 0) - 0.5) * 60,
+      z: -10 + (seeded(specId, `hay-${i}-z`, 0) - 0.5) * 50,
+      scale: 0.7 + seeded(specId, `hay-${i}-s`, 0) * 0.5,
+      rot: seeded(specId, `hay-${i}-r`, 0) * Math.PI * 2,
+    });
+  }
+  const roadPoints: Array<[number, number]> = [
+    [-5, 20], [0, 5], [0, -15], [5, -30], [10, -45], [15, -60],
+  ];
+  const fences: FenceRun[] = [];
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2;
+    const r = 22;
+    const x0 = Math.sin(angle) * r;
+    const z0 = Math.cos(angle) * r - 15;
+    const x1 = Math.sin(angle + 0.4) * r;
+    const z1 = Math.cos(angle + 0.4) * r - 15;
+    fences.push({ x0, z0, x1, z1 });
+  }
+  const cropBounds = { x0: -70, x1: 70, z0: -80, z1: 20 };
+
+  return { houses, barn, windmill, haystacks, roadPoints, fences, cropBounds };
+}
+
+/** Owner ids of the props, for the clearance check and the solver's blockers. */
+const OWN = { barn: 10, windmill: 11, hay: 20, fence: 30, ridge: 40 };
+
+/** The ridge the stage draws (MountainRidge in mountains.tsx, bounds x -120..120, z0 -100). */
+const RIDGE = { x0: -120, x1: 120, z0: -100 };
+
+/** MountainRidge's layers (same seeds): flat sheets at z, from baseY up to a peak every 12 m from x0 - 20. */
+function ridgeLayers(specId: string, bounds: { x0: number; x1: number; z0: number }, count: number) {
+  return Array.from({ length: count }, (_, n) => {
+    const z = bounds.z0 - n * 35 - seeded(specId, `ridge-${n}-z`, 0) * 20;
+    const peaks: Array<{ x: number; h: number }> = [];
+    for (let x = bounds.x0 - 20; x < bounds.x1 + 20; x += 12) peaks.push({ x, h: seeded(specId, `ridge-${n}-${x}`, 0) * 12 + 4 });
+    return { z, baseY: 5 + n * 8, peaks };
+  });
+}
+
+/**
+ * The countryside as the solver's shapes (Subject.blockers): each house's
+ * walls and roof (turned with the house; chimney too), the barn's, the
+ * windmill's tower and cap, the haystacks, the fence rails (FenceLine draws a
+ * 1 m panel across the line at each post) and the ridge's four sheets. And
+ * where the lens must not stand but may look across (Subject.keepOut): the
+ * disc the windmill's blades sweep (9 m round, 1.2 m deep, 12.5 m up), and
+ * everything behind the ridge's front sheet (the ridge is a backdrop of
+ * cut-out sheets floating 5 m and more up, and the ground ends at z -200
+ * before its last sheet: from behind it, or from over it, the set shows its
+ * seams).
+ */
+function countrySolids(L: CountryLayout, specId: string): { blockers: Occluder[]; keepOut: Occluder[] } {
+  const blockers: Occluder[] = [];
+  // House / Barn: sizes go with scale² (geometry and group both scaled).
+  L.houses.forEach((h, i) => {
+    const s2 = h.scale * h.scale;
+    blockers.push(...turnedBox(h.x, h.z, 2.75 * s2, 2.25 * s2, h.rot, 0, 4.2 * s2, i));
+    blockers.push(...turnedRoof(h.x, h.z, 4.125 * s2, h.rot, 4.2 * s2, 2.2 * s2, i));
+    if (seeded(specId, `house-${i}-chimney`, 0) > 0.5) {
+      const out = 1.925 * s2; // w * 0.35 along the house's own x
+      const y = 6.4 * s2 + 0.8 * h.scale;
+      blockers.push(...turnedBox(h.x + out * Math.cos(h.rot), h.z - out * Math.sin(h.rot), 0.35 * h.scale, 0.35 * h.scale, h.rot, y - 0.9 * h.scale, y + 0.9 * h.scale, i));
+    }
+  });
+  const b = L.barn;
+  const b2 = b.scale * b.scale;
+  blockers.push(...turnedBox(b.x, b.z, 5 * b2, 3.5 * b2, b.rot, 0, 6 * b2, OWN.barn));
+  blockers.push(...turnedRoof(b.x, b.z, 7 * b2, b.rot, 6 * b2, 3 * b2, OWN.barn));
+  // Windmill (scaled once): the tower widens from 1.2 m round at its foot to
+  // 2.2 m at 12 m; the cap and the hub reach 13.1 m.
+  const m = L.windmill;
+  const w = m.scale;
+  blockers.push({ kind: "column", x: m.x, z: m.z, r: 1.7 * w, top: 6 * w, owner: OWN.windmill });
+  blockers.push({ kind: "column", x: m.x, z: m.z, r: 2.2 * w, bottom: 6 * w, top: 13.1 * w, owner: OWN.windmill });
+  // Haystacks (scaled once): 1.0 to 1.5 m round up to 3.6 m, the cone 1.2 m round from 3.3 to 5.1 m.
+  L.haystacks.forEach((h, i) => {
+    blockers.push({ kind: "column", x: h.x, z: h.z, r: 1.5 * h.scale, top: 3.6 * h.scale, owner: OWN.hay + i });
+    blockers.push({ kind: "column", x: h.x, z: h.z, r: 1.2 * h.scale, bottom: 3.3 * h.scale, top: 5.1 * h.scale, owner: OWN.hay + i });
+  });
+  // Fences: the panel across the line at each post (and the last post).
+  for (const f of L.fences) {
+    const { posts, len, count } = fencePosts(f, specId);
+    posts.forEach((p, i) => blockers.push(...turnedBox(p.x, p.z, i < count ? len / count / 2 : 0.06, 0.06, p.rot, 0, 1.2, OWN.fence)));
+  }
+  // The ridge: each 12 m stretch of a sheet as two boxes as tall as their higher end (owner OWN.ridge + its layer).
+  const ridge = ridgeLayers(specId, RIDGE, 4);
+  for (const [n, layer] of ridge.entries()) {
+    for (let j = 0; j < layer.peaks.length - 1; j++) {
+      const [p, q] = [layer.peaks[j], layer.peaks[j + 1]];
+      const mid = (p.h + q.h) / 2;
+      for (const [x0, x1, top] of [[p.x, p.x + 6, Math.max(p.h, mid)], [p.x + 6, q.x, Math.max(mid, q.h)]]) {
+        blockers.push({ kind: "box", minX: x0, maxX: x1, minY: layer.baseY, maxY: layer.baseY + top, minZ: layer.z - 0.1, maxZ: layer.z + 0.1, owner: OWN.ridge + n });
+      }
+    }
+  }
+  const keepOut = discColumns(m.x, 12.5 * w, m.z, 9 * w, 0.6 * w, m.rot, OWN.windmill);
+  keepOut.push({ kind: "box", minX: -1000, maxX: 1000, minY: -100, maxY: 1000, minZ: -1000, maxZ: ridge[0].z, owner: OWN.ridge });
+  return { blockers, keepOut };
+}
 
 /**
  * Sizes in world metres. House and Barn scale their geometry by `scale` AND
@@ -564,14 +699,7 @@ function countryBlockers(L: CountryLayout): Blocker[] {
 
 /** The ridge's front layers (same seeds as MountainRidge in mountains.tsx). */
 function ridgeHills(specId: string, bounds: { x0: number; x1: number; z0: number }): Subject {
-  const layer = (n: number) => {
-    const z = bounds.z0 - n * 35 - seeded(specId, `ridge-${n}-z`, 0) * 20;
-    const peaks: Array<{ x: number; h: number }> = [];
-    for (let x = bounds.x0 - 20; x < bounds.x1 + 20; x += 12) peaks.push({ x, h: seeded(specId, `ridge-${n}-${x}`, 0) * 12 + 4 });
-    return { z, baseY: 5 + n * 8, peaks };
-  };
-  const front = layer(0);
-  const back = layer(1);
+  const [front, back] = ridgeLayers(specId, bounds, 2);
   // The highest front peak near the middle of the view.
   const peak = front.peaks.filter((p) => Math.abs(p.x) <= 40).sort((a, b) => b.h - a.h)[0] ?? { x: 0, h: 10 };
   const behind = Math.max(...back.peaks.filter((p) => Math.abs(p.x - peak.x) <= 18).map((p) => back.baseY + p.h), 0);
@@ -586,13 +714,19 @@ const COUNTRY_WIDE = ["FS", "WS"] as const;
  * What the camera can frame in the countryside (KIT_SUBJECTS.countryside),
  * measured from the seeded layout. Buildings face their real front (door,
  * rotor) unless another building is in the way, then their clearest side.
- * Everything here is static, so the anchors ignore t.
+ * Every subject carries the farm as the solver's blockers (countrySolids), its
+ * own building as its own parts: a shot whose lens would stand in a house, a
+ * roof, a haystack or the windmill's blade sweep, or that would see its
+ * subject through one, takes another bearing, height or distance (solve.ts,
+ * clearView). Everything here is static, so the anchors ignore t.
  */
 export function countrysideAnchors(L: CountryLayout, specId: string, aspect: number, night = false): Anchors {
   const blockers = countryBlockers(L);
+  const solids = countrySolids(L, specId);
   const anchors: Anchors = {};
-  const keep = (name: string, s: Subject) => {
-    anchors[name] = () => s;
+  const keep = (name: string, s: Subject, own: number[] = []) => {
+    const subject: Subject = { ...s, ...solids, ...(own.length ? { own } : {}) };
+    anchors[name] = () => subject;
   };
   /** The front (and the back, for a two-sided prop) first; turning away from
    *  it costs a little. NIGHT SIDE BIAS: the key light is a low moon at
@@ -636,14 +770,14 @@ export function countrysideAnchors(L: CountryLayout, specId: string, aspect: num
     const value = pick.cost - 0.02 * h.z;
     if (value < best) {
       best = value;
-      keep("house", { ...base, facing: pick.facing });
+      keep("house", { ...base, facing: pick.facing }, [i]);
     }
   });
 
   // barn: doors on both long sides; its roof peak is 9 scale² up.
   const b2 = L.barn.scale * L.barn.scale;
   const barnBase: Subject = { center: [L.barn.x, 4.5 * b2, L.barn.z], radius: 5.5 * b2, height: 9 * b2, ground: 0, focus: "centre" };
-  keep("barn", { ...barnBase, facing: pickSide(barnBase, COUNTRY_CLOSE, [OWN.barn], L.barn.rot, true).facing });
+  keep("barn", { ...barnBase, facing: pickSide(barnBase, COUNTRY_CLOSE, [OWN.barn], L.barn.rot, true).facing }, [OWN.barn]);
 
   // windmill: rotor hub 12.5 m up, blades 9 m long, turning in the plane that
   // faces rot (and rot + π). Close shots frame the top of a subject, so its
@@ -651,7 +785,7 @@ export function countrysideAnchors(L: CountryLayout, specId: string, aspect: num
   // blade tips sweep (21.5 m); the radius keeps the whole rotor wide.
   const w = L.windmill.scale;
   const millBase: Subject = { center: [L.windmill.x, 8 * w, L.windmill.z], radius: 9 * w, height: 16 * w, ground: 0 };
-  keep("windmill", { ...millBase, facing: pickSide(millBase, COUNTRY_CLOSE, [OWN.windmill], L.windmill.rot, true).facing });
+  keep("windmill", { ...millBase, facing: pickSide(millBase, COUNTRY_CLOSE, [OWN.windmill], L.windmill.rot, true).facing }, [OWN.windmill]);
 
   // fields: a stretch of the crop strips clear of the farm (CropStrips covers
   // x -76..71 in two rows, z -110..-50 and -46..14), from its clearest side.
@@ -675,8 +809,10 @@ export function countrysideAnchors(L: CountryLayout, specId: string, aspect: num
   const roadPick = clearestFacing(roadBase, COUNTRY_WIDE, aspect, blockers, new Set(), along, [along, along + 0.35, along - 0.35, along + Math.PI]);
   keep("road", { ...roadBase, facing: roadPick.facing });
 
-  // hills: the mountain ridge on the horizon.
-  keep("hills", ridgeHills(specId, { x0: -120, x1: 120, z0: -100 }));
+  // hills: the mountain ridge on the horizon. Its front sheet is its own part
+  // (the subject's centre stands 10 m behind it); the sheets behind are not,
+  // so a shot from behind the ridge turns round to its front.
+  keep("hills", ridgeHills(specId, RIDGE), [OWN.ridge]);
 
   // scene: the village green and the farm round it, from the south like the rig.
   const sceneBase: Subject = { center: [0, 4, -15], radius: 10, height: 9, ground: 0 };
@@ -700,56 +836,7 @@ export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: Scen
   }, [look.fog, look.fogDensity, threeScene]);
 
   // Procedural layout seeded by spec.id
-  const layout = useMemo(() => {
-    const houses: Array<{ x: number; z: number; rot: number; scale: number }> = [];
-    for (let i = 0; i < 5; i++) {
-      const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
-      const r = 18 + seeded(spec.id, `house-${i}-r`, 0) * 8;
-      houses.push({
-        x: Math.sin(angle) * r,
-        z: Math.cos(angle) * r - 15,
-        rot: angle + Math.PI / 2 + (seeded(spec.id, `house-${i}-rot`, 0) - 0.5) * 0.2,
-        scale: 0.9 + seeded(spec.id, `house-${i}-s`, 0) * 0.25,
-      });
-    }
-    const barn = {
-      x: 35 + seeded(spec.id, "barn-x", 0) * 10,
-      z: -25 + seeded(spec.id, "barn-z", 0) * 10,
-      rot: seeded(spec.id, "barn-rot", 0) * Math.PI * 0.5,
-      scale: 1.1,
-    };
-    const windmill = {
-      x: -30 + seeded(spec.id, "wm-x", 0) * 10,
-      z: -35 + seeded(spec.id, "wm-z", 0) * 10,
-      rot: seeded(spec.id, "wm-rot", 0) * Math.PI * 0.5,
-      scale: 1.0,
-    };
-    const haystacks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
-    for (let i = 0; i < 6; i++) {
-      haystacks.push({
-        x: (seeded(spec.id, `hay-${i}-x`, 0) - 0.5) * 60,
-        z: -10 + (seeded(spec.id, `hay-${i}-z`, 0) - 0.5) * 50,
-        scale: 0.7 + seeded(spec.id, `hay-${i}-s`, 0) * 0.5,
-        rot: seeded(spec.id, `hay-${i}-r`, 0) * Math.PI * 2,
-      });
-    }
-    const roadPoints: Array<[number, number]> = [
-      [-5, 20], [0, 5], [0, -15], [5, -30], [10, -45], [15, -60],
-    ];
-    const fences: Array<{ x0: number; z0: number; x1: number; z1: number }> = [];
-    for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2;
-      const r = 22;
-      const x0 = Math.sin(angle) * r;
-      const z0 = Math.cos(angle) * r - 15;
-      const x1 = Math.sin(angle + 0.4) * r;
-      const z1 = Math.cos(angle + 0.4) * r - 15;
-      fences.push({ x0, z0, x1, z1 });
-    }
-    const cropBounds = { x0: -70, x1: 70, z0: -80, z1: 20 };
-
-    return { houses, barn, windmill, haystacks, roadPoints, fences, cropBounds };
-  }, [spec.id]);
+  const layout = useMemo(() => countryLayout(spec.id), [spec.id]);
 
   // Subjects for the director's shots (only measured when the spec has shots).
   const { width, height } = useVideoConfig();
@@ -815,7 +902,8 @@ export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: Scen
           key={i}
           x={h.x} z={h.z} rot={h.rot} scale={h.scale}
           wallCol={look.houseWall} roofCol={look.houseRoof}
-          windowCol={night ? look.windowNight : look.windowDay}
+          // The village goes dark with a lights-out event: no window stays lit.
+          windowCol={night && !lightsOut ? look.windowNight : look.windowDay}
           specId={spec.id} index={i}
         />
       ))}

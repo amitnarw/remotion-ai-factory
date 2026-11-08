@@ -94,11 +94,18 @@ function box(
 
 export function buildingsGeometry(list: Building[], style: RegionStyle): THREE.BufferGeometry {
   const b = new Builder();
-  for (const bl of list) {
+  // Each vertex's building: its lot centre and index (lights out goes
+  // building by building, react/dark.ts).
+  const keys: number[] = [];
+  list.forEach((bl, i) => {
+    const from = b.pos.length / 3;
     box(b, bl.x, 0, bl.z, bl.w, bl.h, bl.d, bl.color, bl.roof === "flat" ? bl.roofColor : bl.color,
       bl.windows ? { cell: style.windows.cell, floor: style.floorHeight } : undefined, bl.rotY);
-  }
-  return b.build();
+    for (let v = from; v < b.pos.length / 3; v++) keys.push(bl.x, bl.z, i);
+  });
+  const g = b.build();
+  g.setAttribute("aDark", new THREE.Float32BufferAttribute(keys, 3));
+  return g;
 }
 
 /** Sloped zinc roofs on top of the buildings that have them. */

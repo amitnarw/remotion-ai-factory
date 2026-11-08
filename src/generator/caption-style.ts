@@ -117,6 +117,37 @@ export function resolveCaptionStyle(input?: CaptionStyleInput | null): CaptionLo
   return { ...BASE, ...preset, ...explicit } as CaptionLook;
 }
 
+/**
+ * How the HUD (the counter and the timer) is drawn. It follows the caption
+ * look: the serif looks ("reference", the default, and "documentary") draw it
+ * as text over the picture like the reference channels (quality-refs/): a
+ * spaced-capitals label, a big serif value and a gold fact line, no card. The
+ * other presets keep the white cards.
+ */
+export interface HudLook {
+  kind: "text" | "card";
+  /** Text HUD: the value's serif. The look's own bundled serif, else Playfair Display. */
+  valueFont: string;
+  /** Text HUD: the fact line's colour, the look's highlight (gold on the serif looks), a touch lighter so small capitals read over a dark scene. */
+  accent: string;
+  /** Where the captions sit, so the text HUD keeps clear of them (layout.ts). */
+  caption: Pick<CaptionLook, "position" | "offsetPct" | "size">;
+}
+
+export const TEXT_HUD_PRESETS: ReadonlyArray<(typeof CAPTION_PRESET_NAMES)[number]> = ["reference", "documentary"];
+
+/** The HUD look for a caption style (the same optional, partial input as resolveCaptionStyle). */
+export function resolveHudStyle(input?: CaptionStyleInput | null): HudLook {
+  const look = resolveCaptionStyle(input);
+  const bundledSerif = look.font === "playfair-display" || look.font === "merriweather" || look.font === "lora";
+  return {
+    kind: TEXT_HUD_PRESETS.includes(input?.preset ?? "reference") ? "text" : "card",
+    valueFont: FONT_STACKS[bundledSerif ? look.font : "playfair-display"],
+    accent: mixHex(look.highlight, "#ffffff", 0.25),
+    caption: { position: look.position, offsetPct: look.offsetPct, size: look.size },
+  };
+}
+
 /** CSS font stacks. The bundled fonts are loaded in hud/fonts.ts. */
 export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
   inter: "'Inter', system-ui, sans-serif",
@@ -137,4 +168,12 @@ export const FONT_STACKS: Record<(typeof CAPTION_FONTS)[number], string> = {
 export function hexToRgba(color: string, alpha: number): string {
   const n = parseInt(color.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/** `a` moved toward `b` by `t` (0..1), both "#rrggbb". */
+export function mixHex(a: string, b: string, t: number): string {
+  const ca = parseInt(a.slice(1), 16);
+  const cb = parseInt(b.slice(1), 16);
+  const ch = (s: number) => Math.round(((ca >> s) & 255) * (1 - t) + ((cb >> s) & 255) * t);
+  return `#${[16, 8, 0].map((s) => ch(s).toString(16).padStart(2, "0")).join("")}`;
 }

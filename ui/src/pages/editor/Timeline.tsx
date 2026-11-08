@@ -203,7 +203,7 @@ export function Timeline({
         {/* Scrollable time area */}
         <div ref={scrollRef} className="relative min-w-0 flex-1 overflow-x-auto overflow-y-hidden rounded-xl bg-background/50">
           <div
-            className="relative cursor-text select-none"
+            className="relative cursor-pointer select-none"
             style={{ width }}
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();

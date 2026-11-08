@@ -9,11 +9,11 @@
  * installed, a scene too short to read).
  */
 import { getAsset } from "../asset-catalog";
-import type { ShotSpec, VideoSettings } from "../spec.schema";
+import type { ShotSpec, StatReact, VideoSettings } from "../spec.schema";
 import { resolveWorldScene } from "../../world/director-context";
 import { matchesStress, type Caption } from "./captions";
 import type { Direction } from "./director";
-import { timeShots } from "./shots";
+import { holdReactions, timeShots } from "./shots";
 import { planTransitions } from "./transitions";
 import type { SoundPlan } from "./sound";
 import type { Timeline } from "./timeline";
@@ -34,8 +34,10 @@ export interface AssembleInput {
 }
 
 const SELF_POPULATING = new Set(["street-block", "space", "ocean"]);
-const WATER_KITS = new Set(["ocean", "pier", "river"]);
-const LIGHTS_KITS = new Set(["street-block", "interior", "forest", "countryside"]);
+const WATER_KITS = new Set(["ocean", "pier", "river", "world"]);
+const LIGHTS_KITS = new Set(["street-block", "interior", "forest", "countryside", "world"]);
+/** Events only the world places show (src/world/react/reaction.ts). */
+const PLACE_EVENTS = new Set(["gravity-off", "gravity-on", "ground-break", "snow-start", "snow-stop"]);
 const CROWD = { none: [0, 0], light: [12, 4], busy: [25, 9] } as const;
 const EVENT_HIT: Record<string, string> = {
   "water-vanish": "whoosh_dissolve",
@@ -44,6 +46,33 @@ const EVENT_HIT: Record<string, string> = {
   "rain-start": "thunder_crack",
   "rain-stop": "whoosh_dissolve",
   "lights-out": "rumble_deep",
+  "gravity-off": "rise_short",
+  "gravity-on": "impact_soft_bodies",
+  "ground-break": "explosion",
+  "snow-start": "whoosh_dissolve",
+  "snow-stop": "whoosh_dissolve",
+};
+/**
+ * The hit of a counter step in a world scene, per reaction (the bare
+ * pop_light elsewhere). Names from audio-resolve's vocabulary (SOUND_QUERY),
+ * checked against the library's tags; `cut` (s) fades out and ends a name
+ * whose library files run long, so a hit never runs under the next steps.
+ *   lift     rise_short: the whooshes (1 s, 11 s, 12 s; no riser in the library)
+ *   crack    explosion: crunches and a low boom, 0.6-2 s (no rubble or crack sound yet)
+ *   confetti stinger_hit: jingle hits, 0.3-1.2 s
+ *   money    coins: coins and casino chips, 0.2-0.9 s
+ *   water    splash: 0.7 s
+ *   snow     pop_light: the library has no cold, ice or wind one-shot (its "snow" is footsteps)
+ *   dark     rumble_deep: thunder (5-11 s) or a low boom, as lights-out
+ */
+export const REACT_HIT: Record<StatReact, { tag: string; cut?: number }> = {
+  lift: { tag: "rise_short", cut: 1.5 },
+  crack: { tag: "explosion" },
+  confetti: { tag: "stinger_hit" },
+  money: { tag: "coins" },
+  water: { tag: "splash" },
+  snow: { tag: "pop_light" },
+  dark: { tag: "rumble_deep", cut: 2.5 },
 };
 const MIN_SCENE = 2;
 const MAX_COUNTER = 1e10;
@@ -156,7 +185,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
         // unknown spot name is warned and still resolved by the layer (it
         // falls back to the city's centre).
         if (s.actors?.length) {
-          scene.actors = s.actors.map((a, ai) => ({
+          scene.actors = s.actors.map((a) => ({
             role: a.role,
             where: a.where,
             ...(a.carry ? { carry: a.carry } : {}),
@@ -245,15 +274,32 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
           ...(st.bpm != null ? { bpm: Math.round(Math.min(220, Math.max(40, st.bpm))) } : {}),
         };
       });
-      statPanel = { title: direction.counter.title.toUpperCase().slice(0, 32), unit: direction.counter.unit, beats };
+      // react is a director device too (required over a world scene by the
+      // director's essential check): carried as chosen, never invented here.
+      const react = direction.counter.react;
+      statPanel = { title: direction.counter.title.toUpperCase().slice(0, 32), unit: direction.counter.unit, ...(react ? { react } : {}), beats };
+      // A step in a world scene sounds like its reaction; elsewhere the pop.
+      // (Without react, e.g. a short kit scene merged into a world one, the
+      // step keeps the pop and the plan says the place won't move.)
+      let unreacted = 0;
+      const hitAt = (t: number): NonNullable<(typeof events)[number]["sfx"]>[number] => {
+        if (sceneAt(t).kit !== "world") return { tag: "pop_light" };
+        if (!react) {
+          unreacted += 1;
+          return { tag: "pop_light" };
+        }
+        const hit = REACT_HIT[react];
+        return hit.cut ? { tag: hit.tag, to: r3(t + hit.cut), volume: "ramp-down" } : { tag: hit.tag };
+      };
       beats.forEach((b, i) => {
-        if (i > 0) events.push({ t: b.t, name: `counter-${i}`, targets: [], sfx: [{ tag: "pop_light" }] });
+        if (i > 0) events.push({ t: b.t, name: `counter-${i}`, targets: [], sfx: [hitAt(b.t)] });
         // Heartbeat sound only follows the director's chosen pulse.
         if (b.bpm != null) {
           const end = i + 1 < beats.length ? beats[i + 1].t : D;
           ambient.push({ tag: heartbeatTag(b.bpm), from: i === 0 ? 0 : b.t, to: r3(end), vol: 0.35, restart: true });
         }
       });
+      if (unreacted) warnings.push(`${unreacted === 1 ? "1 counter step falls" : `${unreacted} counter steps fall`} in a world scene but the counter has no react: the place won't move`);
     } else {
       warnings.push("counter dropped: fewer than 2 usable numeric steps");
     }
@@ -283,9 +329,16 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
     const t = r3(fromOf(w.beat)! + 0.3);
     const scene = sceneAt(t);
     const kit = scene.kit ?? "";
-    const ok = w.event.startsWith("water") ? WATER_KITS.has(kit) : w.event === "lights-out" ? LIGHTS_KITS.has(kit) : true;
+    const ok = w.event.startsWith("water")
+      ? WATER_KITS.has(kit)
+      : w.event === "lights-out"
+        ? LIGHTS_KITS.has(kit)
+        : PLACE_EVENTS.has(w.event)
+          ? kit === "world"
+          : true;
     if (!ok) {
-      warnings.push(`${w.event} at ${w.beat} dropped: the ${kit} world can't show it`);
+      const where = kit === "world" && scene.world ? `${scene.world.place} world scene` : `${kit} world`;
+      warnings.push(`${w.event} at ${w.beat} dropped: the ${where} can't show it`);
       continue;
     }
     if (w.event === "rain-start" && scene.look && scene.look.weather !== "rain" && scene.look.weather !== "storm") scene.look.weather = "rain";
@@ -325,20 +378,38 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
   const kitAt = (t: number) => (scenes.find((sc) => t >= sc.from && t < sc.to) ?? scenes[scenes.length - 1]).kit ?? "street-block";
   const shotPlan = timeShots({ directed: direction.shots ?? [], story, timeline, kitAt });
   warnings.push(...shotPlan.warnings);
+  // A shot filming a world place stays on its reaction (shots.ts holdReactions).
+  shotPlan.shots = holdReactions(shotPlan.shots, { scenes, statPanel, worldEvents });
 
   /* ---- flights (Phase 6 step 1): a place change is filmed as a flight ---- */
-  // One 8 s window per flight mark: the world engine's 15 s path is
-  // time-compressed (WorldFlight scales it). 5 s of A leaving, the veiled
-  // scale switch, 3 s arriving at B.
-  const flights: ShotSpec["flights"] = [];
+  // The flight starts and ends on shot edges where it can: a shot start 2-6 s
+  // before the cut (nearest 4 s) and a shot end 2-5 s after it (nearest 3 s),
+  // so it takes whole shots instead of leaving a stub of one on screen. Each
+  // end without such an edge keeps the fixed window: 5 s of A leaving, 3 s
+  // arriving at B. The world engine's 15 s path is time-compressed to the
+  // window (WorldFlight scales it). The flight is that cut's transition
+  // (planTransitions gives it no dip or whip; the audio adds no cut whoosh).
+  const flights: NonNullable<ShotSpec["flights"]> = [];
+  const nearestEdge = (edges: number[], lo: number, hi: number, aim: number) =>
+    edges.filter((t) => t >= lo - 1e-6 && t <= hi + 1e-6).sort((x, y) => Math.abs(x - aim) - Math.abs(y - aim))[0];
   for (let i = 0; i < scenes.length; i++) {
     const sc = scenes[i];
     if (sc.kit !== "world" || !sc.flight) continue;
     const prev = scenes[i - 1];
-    const from = Math.max(Math.min(sc.from - 5, sc.to - 6.5), (prev?.from ?? 0) + 0.6, 0);
-    const to = Math.min(sc.from + 3, sc.to - 1.0, D);
+    const earliest = Math.max((prev?.from ?? 0) + 0.6, 0);
+    const latest = Math.min(sc.to - 1.0, D);
+    const from =
+      nearestEdge(shotPlan.shots.map((s) => s.from), Math.max(sc.from - 6, earliest), sc.from - 2, sc.from - 4) ??
+      Math.max(Math.min(sc.from - 5, sc.to - 6.5), earliest);
+    const to =
+      nearestEdge(shotPlan.shots.map((s) => s.to), sc.from + 2, Math.min(sc.from + 5, latest), sc.from + 3) ??
+      Math.min(sc.from + 3, latest);
     if (to - from >= 3) flights.push({ from: r3(from), to: r3(to) });
-    else warnings.push(`flight at ${sc.from}s dropped: shorter than 3s after clamping`);
+    else {
+      // No flight is drawn, so the join is a plain cut and gets an ordinary transition.
+      delete sc.flight;
+      warnings.push(`flight at ${sc.from}s dropped: shorter than 3s after clamping`);
+    }
   }
 
   const spec = {
@@ -373,7 +444,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
     ...(timer ? { timer } : {}),
     scenes,
     shots: shotPlan.shots,
-    transitions: planTransitions(scenes, worldEvents),
+    transitions: planTransitions(scenes, worldEvents, flights),
     ...(flights.length ? { flights } : {}),
     worldEvents,
     audio: {

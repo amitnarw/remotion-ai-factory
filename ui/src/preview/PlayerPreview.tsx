@@ -62,6 +62,7 @@ export const SpecPlayer = memo(
         fps={timing.fps}
         durationInFrames={timing.durationInFrames}
         style={playerStyle}
+        className="vf-player"
         controls={controls}
       />
     );

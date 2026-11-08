@@ -6,19 +6,66 @@
  * engine group, copies the resulting WAVs into public/voice/<id>/ and
  * returns a manifest that CompositionAudio consumes.
  */
-import { writeFileSync, mkdirSync, copyFileSync, existsSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, copyFileSync, existsSync, readFileSync, rmSync, renameSync, statSync } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
 import { spawn, type ChildProcess } from "child_process";
-import { runFfmpeg } from "./ffmpeg";
+import { runFfmpeg, measureLoudness } from "./ffmpeg";
 import { resolveTtsPython, envKeyFor } from "./tts-python";
-import { voxDescription } from "./voices";
+import { AUDITION_TEXT, voxDescription, voxTransform, voxSeed, voxReferenceId } from "./voices";
 
 const ROOT = process.cwd();
 const PUBLIC_VOICE = join(ROOT, "public", "voice");
 const OUTPUT_DIR = join(ROOT, "output");
 // Outside public/: Remotion bundles public/ into every render, so a growing cache there would slow them all.
 export const CACHE_DIR = join(ROOT, ".cache", "voice");
+
+/** Resolve a frozen reference clip for a preset cloned from one. */
+function resolveVoiceReference(voice: string | undefined): { wav: string; text?: string } | undefined {
+  const id = voxReferenceId(voice);
+  if (!id) return undefined;
+  const dir = join(ROOT, "public", "voice", "references", id);
+  const wav = join(dir, "reference.wav");
+  if (!existsSync(wav)) return undefined;
+  let text: string | undefined;
+  try {
+    const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as { transcript?: string };
+    if (meta.transcript && meta.transcript.trim()) text = meta.transcript.trim();
+  } catch { /* no transcript: audio-only conditioning */ }
+  return { wav, text };
+}
+
+/** Two-pass loudnorm from one WAV to another (linear when the mix allows it). */
+function twoPassLoudnorm(src: string, dst: string, tp: number): boolean {
+  const pass1 = runFfmpeg(["-hide_banner", "-i", src, "-af", `loudnorm=I=-18:TP=${tp}:LRA=11:print_format=json`, "-f", "null", "-"]);
+  const json = /\{\s*"input_i"[\s\S]*?\}/.exec(pass1.stderr);
+  if (!json) return false;
+  let m: Record<string, string>;
+  try { m = JSON.parse(json[0]) as Record<string, string>; } catch { return false; }
+  const pass2 = runFfmpeg([
+    "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+    "-af",
+    `loudnorm=I=-18:TP=${tp}:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true`,
+    "-ar", "48000", "-c:a", "pcm_s24le", dst,
+  ]);
+  return pass2.ok && existsSync(dst);
+}
+
+function normalizeVoiceWav(file: string): void {
+  try {
+    for (let round = 0; round < 3; round++) {
+      const before = measureLoudness(file);
+      if (before.lufs !== null && Math.abs(before.lufs + 18) <= 0.5) break;
+      if (before.lufs === null) break;
+      const tmp = file + ".normtmp.wav";
+      if (!twoPassLoudnorm(file, tmp, -2)) break;
+      rmSync(file, { force: true });
+      renameSync(tmp, file);
+    }
+  } catch (e) {
+    console.log("[voice] normalize failed:", String(e instanceof Error ? e.message : e).slice(0, 200));
+  }
+}
 
 /**
  * Run a Python script and collect its output (stdout + stderr), with a time
@@ -67,6 +114,11 @@ export interface VoiceLine {
   engine: "kitten2" | "voxcpm2";
   voice: string;
   voiceDesc?: string;
+  referenceWav?: string;
+  referenceText?: string;
+  voiceStyle?: string;
+  voiceTransform?: { semitones?: number; tempo?: number; saturation?: number };
+  seed?: number;
   kind: "narration" | "dialog";
 }
 
@@ -88,7 +140,7 @@ function pythonFor(engine: "kitten2" | "voxcpm2"): string {
   const python = resolveTtsPython(engine);
   if (!python) {
     throw new Error(
-      `${engine} is not installed. Install it in the Setup tab, or set ${envKeyFor(engine)} to a Python that has it.`,
+      `${engine} is not installed. Install it in Settings → Voice engines, or set ${envKeyFor(engine)} to a Python that has it.`,
     );
   }
   return python;
@@ -111,6 +163,10 @@ export function kittenWorkerEnabled(): boolean {
   return process.env.TTS_KITTEN_WORKER !== "0";
 }
 
+export function voxcpmWorkerEnabled(): boolean {
+  return process.env.TTS_VOXCPM_WORKER !== "0";
+}
+
 /** Per-line limit for the persistent worker (generous: a busy laptop slows voices down a lot). */
 const WORKER_LINE_TIMEOUT_MS =
   Number(process.env.TTS_WORKER_LINE_TIMEOUT_MS) > 0 ? Number(process.env.TTS_WORKER_LINE_TIMEOUT_MS) : 7 * 60_000;
@@ -120,6 +176,18 @@ export interface WorkerRequest {
   text: string;
   voice: string;
   voiceDesc?: string;
+  referenceWav?: string;
+  referenceText?: string;
+  voiceStyle?: string;
+  cfgValue?: number;
+  inferenceTimesteps?: number;
+  retryBadcaseRatioThreshold?: number;
+  voiceTransform?: { semitones?: number; tempo?: number; saturation?: number };
+  seed?: number;
+  defaultVoiceDesc?: string;
+  defaultReferenceWav?: string;
+  defaultReferenceText?: string;
+  defaultStyle?: string;
   outDir: string;
 }
 
@@ -160,8 +228,12 @@ export function parseWorkerResult(line: string): WorkerParse | null {
 }
 
 class TtsWorker {
+  private engine: "kitten2" | "voxcpm2";
   private child: ChildProcess | null = null;
   private partial = "";
+  constructor(engine: "kitten2" | "voxcpm2") {
+    this.engine = engine;
+  }
   private errTail = "";
   private pending = new Map<string, { resolve: (r: WorkerLine) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   /** Requests run one at a time: one model, one utterance at a time. */
@@ -172,11 +244,11 @@ class TtsWorker {
   private ensure(): ChildProcess {
     this.stopping = false;
     if (this.child) return this.child;
-    const python = resolveTtsPython("kitten2");
+    const python = resolveTtsPython(this.engine);
     if (!python) {
-      throw new Error("kitten2 is not installed. Install it in the Setup tab, or set TTS_KITTEN_PYTHON to a Python that has it.");
+      throw new Error(`${this.engine} is not installed. Install it in Settings → Voice engines first.`);
     }
-    const child = spawn(python, [join(ROOT, "scripts", "story-tts.py"), "--worker", "--engine", "kitten2"], {
+    const child = spawn(python, [join(ROOT, "scripts", "story-tts.py"), "--worker", "--engine", this.engine], {
       cwd: ROOT,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
@@ -303,13 +375,13 @@ class TtsWorker {
   }
 }
 
-const ttsWorkers = new Map<"kitten2", TtsWorker>();
+const ttsWorkers = new Map<"kitten2" | "voxcpm2", TtsWorker>();
 
 /** This session's persistent worker (respawned after a kill). */
-function ttsWorkerFor(engine: "kitten2"): TtsWorker {
+function ttsWorkerFor(engine: "kitten2" | "voxcpm2"): TtsWorker {
   let w = ttsWorkers.get(engine);
   if (!w) {
-    w = new TtsWorker();
+    w = new TtsWorker(engine as "kitten2" | "voxcpm2");
     ttsWorkers.set(engine, w);
     ensureExitHook();
   }
@@ -336,44 +408,105 @@ export function disposeTtsWorkers(): void {
  * Bump when the synthesis settings change (sampling, pauses, prompts). Old
  * cache entries then stop matching and everything is re-rendered once.
  */
-const SYNTH_VERSION = "2";
+const SYNTH_VERSION = "8";
+
+type TtsEngine = VoiceLine["engine"];
+
+/** Build the exact audition line used for a voice preview, matching the route
+ *  the user plays. Returns undefined for unknown voices. */
+export function voicePreviewLine(engine: VoiceLine["engine"], voice: string): VoiceLine | undefined {
+  if (!voice) return undefined;
+  const desc = engine === "voxcpm2" ? voxDescription(voice) : undefined;
+  const transform = engine === "voxcpm2" ? (voxTransform(voice)) : undefined;
+  let referenceWav: string | undefined;
+  let referenceText: string | undefined;
+  if (engine === "voxcpm2") {
+    const ref = resolveVoiceReference(voice);
+    if (ref) { referenceWav = ref.wav; referenceText = ref.text; }
+  }
+  return {
+    id: "sample",
+    text: AUDITION_TEXT,
+    at: 0,
+    engine,
+    voice,
+    voiceDesc: desc,
+    referenceWav,
+    referenceText,
+    voiceTransform: transform,
+    seed: engine === "voxcpm2" ? voxSeed(voice) : undefined,
+    kind: "narration",
+  };
+}
+
+export function voicePreviewKey(engine: VoiceLine["engine"], voice: string): string | null {
+  const line = voicePreviewLine(engine, voice);
+  if (!line) return null;
+  return cacheKey(line);
+}
+
+/** What deriveLines reads from a spec: the hook and the captions (a ShotSpec fits). */
+export interface TtsSpecInput {
+  hook?: { text?: string } | null;
+  captions?: Array<{ text?: string; from?: number; speaker?: string } | null> | null;
+}
+
+/** Voice settings: the shape of ShotSpec.audio.narration/dialogs and job.audio. */
+export interface TtsAudioConfig {
+  narration?: { enabled?: boolean; engine?: TtsEngine; voice?: string; voiceDesc?: string; referenceWav?: string; referenceText?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number }; voiceSeed?: number } | null;
+  dialogs?: { enabled?: boolean; engine?: TtsEngine; voices?: Record<string, string>; defaultVoice?: string; voiceDesc?: string; referenceWav?: string; referenceText?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number }; voiceSeed?: number } | null;
+}
 
 /**
  * Derive voice lines from a spec + audio config.
  * audioConfig shape mirrors ShotSpec.audio.narration/dialogs + job.audio.
  */
-export function deriveLines(spec: any, audioConfig: any): VoiceLine[] {
+export function deriveLines(spec: TtsSpecInput, audioConfig: TtsAudioConfig | null | undefined): VoiceLine[] {
   const lines: VoiceLine[] = [];
   const narration = audioConfig?.narration;
   const dialogs = audioConfig?.dialogs;
 
   if (narration?.enabled) {
-    const engine = (narration.engine ?? "voxcpm2") as "kitten2" | "voxcpm2";
+    const engine: TtsEngine = narration.engine ?? "voxcpm2";
     const voice = narration.voice ?? (engine === "kitten2" ? "Bruno" : "narrator-calm");
     const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, narration.voiceDesc) : undefined;
+    let referenceWav = narration.referenceWav;
+    let referenceText = narration.referenceText;
+    const presetRef = !referenceWav ? resolveVoiceReference(voice) : undefined;
+    if (presetRef) { referenceWav = presetRef.wav; if (!referenceText) referenceText = presetRef.text; }
+    const voiceTransform = narration.voiceTransform ?? voxTransform(voice);
+    const voiceStyle = narration.voiceStyle;
+    const voiceSeed = narration.voiceSeed ?? voxSeed(voice);
     if (spec.hook?.text) {
-      lines.push({ id: "hook", text: spec.hook.text, at: 0, engine, voice, voiceDesc, kind: "narration" });
+      lines.push({ id: "hook", text: spec.hook.text, at: 0, engine, voice, voiceDesc, referenceWav, referenceText, voiceStyle, voiceTransform, seed: voiceSeed, kind: "narration" });
     }
     // A caption with a speaker is dialogue. When character voices are on, that
     // character speaks it, so the narrator skips it. Otherwise the narrator reads
     // it, so no line goes silent.
     const charactersSpeak = !!dialogs?.enabled;
-    (spec.captions ?? []).forEach((c: any, i: number) => {
+    (spec.captions ?? []).forEach((c, i) => {
       if (c?.text && !(charactersSpeak && c.speaker)) {
-        lines.push({ id: `cap-${i}`, text: c.text, at: c.from ?? 0, engine, voice, voiceDesc, kind: "narration" });
+        lines.push({ id: `cap-${i}`, text: c.text, at: c.from ?? 0, engine, voice, voiceDesc, referenceWav, referenceText, voiceStyle, voiceTransform, seed: voiceSeed, kind: "narration" });
       }
     });
   }
 
   if (dialogs?.enabled) {
-    const engine = (dialogs.engine ?? "kitten2") as "kitten2" | "voxcpm2";
+    const engine: TtsEngine = dialogs.engine ?? "kitten2";
     const voices: Record<string, string> = dialogs.voices ?? {};
     const fallback = dialogs.defaultVoice ?? (engine === "kitten2" ? "Rosie" : "character-hero");
-    (spec.captions ?? []).forEach((c: any, i: number) => {
+    (spec.captions ?? []).forEach((c, i) => {
       if (c?.speaker && c?.text) {
         const voice = voices[c.speaker] ?? fallback;
-        const voiceDesc = engine === "voxcpm2" ? voxDescription(voice) : undefined;
-        lines.push({ id: `dlg-${i}`, text: c.text, at: c.from ?? 0, engine, voice, voiceDesc, kind: "dialog" });
+        const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, dialogs.voiceDesc) : undefined;
+        let referenceWav = dialogs.referenceWav;
+        let referenceText = dialogs.referenceText;
+        const presetRef = !referenceWav ? resolveVoiceReference(voice) : undefined;
+        if (presetRef) { referenceWav = presetRef.wav; if (!referenceText) referenceText = presetRef.text; }
+        const voiceStyle = dialogs.voiceStyle;
+        const voiceTransform = dialogs.voiceTransform ?? voxTransform(voice);
+        const voiceSeed = dialogs.voiceSeed ?? voxSeed(voice);
+        lines.push({ id: `dlg-${i}`, text: c.text, at: c.from ?? 0, engine, voice, voiceDesc, referenceWav, referenceText, voiceStyle, voiceTransform, seed: voiceSeed, kind: "dialog" });
       }
     });
   }
@@ -382,15 +515,25 @@ export function deriveLines(spec: any, audioConfig: any): VoiceLine[] {
 }
 
 /** Content hash of everything that changes the audio: same inputs, same file. */
-export function cacheKey(l: Pick<VoiceLine, "engine" | "voice" | "voiceDesc" | "text">): string {
+export function refFingerprint(p: string | undefined): string | null {
+  if (!p) return null;
+  try {
+    const s = statSync(p);
+    return `${s.size}:${s.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+export function cacheKey(l: Pick<VoiceLine, "engine" | "voice" | "voiceDesc" | "text" | "referenceWav" | "referenceText" | "voiceStyle" | "voiceTransform" | "seed">): string {
   return createHash("sha1")
-    .update(JSON.stringify({ v: SYNTH_VERSION, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc ?? null, text: l.text }))
+    .update(JSON.stringify({ v: SYNTH_VERSION, engine: l.engine, voice: l.voice, voiceDesc: l.voiceDesc ?? null, referenceWav: l.referenceWav ?? null, referenceFingerprint: refFingerprint(l.referenceWav), referenceText: l.referenceText ?? null, voiceStyle: l.voiceStyle ?? null, voiceTransform: l.voiceTransform ?? null, seed: l.seed ?? voxSeed(l.voice) ?? null, text: l.text }))
     .digest("hex");
 }
 
 export async function runTtsStage(
-  spec: any,
-  audioConfig: any,
+  spec: TtsSpecInput,
+  audioConfig: TtsAudioConfig | null | undefined,
   id: string,
 ): Promise<VoiceManifest | null> {
   const lines = deriveLines(spec, audioConfig);
@@ -468,17 +611,33 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
       cached.add(l.id);
     };
 
-    if (engine === "kitten2" && kittenWorkerEnabled()) {
+    const workerEnabled = engine === "kitten2" ? kittenWorkerEnabled() : (engine === "voxcpm2" ? voxcpmWorkerEnabled() : false);
+    if (workerEnabled) {
       try {
-        const worker = ttsWorkerFor("kitten2");
+        const worker = ttsWorkerFor(engine as "kitten2" | "voxcpm2");
         const tBatch = Date.now();
         let done = 0;
         for (const l of groupLines) {
           if (cached.has(l.id)) continue;
           const t1 = Date.now();
-          const r = await worker.request({ id: l.id, text: l.text, voice: l.voice, voiceDesc: l.voiceDesc, outDir });
+          const r = await worker.request({
+            id: l.id,
+            text: l.text,
+            voice: l.voice,
+            voiceDesc: l.voiceDesc,
+            referenceWav: l.referenceWav,
+            referenceText: l.referenceText,
+            voiceStyle: l.voiceStyle,
+            voiceTransform: l.voiceTransform,
+            seed: l.seed ?? voxSeed(l.voice),
+            cfgValue: 2.0,
+            inferenceTimesteps: 20,
+            retryBadcaseRatioThreshold: 8.0,
+            outDir,
+          });
           const src = r.wav && existsSync(r.wav) ? r.wav : join(outDir, `${l.id}.wav`);
-          if (!existsSync(src)) throw new Error(`kitten worker produced no wav for ${l.id}`);
+          if (!existsSync(src)) throw new Error(`${engine} worker produced no wav for ${l.id}`);
+          normalizeVoiceWav(src);
           durations[l.id] = r.dur;
           cacheLine(l, src, durations[l.id]);
           cached.add(l.id);
@@ -486,12 +645,12 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
           console.log(`[voice] worker line ${l.id}: ${((Date.now() - t1) / 1000).toFixed(1)}s (engine stays loaded)`);
         }
         console.log(
-          `[voice] kitten2: ${done} line(s) synthesized through the persistent worker in ${((Date.now() - tBatch) / 1000).toFixed(1)}s (one engine load for the whole session)`,
+          `[voice] ${engine}: ${done} line(s) synthesized through the persistent worker in ${((Date.now() - tBatch) / 1000).toFixed(1)}s (one engine load for the whole session)`,
         );
         continue;
       } catch (e) {
-        ttsWorkerFor("kitten2").kill();
-        console.log(`[voice] kitten2 worker failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
+        ttsWorkerFor(engine as "kitten2" | "voxcpm2").kill();
+        console.log(`[voice] ${engine} worker failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
         console.log("[voice] falling back to a fresh engine process for the remaining lines");
       }
     }
@@ -504,7 +663,7 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
     const job = {
       engine,
       outDir,
-      lines: batch.map((l) => ({ id: l.id, text: l.text, voice: l.voice, voiceDesc: l.voiceDesc })),
+      lines: batch.map((l) => ({ id: l.id, text: l.text, voice: l.voice, voiceDesc: l.voiceDesc, referenceWav: l.referenceWav, referenceText: l.referenceText, voiceStyle: l.voiceStyle, voiceTransform: l.voiceTransform, seed: l.seed ?? voxSeed(l.voice) })),
     };
     writeFileSync(jobPath, JSON.stringify(job, null, 2));
 
@@ -524,6 +683,7 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
       if (cached.has(l.id)) continue;
       const src = join(outDir, `${l.id}.wav`);
       if (!existsSync(src)) throw new Error(`TTS did not produce ${l.id}.wav`);
+      normalizeVoiceWav(src);
       durations[l.id] = summary.durations?.[l.id];
       cacheLine(l, src, durations[l.id]);
     }

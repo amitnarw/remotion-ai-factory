@@ -369,9 +369,15 @@ interface VoiceConfig {
   narrationEngine: "kitten2" | "voxcpm2";
   narrationVoice: string;
   narrationVoiceDesc: string;
+  narrationReferenceWav?: string;
+  narrationReferenceText?: string;
+  narrationVoiceStyle?: string;
   charactersOn: boolean;
   charactersEngine: "kitten2" | "voxcpm2";
   characterVoice: string;
+  characterReferenceWav?: string;
+  characterReferenceText?: string;
+  characterVoiceStyle?: string;
 }
 
 function defaultVoiceConfig(): VoiceConfig {
@@ -414,10 +420,25 @@ function loadVoiceConfig(): VoiceConfig {
 function voiceConfigToAudio(cfg: VoiceConfig): unknown {
   return {
     narration: cfg.narrationOn
-      ? { enabled: true, engine: cfg.narrationEngine, voice: cfg.narrationVoice }
+      ? {
+          enabled: true,
+          engine: cfg.narrationEngine,
+          voice: cfg.narrationVoice,
+          voiceDesc: cfg.narrationVoiceDesc,
+          referenceWav: cfg.narrationReferenceWav,
+          referenceText: cfg.narrationReferenceText,
+          voiceStyle: cfg.narrationVoiceStyle,
+        }
       : { enabled: false },
     dialogs: cfg.charactersOn
-      ? { enabled: true, engine: cfg.charactersEngine, defaultVoice: cfg.characterVoice }
+      ? {
+          enabled: true,
+          engine: cfg.charactersEngine,
+          defaultVoice: cfg.characterVoice,
+          referenceWav: cfg.characterReferenceWav,
+          referenceText: cfg.characterReferenceText,
+          voiceStyle: cfg.characterVoiceStyle,
+        }
       : { enabled: false },
   };
 }

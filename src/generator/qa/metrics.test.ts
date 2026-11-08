@@ -179,6 +179,22 @@ test("exposureVerdict: space wides are legitimately black (calibrated 2026-10-24
   assert.equal(exposureVerdict({ mean: 0.6, crushed: 0, clipped: 0.2 }, "space").ok, false);
 });
 
+test("exposureVerdict: after a lights-out event the world is dark on purpose (calibrated 2026-10-26)", () => {
+  // The milestone's blackout night shots (forest-walks 16:9, rain, lights out):
+  // silhouettes visible, previously flagged "too dark" by the night floor.
+  const blackout = [
+    { mean: 0.051, crushed: 0.606, clipped: 0 },
+    { mean: 0.039, crushed: 0.656, clipped: 0 },
+    { mean: 0.032, crushed: 0.772, clipped: 0 },
+  ];
+  for (const s of blackout) {
+    assert.equal(exposureVerdict(s, "night").ok, false, "the night floor flags them");
+    assert.deepEqual(exposureVerdict(s, "dark"), { ok: true, problems: [] });
+  }
+  // A hills CU at 0.014 showed almost nothing: still flagged.
+  assert.equal(exposureVerdict({ mean: 0.014, crushed: 0.877, clipped: 0 }, "dark").ok, false);
+});
+
 // --- colour ---------------------------------------------------------------------
 
 test("colourfulness: grey is 0, red/green is high", () => {

@@ -182,6 +182,10 @@ export interface WaterOptions {
   mix?: number;
   sunColor?: string;
   sunDir?: [number, number, number];
+  /** Lights out (react/dark.ts): the water's own look (reflection, glint,
+   *  shore, foam) times this shared uniform, 1 .. ~0.02, written per frame
+   *  by the caller. Without it the look never changes. */
+  light?: { value: number };
 }
 
 export interface WaterMaterial {
@@ -200,6 +204,7 @@ uniform vec3 uWatShore;
 uniform vec3 uWatFoam;
 uniform float uWatShoreM;
 uniform float uWatMix;
+uniform float uWatLight;
 `;
 
 const WPRE_V = `
@@ -225,6 +230,7 @@ export function waterMaterial(opts: WaterOptions): WaterMaterial {
     shader.uniforms.uWatFoam = { value: new THREE.Color(opts.foam ?? "#e8ecd8") };
     shader.uniforms.uWatShoreM = { value: opts.shoreM ?? 1.6 };
     shader.uniforms.uWatMix = { value: opts.mix ?? 0.85 };
+    shader.uniforms.uWatLight = opts.light ?? { value: 1 };
     shader.vertexShader =
       WPRE_V +
       shader.vertexShader.replace(
@@ -254,7 +260,7 @@ export function waterMaterial(opts: WaterOptions): WaterMaterial {
     vec3 wCol = mix( wRefl, uWatShore, smoothstep( 0.72, 0.98, wShal ) );
     float wFoam = smoothstep( 0.55, 0.88, wShal ) *
       ( 0.55 + 0.45 * sin( vWatPos.x * 3.7 + vWatPos.z * 3.1 + uWatTime * 2.3 ) );
-    gl_FragColor.rgb = mix( gl_FragColor.rgb, wCol, uWatMix ) + uWatFoam * wFoam * 0.35;
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, wCol * uWatLight, uWatMix ) + uWatFoam * wFoam * 0.35 * uWatLight;
   }`,
       );
   });

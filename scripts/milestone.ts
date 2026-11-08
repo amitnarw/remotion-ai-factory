@@ -15,7 +15,7 @@
  *
  * Usage:
  *   npm run milestone -- --fixtures            # recorded/hand-written replies (no key needed)
- *   npm run milestone                          # real models from Providers -> Model roles
+ *   npm run milestone                          # real models from Settings -> AI models -> Model roles
  *   FACTORY_LLM_RECORD=test-fixtures/pipeline/real npm run milestone   # record real replies
  *   options: --only money-doubles,forest-walks  --formats 9:16,16:9  --qa (photographer stills per shot)
  *
@@ -87,7 +87,14 @@ interface Row {
   pass?: boolean;
 }
 
+/**
+ * The rendered MP4: output/<id>/video.mp4 since renders write per-video
+ * folders (the old flat output/<id>-<stamp>.mp4 is only a fallback; reading it
+ * first measured a stale video from an earlier run).
+ */
 function newestMp4(id: string): string | null {
+  const current = join(OUT, id, "video.mp4");
+  if (existsSync(current)) return current;
   const files = readdirSync(OUT)
     .filter((f) => f.startsWith(`${id}-`) && f.endsWith(".mp4"))
     .map((f) => join(OUT, f))
@@ -196,7 +203,8 @@ async function planAndRenderOne(p: (typeof PREMISES)[number], f: (typeof FORMATS
       const w = /\[voice\] warning: (.*)/.exec(line);
       if (w) row.warnings.push(w[1]);
     }
-    const props = JSON.parse(readFileSync(join(OUT, `${row.id}-props.json`), "utf8")).spec as ShotSpec;
+    const propsFile = existsSync(join(OUT, row.id, "props.json")) ? join(OUT, row.id, "props.json") : join(OUT, `${row.id}-props.json`);
+    const props = JSON.parse(readFileSync(propsFile, "utf8")).spec as ShotSpec;
     const mp4 = newestMp4(row.id);
     if (!mp4) throw new Error("no MP4 produced");
     measure(row, props, mp4);

@@ -64,7 +64,6 @@ const CLOTH_H = 1.25;
 export const Flags: React.FC<{ spots: FlagSpot[] }> = ({ spots }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const base = useRef<THREE.PlaneGeometry | null>(null);
   const cloths = useRef<THREE.Mesh[]>([]);
   const mats = useMemo(() => spots.map((s) => CLOTH(s.color)), [spots]);
   const geos = useMemo(
@@ -76,7 +75,15 @@ export const Flags: React.FC<{ spots: FlagSpot[] }> = ({ spots }) => {
       }),
     [spots],
   );
-  base.current = geos[0] ?? null;
+  // The cloth's rest positions, never written: each frame's shape is a pure
+  // function of these and t. (They were read from flag 0's own geometry,
+  // which this loop overwrites, so the droop piled up frame after frame and
+  // a frame's flags depended on how many frames its render tab had drawn.)
+  const rest = useMemo(() => {
+    const g = new THREE.PlaneGeometry(CLOTH_W, CLOTH_H, CLOTH_SEG[0], CLOTH_SEG[1]);
+    g.translate(CLOTH_W / 2, 0, 0);
+    return g.attributes.position as THREE.BufferAttribute;
+  }, []);
 
   useFrame(() => {
     const t = frame / (fps || 30);
@@ -85,10 +92,9 @@ export const Flags: React.FC<{ spots: FlagSpot[] }> = ({ spots }) => {
       if (!mesh) continue;
       const g = geos[i];
       const pos = g.attributes.position as THREE.BufferAttribute;
-      const src = base.current!.attributes.position as THREE.BufferAttribute;
       for (let v = 0; v < pos.count; v++) {
-        const x = src.getX(v);
-        const y = src.getY(v);
+        const x = rest.getX(v);
+        const y = rest.getY(v);
         const sway = Math.sin(t * 2.6 + s.phase + x * 2.4) * 0.1 + Math.sin(t * 3.9 + s.phase * 1.7 + x * 2.9) * 0.045;
         const droop = -Math.pow(x / CLOTH_W, 2) * 0.22 * (0.6 + 0.4 * Math.sin(t * 1.9 + s.phase));
         pos.setXYZ(v, x, y + droop, sway * (x / CLOTH_W));

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateSpec, videoSeconds, type ShotSpec } from "../spec.schema";
 import { secToFrame } from "../timing";
-import { audioKey, hardCuts, planRender, transitionWindows, MAX_CHUNK_SEC, MIN_CHUNK_SEC } from "./plan";
+import { audioKey, flightWindows, hardCuts, planRender, transitionWindows, MAX_CHUNK_SEC, MIN_CHUNK_SEC } from "./plan";
 
 const FPS = 30;
 const SALT = { bundle: "b1", remotion: "4.0.536", gl: "angle", crf: 18 };
@@ -143,6 +143,34 @@ test("changing a global field or the render environment changes every key", () =
   assert.ok(otherBundle.chunks.every((c, k) => c.key !== before.chunks[k].key));
 });
 
+test("the counter's react is global: setting or changing it changes every chunk key (plan.ts needs no change)", () => {
+  const spec = makeSpec();
+  const before = plan(spec);
+  // validateSpec keeps the field (the schema knows it), so a planned spec carries it into the keys.
+  const money = validateSpec({ ...JSON.parse(JSON.stringify(spec)), statPanel: { ...spec.statPanel, react: "money" } });
+  assert.equal(money.statPanel?.react, "money");
+  const withMoney = plan(money);
+  assert.ok(withMoney.chunks.every((c, k) => c.key !== before.chunks[k].key), "adding react changes every key");
+  const lift = JSON.parse(JSON.stringify(money)) as ShotSpec;
+  lift.statPanel!.react = "lift";
+  const withLift = plan(lift);
+  assert.ok(withLift.chunks.every((c, k) => c.key !== withMoney.chunks[k].key), "changing react changes every key");
+  // The same choice twice: the same keys.
+  assert.deepEqual(plan(JSON.parse(JSON.stringify(lift)) as ShotSpec).chunks.map((c) => c.key), withLift.chunks.map((c) => c.key));
+});
+
+test("a new world event invalidates the chunks from its time on, as the old ones do", () => {
+  const spec = makeSpec();
+  const before = plan(spec);
+  const edited = JSON.parse(JSON.stringify(spec)) as ShotSpec;
+  edited.worldEvents.push({ t: 100, name: "gravity-off" });
+  const after = plan(validateSpec(edited));
+  for (const [k, c] of after.chunks.entries()) {
+    const sees = c.end / FPS + before.padSec >= 100;
+    assert.equal(c.key !== before.chunks[k].key, sees, `chunk ${k} (${c.start / FPS}-${c.end / FPS}s)`);
+  }
+});
+
 test("audio-only edits keep every video chunk; state edits invalidate from their time on", () => {
   const spec = makeSpec();
   const before = plan(spec);
@@ -175,4 +203,53 @@ test("audio-only edits keep every video chunk; state edits invalidate from their
     const c = withCast.chunks[k];
     assert.ok(c.end / FPS + before.padSec >= 40 && c.start / FPS - before.padSec <= 55);
   }
+});
+
+/** Two world places joined by a flight: Paris 0-30 s, Cairo 30-60 s, the
+ *  flight drawn over 25-33 s. With `shots`, a shot cut every 3 s (27 and 30 s
+ *  fall inside the flight); without, one long shot-free stretch. */
+function flightSpec(shots: boolean): ShotSpec {
+  const moment = { date: "2026-06-21", time: "19:30" };
+  return validateSpec({
+    id: "plan-flight",
+    title: "Plan flight",
+    settings: { format: "16:9" },
+    scenes: [
+      { scene: "world", kit: "world", from: 0, to: 30, world: { place: "paris", ...moment } },
+      { scene: "world", kit: "world", from: 30, to: 60, world: { place: "cairo", ...moment }, flight: true },
+    ],
+    ...(shots ? { shots: Array.from({ length: 20 }, (_, i) => ({ subject: "scene", size: i % 2 ? "WS" : "MS", from: i * 3, to: i * 3 + 3 })) } : {}),
+    flights: [{ from: 25, to: 33 }],
+    hook: { text: "What if?", t: 0, duration: 2 },
+    events: [{ t: 3, name: "start" }],
+  });
+}
+
+test("no chunk starts inside a flight window (the flight is one take)", () => {
+  for (const shots of [true, false]) {
+    const spec = flightSpec(shots);
+    const [[a, b]] = flightWindows(spec, FPS);
+    assert.deepEqual([a, b], [25 * FPS, 33 * FPS]);
+    const bounds = plan(spec).chunks.slice(1).map((c) => c.start);
+    assert.ok(bounds.length >= 2, `the ${bounds.length + 1} chunks still split the video`);
+    for (const f of bounds) assert.ok(!(f > a && f < b), `boundary ${f / FPS}s is inside the flight (shots: ${shots})`);
+    if (shots) {
+      const cuts = hardCuts(spec, FPS, frames(spec));
+      // The scene start (30 s) and the shot cut at 27 s are inside the flight, so neither is a cut point.
+      assert.ok(!cuts.scene.includes(30 * FPS) && !cuts.shot.includes(30 * FPS) && !cuts.shot.includes(27 * FPS));
+      assert.ok(cuts.shot.includes(24 * FPS) && cuts.shot.includes(33 * FPS), "the cuts at the flight's edges are kept");
+    }
+  }
+});
+
+test("a chunk that shows a flight is keyed by both places it joins", () => {
+  const spec = flightSpec(false);
+  const before = plan(spec);
+  // A chunk that overlaps the flight but not the Paris scene (0-30 s), even with its pad.
+  const k = before.chunks.findIndex((c) => c.start / FPS - before.padSec > 30 && c.start / FPS - before.padSec < 33);
+  assert.ok(k >= 0, "a chunk starts at the flight's end");
+  const moved = JSON.parse(JSON.stringify(spec)) as ShotSpec;
+  moved.scenes[0].world!.place = "colmar";
+  const after = plan(moved);
+  assert.notEqual(after.chunks[k].key, before.chunks[k].key, "the flight leaves from Colmar now");
 });

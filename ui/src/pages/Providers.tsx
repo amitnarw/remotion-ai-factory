@@ -308,7 +308,7 @@ const [reveal, setReveal] = useState<Record<string, boolean>>({});
                 setQuery({ provider: selected === p.name ? undefined : p.name });
               }}
               className={cn(
-                "rounded-3xl p-6 shadow-xl shadow-black/20 transition-all",
+                "rounded-3xl cursor-pointer p-6 shadow-xl shadow-black/20 transition-all",
                 selected === p.name ? "bg-primary/90 text-primary-foreground" : "bg-card hover:brightness-110",
               )}
             >

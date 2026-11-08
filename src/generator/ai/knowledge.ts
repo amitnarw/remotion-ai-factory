@@ -45,8 +45,22 @@ export const SCENE_KITS = [
 
 /** World-state events: the ENVIRONMENT reacts on screen (premise visibility).
  *  water-vanish/return/rise animate the ocean + pier water level; the other
- *  events are honoured where a stage supports them. */
-export const WORLD_EVENTS = ["water-vanish", "water-return", "water-rise", "rain-start", "rain-stop", "lights-out"] as const;
+ *  events are honoured where a stage supports them. gravity-off/on,
+ *  ground-break and snow-start/stop are world-place events only (the
+ *  assembler drops them on kit scenes). Lockstep with spec.schema.ts. */
+export const WORLD_EVENTS = [
+  "water-vanish",
+  "water-return",
+  "water-rise",
+  "rain-start",
+  "rain-stop",
+  "lights-out",
+  "gravity-off",
+  "gravity-on",
+  "ground-break",
+  "snow-start",
+  "snow-stop",
+] as const;
 
 /** Weather overlays (scenes[i].look.weather): particles + lightning that any
  *  stage can mount. Paired with worldEvents rain-start / rain-stop when the

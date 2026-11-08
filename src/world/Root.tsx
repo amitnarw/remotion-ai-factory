@@ -1,5 +1,5 @@
 ﻿/**
- * src/world/Root.tsx â€” compositions for the one-world engine test build.
+ * src/world/Root.tsx - compositions for the one-world engine test build.
  * Separate from src/Root.tsx so the main factory is untouched.
  *
  *   npx remotion studio src/world/index.ts
@@ -14,8 +14,36 @@ import { KitPreview, type KitPreviewProps } from "./KitPreview";
 import { PlaceView, type PlaceViewProps } from "./PlaceView";
 import { WorldFlight, type WorldFlightProps } from "./WorldFlight";
 import { WorldActors, type WorldActorsProps } from "./WorldActors";
+import { ReactionsPreview, type ReactionsPreviewProps } from "./react/ReactionsPreview";
+import { ReactionsPreviewDark, type DarkPreviewProps } from "./react/darkPreview";
 
 const FPS = 30;
+
+// Lights out (milestone B): the same Paris counter as "dark", by day (the
+// October morning) and at night (22:30).
+const reactionsDark: DarkPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "11:00" } };
+const reactionsDarkNight: DarkPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "22:30" } };
+// The moonlit night (atmosphere/moon.ts, stars.ts): the same Paris night with
+// the lens on the plaza's west side looking east-south-east, at the full moon
+// low over the roofs (opposite the sun). No counter: the plain night; the
+// "Dark" one is the same lens through the counter's blackout (the moon, its
+// halo and the clouds' glow fade with the power).
+const nightMoonLens = { pos: [-339, 8.2, -86.4] as [number, number, number], target: [-256, 18, -41.7] as [number, number, number] };
+const nightMoon: DarkPreviewProps = { ...reactionsDarkNight, ...nightMoonLens, beats: [] };
+const nightMoonDark: DarkPreviewProps = { ...reactionsDarkNight, ...nightMoonLens };
+
+// World reactions (docs/factory/11-world-reactions.md, milestone A): the
+// Paris plaza on a late-October morning, through GroundWorld's reaction
+// prop; the counter steps 1.75x at 1.5 s and 16x at 4 s.
+const parisPlaza = { place: "paris", moment: { date: "2026-10-23", time: "11:00" } };
+const reactionsLift: ReactionsPreviewProps = { ...parisPlaza, react: "lift" };
+const reactionsGravityOn: ReactionsPreviewProps = { ...parisPlaza, react: "lift", gravityOn: 8 };
+const reactionsConfetti: ReactionsPreviewProps = { ...parisPlaza, react: "confetti" };
+const reactionsMoney: ReactionsPreviewProps = { ...parisPlaza, react: "money" };
+// Milestone B, the ground breaking: the same counter as "crack" (cracks at
+// 1.5 s, the plaza breaks into slabs at the 16x beat), at night (22:30) like
+// the reference's night frames.
+const reactionsCrack: ReactionsPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "22:30" }, react: "crack" };
 
 const parisToCairo: WorldFlightProps = {
   from: { place: "paris", moment: { date: "2026-10-23", time: "09:15", utcOffset: 2 } },
@@ -201,6 +229,95 @@ export const WorldRoot: React.FC = () => (
       width={1920}
       height={1080}
       defaultProps={{} satisfies ActorStageProps}
+    />
+    {/* World reactions, milestone A (src/world/react/): a synthetic counter
+        steps 1.75x at 1.5 s and 16x at 4 s; the gravity-on one drops back at 8 s. */}
+    <Composition
+      id="ReactionsPreview"
+      component={ReactionsPreview}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsLift}
+    />
+    <Composition
+      id="ReactionsPreviewGravityOn"
+      component={ReactionsPreview}
+      durationInFrames={12 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsGravityOn}
+    />
+    <Composition
+      id="ReactionsPreviewConfetti"
+      component={ReactionsPreview}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsConfetti}
+    />
+    <Composition
+      id="ReactionsPreviewMoney"
+      component={ReactionsPreview}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsMoney}
+    />
+    {/* World reactions, milestone B: lights out (src/world/react/dark.ts).
+        The counter as "dark" (1.75x at 1.5 s, 16x at 4 s); pass
+        lightsOut (seconds) for the world event's wave instead or as well. */}
+    <Composition
+      id="ReactionsPreviewDark"
+      component={ReactionsPreviewDark}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsDark}
+    />
+    <Composition
+      id="ReactionsPreviewDarkNight"
+      component={ReactionsPreviewDark}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsDarkNight}
+    />
+    <Composition
+      id="WorldNightMoon"
+      component={ReactionsPreviewDark}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={nightMoon}
+    />
+    <Composition
+      id="WorldNightMoonDark"
+      component={ReactionsPreviewDark}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={nightMoonDark}
+    />
+    {/* World reactions, milestone B: the ground cracks, then breaks into
+        slabs (src/world/react/slab.ts); pass groundBreak (seconds) for the
+        world event instead or as well. */}
+    <Composition
+      id="ReactionsPreviewCrack"
+      component={ReactionsPreview}
+      durationInFrames={10 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={reactionsCrack}
     />
   </>
 );

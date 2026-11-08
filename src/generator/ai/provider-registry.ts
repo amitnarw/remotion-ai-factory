@@ -118,7 +118,7 @@ export function resolveModel(
       model: "",
       reference: null,
       hasKey,
-      error: `No model chosen for provider "${name}". Choose a model for the Writer in Providers → Model roles (or pass --model).`,
+      error: `No model chosen for provider "${name}". Choose a model for the Writer in Settings → AI models → Model roles (or pass --model).`,
     };
   }
 

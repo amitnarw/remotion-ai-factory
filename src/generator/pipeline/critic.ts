@@ -8,6 +8,7 @@
  * the director's and sound designer's choices (which refer to beat ids) stay valid.
  */
 import { z } from "zod";
+import { resolveWorldScene } from "../../world/director-context";
 import { asArray, beatRef, callRole, type RoleModel } from "./llm";
 import type { Direction } from "./director";
 import type { Timeline } from "./timeline";
@@ -17,6 +18,25 @@ export interface Issue {
   beat: string;
   problem: string;
   fix: string;
+}
+
+type DirectedScene = Direction["scenes"][number];
+
+/**
+ * What a directed scene shows, as the assembler will film it. A world scene
+ * (a place choice that resolves) is its place and moment; its kit is only
+ * advisory (a scene with "world" and no kit reads as the default
+ * street-block), so the kit and the "time" mood word are not what is seen.
+ * (The world stage draws no weather, so weather doesn't tell two world
+ * scenes apart.) A kit scene, or a place choice the assembler drops, is its
+ * kit, time and weather.
+ */
+export function sceneLook(s: DirectedScene): { key: string; label: string } {
+  const w = s.worldPlace;
+  if (w && resolveWorldScene(w).ok) {
+    return { key: `world|${w.place}|${w.date}|${w.time}`, label: `${w.place}, ${w.date} ${w.time}` };
+  }
+  return { key: `kit|${s.kit}|${s.time}|${s.weather}`, label: `${s.kit}, ${s.time}` };
 }
 
 /** Exact checks that need no model. They become warnings on the plan. */
@@ -29,8 +49,9 @@ export function codeChecks(story: WriterStory, timeline: Timeline, direction: Di
   for (let i = 1; i < scenes.length; i++) {
     const a = scenes[i - 1];
     const b = scenes[i];
-    if (a.kit === b.kit && a.time === b.time && a.weather === b.weather) {
-      out.push(`scenes at ${a.start} and ${b.start} look the same (${b.kit}, ${b.time}); a cut should change something`);
+    const look = sceneLook(b);
+    if (sceneLook(a).key === look.key) {
+      out.push(`scenes at ${a.start} and ${b.start} look the same (${look.label}); a cut should change something`);
     }
   }
   const silent = timeline.beats.filter((b) => b.lines.length === 0).length;
@@ -66,7 +87,7 @@ Hook: "${input.story.hook}"
 ${input.story.beats
   .map((b) => {
     const s = sceneOf(b.id);
-    return `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${s ? `${s.kit}, ${s.time}` : "?"}): "${b.say}" — shows: ${b.see}`;
+    return `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${s ? sceneLook(s).label : "?"}): "${b.say}" — shows: ${b.see}`;
   })
   .join("\n")}`;
   const result = await callRole({

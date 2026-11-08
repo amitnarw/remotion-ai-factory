@@ -18,7 +18,7 @@ import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
-import type { Subject } from "../generator/camera/solve";
+import type { Subject, Vec3 } from "../generator/camera/solve";
 import { statScaleAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { WaterSurface, GradientSkyDome } from "./water";
@@ -26,13 +26,39 @@ import { MountainRidge } from "./mountains";
 import { keepMistBase, driftMist } from "./mist";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
 import { clearestFacing, restoreRigLens, type Blocker } from "./ForestStage";
+import type { Occluder } from "../generator/camera/occlusion";
 
-interface RiverConfig {
+export interface RiverConfig {
   hasWaterfall: boolean;
   flowDir: "x" | "z";
   length: number;
   width: number;
   waterfallHeight?: number;
+}
+
+const DEFAULT_RIVER: RiverConfig = { hasWaterfall: false, flowDir: "z", length: 200, width: 12 };
+
+/** The scene's river config over the defaults (the schema's fields are all optional). */
+function riverConfigOf(given: Partial<RiverConfig> | undefined): RiverConfig {
+  const set = Object.fromEntries(Object.entries(given ?? {}).filter(([, v]) => v !== undefined)) as Partial<RiverConfig>;
+  return { ...DEFAULT_RIVER, ...set, flowDir: set.flowDir === "x" ? "x" : "z" };
+}
+
+/**
+ * The river's axis. The water runs along `flowDir` (x or z) through the
+ * origin, from the upstream end (+along: the waterfall's side) down to
+ * -along (where the mountains stand). `pos(along, across)` is a world x/z.
+ */
+function riverAxis(flowDir: RiverConfig["flowDir"]) {
+  const alongX = flowDir === "x";
+  return {
+    pos: (along: number, across: number): [number, number] => (alongX ? [along, across] : [across, along]),
+    /** The yaw of upstream: a subject facing it has its front camera
+     *  upstream of it, looking down the river. */
+    upstream: alongX ? Math.PI / 2 : 0,
+    /** Plane size [x, z] of a strip `length` long and `width` wide. */
+    strip: (length: number, width: number): [number, number] => (alongX ? [length, width] : [width, length]),
+  };
 }
 
 const RIVER_TOD: Record<
@@ -165,6 +191,41 @@ function seeded(specId: string, family: string, i: number): number {
   return random(`${specId}-${family}-${i}`);
 }
 
+/** The seeded rocks: 40 along the two banks (a metre past the water's edge, ±1 m), over the river's length. */
+export function riverRocksOf(
+  specId: string, cfg: Pick<RiverConfig, "flowDir" | "length" | "width">,
+): Array<{ x: number; z: number; scale: number; rot: number }> {
+  const rocks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
+  const bankOffset = cfg.width / 2 + 1;
+  const { flowDir, length } = cfg;
+  for (let i = 0; i < 40; i++) {
+    const side = seeded(specId, `riverrock-${i}-side`, 0) > 0.5 ? 1 : -1;
+    const dist = seeded(specId, `riverrock-${i}-dist`, 0) * length - length / 2;
+    rocks.push({
+      x: flowDir === "z" ? side * bankOffset + (seeded(specId, `riverrock-${i}-x`, 0) - 0.5) * 2 : dist + (seeded(specId, `riverrock-${i}-x`, 0) - 0.5) * 2,
+      z: flowDir === "z" ? dist + (seeded(specId, `riverrock-${i}-z`, 0) - 0.5) * 2 : side * bankOffset + (seeded(specId, `riverrock-${i}-z`, 0) - 0.5) * 2,
+      scale: 0.4 + seeded(specId, `riverrock-${i}-s`, 0) * 1.2,
+      rot: seeded(specId, `riverrock-${i}-r`, 0) * Math.PI * 2,
+    });
+  }
+  return rocks;
+}
+
+/** A flat rectangle laid on the river's axis: spans `along` and `across` it, at height y. */
+function AxisPlane({ flowDir, along, across, y, color }: {
+  flowDir: RiverConfig["flowDir"]; along: [number, number]; across: [number, number]; y: number; color: string;
+}) {
+  const axis = riverAxis(flowDir);
+  const [x, z] = axis.pos((along[0] + along[1]) / 2, (across[0] + across[1]) / 2);
+  const [sx, sz] = axis.strip(along[1] - along[0], across[1] - across[0]);
+  return (
+    <mesh position={[x, y, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <planeGeometry args={[sx, sz]} />
+      <meshStandardMaterial color={color} roughness={1} metalness={0} />
+    </mesh>
+  );
+}
+
 function RiverRock({ x, y, z, scale, rot, col }: {
   x: number; y: number; z: number; scale: number; rot: number; col: string;
 }) {
@@ -178,16 +239,16 @@ function RiverRock({ x, y, z, scale, rot, col }: {
   );
 }
 
-function RiverMist({ active, night }: { active: boolean; night: boolean }) {
+function RiverMist({ active, night, flowDir }: { active: boolean; night: boolean; flowDir: RiverConfig["flowDir"] }) {
   const frame = useCurrentFrame();
   const t = frame / 30;
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const positions: number[] = [];
     const alphas: number[] = [];
+    // 60 m along the water, 30 m across it
     for (let i = 0; i < 40; i++) {
-      const x = (random(`rivermist-${i}-x`) - 0.5) * 60;
-      const z = (random(`rivermist-${i}-z`) - 0.5) * 30;
+      const [x, z] = riverAxis(flowDir).pos((random(`rivermist-${i}-x`) - 0.5) * 60, (random(`rivermist-${i}-z`) - 0.5) * 30);
       const y = 0.3 + random(`rivermist-${i}-y`) * 2;
       const a = 0.08 + random(`rivermist-${i}-a`) * 0.06;
       positions.push(x, y, z);
@@ -197,7 +258,7 @@ function RiverMist({ active, night }: { active: boolean; night: boolean }) {
     g.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
     keepMistBase(g);
     return g;
-  }, []);
+  }, [flowDir]);
   const mat = useMemo(() => new THREE.PointsMaterial({
     color: night ? "#101215" : "#c8e8f8",
     size: 4,
@@ -282,7 +343,8 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
 
 /**
  * The river's own camera (used when no director's shot is active): it travels
- * along the flow, pushed out on the stat beats. A pure function of the frame.
+ * up the river over its centre line, looking along it (upstream, towards the
+ * waterfall's end), pushed out on the stat beats. A pure function of the frame.
  */
 function RiverCameraRig({ spec, length, flowDir }: { spec: ShotSpec; length: number; flowDir: RiverConfig["flowDir"] }) {
   const frame = useCurrentFrame();
@@ -292,25 +354,25 @@ function RiverCameraRig({ spec, length, flowDir }: { spec: ShotSpec; length: num
   const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.08 : 1;
   useFrame(() => {
     restoreRigLens(camera);
-    const flowProgress = (t * 2) % length; // moves along river
-    const baseX = flowDir === "x" ? -length / 2 + flowProgress : 0;
-    const baseZ = flowDir === "z" ? -length / 2 + flowProgress : -10;
-    const angle = flowDir === "x" ? 0 : Math.PI / 2;
-    const x = baseX + Math.sin(t * 0.02) * 3;
+    const axis = riverAxis(flowDir);
+    const along = -length / 2 + ((t * 2) % length); // moves up the river
+    const [baseX, baseZ] = axis.pos(along, 0);
+    const [aheadX, aheadZ] = axis.pos(along + 20, 0);
+    const [swayX, swayZ] = axis.pos(Math.cos(t * 0.02) * 2, Math.sin(t * 0.02) * 3);
     const y = 8 + Math.sin(t * 0.1) * 0.5;
-    const z = baseZ + Math.cos(t * 0.02) * 2;
-    camera.position.set(x * zoom, y, z * zoom);
-    camera.lookAt(baseX + Math.sin(angle) * 20, 1.5, baseZ + Math.cos(angle) * 20);
+    camera.position.set((baseX + swayX) * zoom, y, (baseZ + swayZ) * zoom);
+    camera.lookAt(aheadX, 1.5, aheadZ);
   });
   return null;
 }
 
 /**
  * What the camera can frame by the river (KIT_SUBJECTS.river), measured from
- * the stage's layout. The water is always a strip along z (WaterSurface is
- * width x length); the rocks line its banks along flowDir; the waterfall
- * stands at the +z end with its pool on the downstream (-z) side. The water
- * rises with the stat beats, so "river" follows the level over time.
+ * the stage's layout. The water, its banks and the rocks run along flowDir
+ * (riverAxis); the waterfall stands at the upstream (+along) end with its
+ * pool on the downstream side. Scene, river and waterfall are filmed along
+ * the flow (a subject's `facing` is the side its front camera stands on). The
+ * water rises with the stat beats, so "river" follows the level over time.
  * `level(t)` is the water height at time t.
  */
 export function riverAnchors(
@@ -324,30 +386,72 @@ export function riverAnchors(
   sun?: { x: number; z: number },
 ): Anchors {
   const { width, length, flowDir } = cfg;
+  const axis = riverAxis(flowDir);
+  const at = (along: number, y: number): Vec3 => {
+    const [x, z] = axis.pos(along, 0);
+    return [x, y, z];
+  };
   const anchors: Anchors = {};
   const ground = 0.1; // the bank plane
 
-  // scene: the valley from upstream, looking down the river to the mountains (-z).
-  const scene: Subject = { center: [0, 3, -20], radius: 10, height: 8, facing: 0, ground };
+  // The lane over the water between the two rock lines (RiverRock: a
+  // dodecahedron of radius `scale`, its top 0.3 + 1.5 scale up), downstream
+  // of the falls. Scene and river keep a low lens in it; over the rocks'
+  // tops (openAbove) it may stand anywhere.
+  const across = (r: { x: number; z: number }) => (flowDir === "z" ? r.x : r.z);
+  let lane = width / 2;
+  let rockTop = 0;
+  for (const r of rocks) {
+    lane = Math.min(lane, Math.abs(across(r)) - r.scale - 0.4);
+    rockTop = Math.max(rockTop, 0.3 + 1.5 * r.scale);
+  }
+  lane = Math.max(1, lane);
+  const [x0, z0] = axis.pos(-length / 2 - 60, -lane);
+  const [x1, z1] = axis.pos(length / 2 - 3, lane);
+  const waterLane: NonNullable<Subject["bounds"]> = {
+    minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minZ: Math.min(z0, z1), maxZ: Math.max(z0, z1), openAbove: rockTop + 0.5,
+  };
+
+  // The solver's blockers (Subject.blockers): every rock as it is drawn
+  // (RiverRock: a dodecahedron of radius `scale` centred 0.3 + 0.5 scale up;
+  // owner = its index) and the falling sheet (owner FALLS_OWNER), so no
+  // subject is filmed through a rock or the falls.
+  const FALLS_OWNER = 1000;
+  const blockers: Occluder[] = rocks.map((o, i) => ({ kind: "ball", x: o.x, y: 0.3 + 0.5 * o.scale, z: o.z, r: o.scale, owner: i }));
+  if (cfg.waterfallHeight) {
+    const [fx0, fz0] = axis.pos(length / 2 - 1.15, -width * 0.4);
+    const [fx1, fz1] = axis.pos(length / 2 - 0.85, width * 0.4);
+    blockers.push({ kind: "box", minX: Math.min(fx0, fx1), maxX: Math.max(fx0, fx1), minY: 0, maxY: cfg.waterfallHeight, minZ: Math.min(fz0, fz1), maxZ: Math.max(fz0, fz1), owner: FALLS_OWNER });
+  }
+
+  // scene: the valley from upstream, looking down the river to the mountains.
+  const scene: Subject = { center: at(-20, 3), radius: 10, height: 8, facing: axis.upstream, ground, bounds: waterLane, blockers };
   anchors.scene = () => scene;
 
-  // river: a stretch of open water downstream of the banks' crossing strip.
+  // river: a stretch of open water downstream, seen from upstream.
   anchors.river = (t) => {
     const y = level(t);
-    return { center: [0, y + 0.2, -Math.min(40, length * 0.25)], radius: width / 2 + 2, height: 1.2, facing: 0, ground: Math.max(ground, y) };
+    return {
+      center: at(-Math.min(40, length * 0.25), y + 0.2),
+      radius: width / 2 + 2,
+      height: 1.2,
+      facing: axis.upstream,
+      ground: Math.max(ground, y),
+      bounds: waterLane,
+      blockers,
+    };
   };
 
   // waterfall: the falling sheet (0.8 x width wide), seen from its pool.
   const fall = cfg.waterfallHeight;
   if (fall) {
-    const subject: Subject = { center: [0, fall / 2, length / 2 - 1], radius: width * 0.4 + 1.5, height: fall, facing: Math.PI, ground };
+    const subject: Subject = { center: at(length / 2 - 1, fall / 2), radius: width * 0.4 + 1.5, height: fall, facing: axis.upstream + Math.PI, ground, blockers, own: [FALLS_OWNER] };
     anchors.waterfall = () => subject;
   }
 
   // rocks: the tightest cluster away from the river's ends, seen from across
   // the water (turned along the flow), on the side clear of other rocks.
   const along = (r: { x: number; z: number }) => (flowDir === "z" ? r.z : r.x);
-  const across = (r: { x: number; z: number }) => (flowDir === "z" ? r.x : r.z);
   const middle = rocks.filter((r) => Math.abs(along(r)) < length * 0.35);
   let best: { members: typeof rocks; score: number } | null = null;
   for (const r of middle.length ? middle : rocks) {
@@ -379,7 +483,7 @@ export function riverAnchors(
       ? [toWater + turn, toWater - turn, toWater]
       : [litYaw, litYaw + Math.PI / 6, litYaw - Math.PI / 6, toWater + turn, toWater - turn, toWater];
     const facing = clearestFacing(base, ["CU", "MS", "FS", "WS"], aspect, blockers, own, sun ? litYaw : toWater + turn, candidates).facing;
-    const subject: Subject = { ...base, facing };
+    const subject: Subject = { ...base, facing, blockers, own: [...own] };
     anchors.rocks = () => subject;
   }
   return anchors;
@@ -395,13 +499,12 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const look = RIVER_TOD[tod] ?? RIVER_TOD.afternoon;
   const night = tod === "night";
 
-  // River config from scene or defaults
-  const riverConfig: RiverConfig = (active?.riverConfig ?? {
-    hasWaterfall: false,
-    flowDir: "z",
-    length: 200,
-    width: 12,
-  }) as RiverConfig;
+  // River config from the scene, over the defaults
+  const riverConfig = riverConfigOf(active?.riverConfig as Partial<RiverConfig> | undefined);
+  const axis = riverAxis(riverConfig.flowDir);
+  const fallAt = axis.pos(riverConfig.length / 2 - 1, 0);
+  const poolAt = axis.pos(riverConfig.length / 2 - 5, 0);
+  const mistAt = axis.pos(riverConfig.length / 2, 0);
 
   const { scene: threeScene } = useThree();
   useEffect(() => {
@@ -413,22 +516,10 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const level = panel ? baseLevel + (statScaleAt(panel, t) - 1) * 0.3 : baseLevel;
 
   // River rocks along banks
-  const riverRocks = useMemo(() => {
-    const rocks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
-    const bankOffset = riverConfig.width / 2 + 1;
-    const { flowDir, length } = riverConfig;
-    for (let i = 0; i < 40; i++) {
-      const side = seeded(spec.id, `riverrock-${i}-side`, 0) > 0.5 ? 1 : -1;
-      const dist = seeded(spec.id, `riverrock-${i}-dist`, 0) * length - length / 2;
-      rocks.push({
-        x: flowDir === "z" ? side * bankOffset + (seeded(spec.id, `riverrock-${i}-x`, 0) - 0.5) * 2 : dist + (seeded(spec.id, `riverrock-${i}-x`, 0) - 0.5) * 2,
-        z: flowDir === "z" ? dist + (seeded(spec.id, `riverrock-${i}-z`, 0) - 0.5) * 2 : side * bankOffset + (seeded(spec.id, `riverrock-${i}-z`, 0) - 0.5) * 2,
-        scale: 0.4 + seeded(spec.id, `riverrock-${i}-s`, 0) * 1.2,
-        rot: seeded(spec.id, `riverrock-${i}-r`, 0) * Math.PI * 2,
-      });
-    }
-    return rocks;
-  }, [spec.id, riverConfig.flowDir, riverConfig.length, riverConfig.width]);
+  const riverRocks = useMemo(
+    () => riverRocksOf(spec.id, { flowDir: riverConfig.flowDir, length: riverConfig.length, width: riverConfig.width }),
+    [spec.id, riverConfig.flowDir, riverConfig.length, riverConfig.width],
+  );
 
   // Subjects for the director's shots (only measured when the spec has shots).
   const { width, height } = useVideoConfig();
@@ -480,28 +571,47 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       />
       <ambientLight intensity={look.amb * (lightsOut ? 0.4 : 1)} />
 
-      {/* Distant mountain ridge backdrop */}
-      <MountainRidge
-        bounds={{ x0: -200, x1: 200, z0: -200, z1: -400 }}
-        specId={spec.id}
-        night={night}
+      {/* Distant mountain ridge backdrop, downstream (built along x at -z;
+          turned a quarter for a river along x, so it stands at -x) */}
+      <group rotation={[0, riverConfig.flowDir === "x" ? Math.PI / 2 : 0, 0]}>
+        <MountainRidge
+          bounds={{ x0: -200, x1: 200, z0: -200, z1: -400 }}
+          specId={spec.id}
+          night={night}
+        />
+      </group>
+
+      {/* The valley floor, open over the river's channel: the water used to
+          lie on the floor at the same height and showed only where its waves
+          rose above it. Below the channel, a dark bed. */}
+      <AxisPlane flowDir={riverConfig.flowDir} along={[-300, 300]} across={[riverConfig.width / 2, 300]} y={0} color={look.ground} />
+      <AxisPlane flowDir={riverConfig.flowDir} along={[-300, 300]} across={[-300, -riverConfig.width / 2]} y={0} color={look.ground} />
+      <AxisPlane flowDir={riverConfig.flowDir} along={[riverConfig.length / 2, 300]} across={[-riverConfig.width / 2, riverConfig.width / 2]} y={0} color={look.ground} />
+      <AxisPlane flowDir={riverConfig.flowDir} along={[-300, -riverConfig.length / 2]} across={[-riverConfig.width / 2, riverConfig.width / 2]} y={0} color={look.ground} />
+      <AxisPlane
+        flowDir={riverConfig.flowDir}
+        along={[-riverConfig.length / 2, riverConfig.length / 2]}
+        across={[-riverConfig.width / 2 - 0.5, riverConfig.width / 2 + 0.5]}
+        y={-0.8}
+        color={look.waterDeep}
       />
 
-      {/* Ground plane */}
-      <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[600, 600, 40, 40]} />
-        <meshStandardMaterial color={look.ground} roughness={1} metalness={0} />
-      </mesh>
-
-      {/* River banks */}
-      <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[riverConfig.length + 20, riverConfig.width + 8, 20, 4]} />
-        <meshStandardMaterial color={look.bank} roughness={1} metalness={0} />
-      </mesh>
+      {/* River banks: a strip either side of the water, along the flow
+          (4 m wide, 10 m past each end) */}
+      {[-1, 1].map((side) => (
+        <AxisPlane
+          key={side}
+          flowDir={riverConfig.flowDir}
+          along={[-riverConfig.length / 2 - 10, riverConfig.length / 2 + 10]}
+          across={side > 0 ? [riverConfig.width / 2, riverConfig.width / 2 + 4] : [-riverConfig.width / 2 - 4, -riverConfig.width / 2]}
+          y={0.1}
+          color={look.bank}
+        />
+      ))}
 
       {/* River water — reuse WaterSurface as a flowing strip */}
       <WaterSurface
-        size={[riverConfig.width, riverConfig.length]}
+        size={axis.strip(riverConfig.length, riverConfig.width)}
         segments={Math.max(16, Math.floor(riverConfig.length / 5))}
         tod={tod}
         level={level}
@@ -527,7 +637,11 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       {riverConfig.hasWaterfall && riverConfig.waterfallHeight && (
         <>
           {/* Waterfall face — vertical plane with animated texture via WaterSurface trick */}
-          <mesh position={[0, riverConfig.waterfallHeight / 2, riverConfig.length / 2 - 1]} receiveShadow>
+          <mesh
+            position={[fallAt[0], riverConfig.waterfallHeight / 2, fallAt[1]]}
+            rotation={[0, riverConfig.flowDir === "x" ? Math.PI / 2 : 0, 0]}
+            receiveShadow
+          >
             <planeGeometry args={[riverConfig.width * 0.8, riverConfig.waterfallHeight, 1, Math.max(4, riverConfig.waterfallHeight)]} />
             <meshStandardMaterial
               color={look.waterDeep}
@@ -541,13 +655,13 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
           {/* Waterfall mist */}
           <WaterfallMist
             active={true}
-            x={0}
-            z={riverConfig.length / 2}
+            x={mistAt[0]}
+            z={mistAt[1]}
             height={riverConfig.waterfallHeight}
             night={night}
           />
           {/* Pool at base */}
-          <mesh position={[0, 0.15, riverConfig.length / 2 - 5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <mesh position={[poolAt[0], 0.15, poolAt[1]]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
             <circleGeometry args={[riverConfig.width * 1.5, 16]} />
             <meshStandardMaterial color={look.waterDeep} transparent opacity={0.8} roughness={0.1} metalness={0} />
           </mesh>
@@ -555,7 +669,7 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       )}
 
       {/* River mist at dawn/overcast/golden */}
-      <RiverMist active={look.mist} night={night} />
+      <RiverMist active={look.mist} night={night} flowDir={riverConfig.flowDir} />
 
       {/* Weather overlay */}
       <WeatherLayer

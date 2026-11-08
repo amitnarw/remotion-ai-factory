@@ -1,0 +1,62 @@
+{
+  "engine": "voxcpm2",
+  "outDir": "output/seed-audit",
+  "lines": [
+    {
+      "id": "narrator-science__s0",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 0
+    },
+    {
+      "id": "narrator-science__s7",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 7
+    },
+    {
+      "id": "narrator-science__s42",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 42
+    },
+    {
+      "id": "narrator-science__s99",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 99
+    },
+    {
+      "id": "narrator-science__s2024",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 2024
+    },
+    {
+      "id": "narrator-science__s4096",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 4096
+    },
+    {
+      "id": "narrator-science__s314",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 314
+    },
+    {
+      "id": "narrator-science__s7777",
+      "text": "In the heart of the forest, where sunlight barely reaches the ground, a hidden world begins to stir.",
+      "voice": "narrator-science",
+      "voiceDesc": "young man in his mid twenties, light bright energetic male voice, clear articulate confident projection, warm natural conversational delivery, modern science explainer narration",
+      "seed": 7777
+    }
+  ]
+}

@@ -73,9 +73,20 @@ export const StatBeatSchema = z.object({
   scale: z.number().min(1).max(16).optional(),
 });
 
+/** How a world place reacts at every counter step (docs/factory/11-world-reactions.md):
+ *  lift = things float up, crack = the ground cracks, then breaks, confetti /
+ *  money = bursts in the air, water = the streets flood, snow = snow falls and
+ *  settles, dark = the power fails. */
+export const STAT_REACTS = ["lift", "crack", "confetti", "money", "water", "snow", "dark"] as const;
+export type StatReact = (typeof STAT_REACTS)[number];
+
 export const StatPanelSchema = z.object({
   title: z.string(),
   unit: z.string().default("x").describe("suffix after the big value, e.g. \"x\" renders \"16x\""),
+  /** A director device: how the world places react at each step (required by
+   *  the director when a step falls in a world scene). Kit stages ignore it
+   *  and keep their own reactions. */
+  react: z.enum(STAT_REACTS).optional(),
   beats: z.array(StatBeatSchema).min(1).max(8),
 });
 
@@ -417,12 +428,26 @@ export const ShotSpecSchema = z.object({
   scenes: z.array(SceneSchema).min(1),
   /** World-state events — the ENVIRONMENT itself reacts (premise visibility).
    *  Water events animate the ocean/pier water level; weather + lights
-   *  events are honoured by the stages that support them. */
+   *  events are honoured by the stages that support them. gravity-off/on,
+   *  ground-break and snow-start/stop are shown by the world places only
+   *  (src/world/react/reaction.ts). */
   worldEvents: z
     .array(
       z.object({
         t: z.number(),
-        name: z.enum(["water-vanish", "water-return", "water-rise", "rain-start", "rain-stop", "lights-out"]),
+        name: z.enum([
+          "water-vanish",
+          "water-return",
+          "water-rise",
+          "rain-start",
+          "rain-stop",
+          "lights-out",
+          "gravity-off",
+          "gravity-on",
+          "ground-break",
+          "snow-start",
+          "snow-stop",
+        ]),
       }),
     )
     .default([]),

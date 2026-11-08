@@ -8,14 +8,15 @@
  * public/sfx (last resort), and the report says how many of each were used.
  *
  * Also decides the background music (from the story's mood when the spec has
- * none), adds a whoosh at each scene cut, and measures the voice lines so
- * narration sits at one level.
+ * none), adds a whoosh at each scene cut (not under a flight), and measures
+ * the voice lines so narration sits at one level.
  */
 import { existsSync } from "fs";
 import { join } from "path";
 import { measureLoudness } from "./ffmpeg";
 import { LibraryEntry, LibraryKind, loadLibrary, pickEntry } from "./audio-library";
 import type { ShotSpec } from "./spec.schema";
+import { isFlightCut } from "./pipeline/transitions";
 
 const ROOT = process.cwd();
 
@@ -209,9 +210,11 @@ export function resolveAudio(input: ShotSpec, seed: string): { spec: ShotSpec; r
   });
 
   // Whoosh at each scene cut (not at t=0). No library match -> the synthesized whoosh.
+  // A change of world place is filmed as a flight, and the flight is the
+  // transition: no cut whoosh under it (its other sounds stay).
   const transitions: Transition[] = [];
   spec.scenes.forEach((s, i) => {
-    if (i === 0) return;
+    if (i === 0 || isFlightCut(s, spec.flights)) return;
     const q = SOUND_QUERY.whoosh_dissolve;
     const hit = pickEntry(library, q.kinds, q.sets, `${seed}|cut|${i}`);
     transitions.push({ t: s.from, file: hit?.file, gain: hit ? gainFor(hit) : undefined });

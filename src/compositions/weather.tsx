@@ -23,6 +23,7 @@ import { useCurrentFrame, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec } from "../generator/spec.schema";
+import { lightningAt } from "./lightning";
 
 export type Weather = "none" | "clear" | "rain" | "snow" | "storm";
 
@@ -238,7 +239,6 @@ export function WeatherLayer({ weather, tod, specId }: WeatherLayerProps) {
 
   // ---- Storm lightning: screen-facing flash quad in front of the camera ----
   const flashRef = useRef<THREE.Mesh>(null);
-  const flashPeriod = 7.2;
   useFrame(() => {
     const tt = frame / 30;
     if (rain) rain.mat.uniforms.uTime.value = tt;
@@ -253,11 +253,7 @@ export function WeatherLayer({ weather, tod, specId }: WeatherLayerProps) {
     snowPos.needsUpdate = true;
 
     if (storm && flashRef.current) {
-      const ph = tt % flashPeriod;
-      let flash = 0;
-      if (ph < 0.14) flash = 1 - ph / 0.14;
-      else if (ph > 4.58 && ph < 4.72)
-        flash = 0.45 * (1 - Math.abs(ph - 4.65) / 0.07);
+      const flash = lightningAt(tt);
       const mat = flashRef.current.material as THREE.Material;
       if (!Array.isArray(mat)) mat.opacity = flash;
       if (flash > 0) {

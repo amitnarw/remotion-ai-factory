@@ -16,15 +16,22 @@
  * The solved camera is applied AFTER GroundWorld's own camera write each
  * frame (SolvedLens below, mounted after <GroundWorld>), so the solver's
  * full pose — including dutch and handheld roll — lands on the lens, with
- * a near plane that can film at arm's length.
+ * a near plane that can film at arm's length at street level and grows with
+ * the lens's height (lensNear), so the far city keeps its depth precision.
+ *
+ * Lens clearance lives in the anchors (generator/camera/world.ts): bounds,
+ * ground and facing per subject; worldShot films the avenue down its axis.
+ * solveWorldShot films a shot: in a scene whose story lifts buildings it
+ * keeps the lens out of their space, and over a flood the anchors hold the
+ * lens above the water.
  */
 import { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { SceneType, ShotSpec } from "../../generator/spec.schema";
-import { solveShot, type CameraPose } from "../../generator/camera/solve";
-import { worldShotSet } from "../../generator/camera/world";
+import type { CameraPose } from "../../generator/camera/solve";
+import { solveWorldShot, worldShotSet } from "../../generator/camera/world";
 import { headingToGround, type Vec3 } from "../../world/geo";
 import { GroundWorld } from "../../world/Ground";
 import type { GroundPose } from "../../world/flight";
@@ -53,39 +60,47 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
   );
   // Anchor + cast tables: the city layout is generated with exactly the
   // arguments GroundWorld draws with, so the camera's subjects sit on the
-  // set it renders, and its own plan of the cast matches these.
-  const shots = useMemo(() => (resolved ? worldShotSet(scene, resolved, CLOUD_PASSAGE) : null), [scene, resolved]);
-  if (!world || !resolved) return null;
-  const t = frame / (fps || 30);
-  const dur = Math.max(0.5, scene.to - scene.from);
-  const localT = clamp01(t / dur);
-  const style = typeof scene.camera === "string" ? (scene.camera as string) : "steady-push";
+  // set it renders, and its own plan of the cast matches these. With the
+  // spec, the lens keeps out of the buildings the story lifts and above a
+  // flood (planned as GroundWorld plans them).
+  const shots = useMemo(() => (resolved ? worldShotSet(scene, resolved, CLOUD_PASSAGE, spec) : null), [scene, resolved, spec]);
   const aspect = width / Math.max(1, height);
 
-  // A shot for this moment? The subject is the actor or city spot the shot
-  // names (aliases included); an unknown name falls back to the whole scene.
-  const specShot = spec?.shots?.find((s) => t >= s.from && t < s.to);
-  const anchor = specShot && shots ? shots.subjects[specShot.subject] ?? shots.subjects.scene : undefined;
-
-  let cameraPose: CameraPose | null = null;
-  if (specShot && anchor) {
-    const subject = anchor(t);
-    const seconds = Math.max(0.1, specShot.to - specShot.from);
-    cameraPose = solveShot(specShot, subject, {
-      aspect,
-      u: (t - specShot.from) / seconds,
-      seconds,
-      seed: `${specShot.beat ?? specShot.from}`,
-      lagged: specShot.move === "follow" ? anchor(t - 0.35) : undefined,
-    });
-  }
-
-  const pose: GroundPose = cameraPose
-    ? { pos: cameraPose.position, target: cameraPose.target }
-    : worldPose(style, localT);
-  // The portrait fov from the inspector view; the landscape value follows the
-  // aspect-aware camera (the solver gives its own fov for solved shots).
-  const fov = cameraPose ? cameraPose.fov : aspect < 1 ? 62 : 42;
+  // The camera at video time t: a pure function of the spec, used for this
+  // frame and for the scene's whole path below.
+  const cameraAt = useMemo(() => {
+    const dur = Math.max(0.5, scene.to - scene.from);
+    const style = typeof scene.camera === "string" ? (scene.camera as string) : "steady-push";
+    return (t: number): { pose: GroundPose; fov: number; solved: CameraPose | null } => {
+      // A shot for this moment? The subject is the actor or city spot the shot
+      // names (aliases included); an unknown name falls back to the whole scene.
+      const found = spec?.shots?.find((s) => t >= s.from && t < s.to);
+      if (found && shots) {
+        // The avenue is filmed down its axis (an "auto" side becomes "front");
+        // the anchor knows the shot's size (a wide park shot rises over the
+        // canopy) and span (a flood's lens floor is held for the shot); in a
+        // lift scene the shot keeps its lens clear of the lifting buildings.
+        const solved = solveWorldShot(shots, found, t, aspect);
+        return { pose: { pos: solved.position, target: solved.target }, fov: solved.fov, solved };
+      }
+      // The portrait fov from the inspector view; the landscape value follows the
+      // aspect-aware camera (the solver gives its own fov for solved shots).
+      return { pose: worldPose(style, clamp01(t / dur)), fov: aspect < 1 ? 62 : 42, solved: null };
+    };
+  }, [scene, spec, shots, aspect]);
+  // Every lens position the scene uses (every quarter second): the kit core
+  // fixes which buildings keep their kit pieces for the whole scene, so no
+  // building switches to its far card on screen (as the flights do).
+  const lodPath = useMemo(() => {
+    const path: Vec3[] = [];
+    for (let t = scene.from; t < scene.to; t += 0.25) path.push(cameraAt(t).pose.pos);
+    path.push(cameraAt(Math.max(scene.from, scene.to - 1e-3)).pose.pos);
+    return path;
+  }, [cameraAt, scene]);
+  if (!world || !resolved) return null;
+  const t = frame / (fps || 30);
+  const { pose, fov, solved: cameraPose } = cameraAt(t);
+  const near = cameraPose ? lensNear(cameraPose) : 0.05;
 
   return (
     <>
@@ -94,15 +109,19 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
         pose={pose}
         fov={fov}
         cloudPassage={CLOUD_PASSAGE}
+        lodPath={lodPath}
         cast={shots?.castScripts}
         // The writer's mood (spec.story) drives the world's toon palette.
         mood={spec?.story?.mood}
+        // The counter's reaction and the world events (react/): the place
+        // physically reacts to the story.
+        reaction={spec ? { spec, scene, t } : undefined}
       />
       {cameraPose && (
         // Overrides GroundWorld's own camera write afterwards each frame:
         // the solver's full pose (dutch/handheld roll included) and a near
         // plane that keeps arm's-length close-ups from clipping the subject.
-        <SolvedLens pose={cameraPose} whip={whipYaw(spec?.transitions, t)} />
+        <SolvedLens pose={cameraPose} near={near} whip={whipYaw(spec?.transitions, t)} />
       )}
     </>
   );
@@ -110,8 +129,23 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/**
+ * Near plane for a solved pose: 5 cm at street level (arm's-length
+ * close-ups), growing with the lens's height over the city (2 %, as
+ * GroundWorld's own camera) but never past a twentieth of the way to the
+ * subject. A fixed 5 cm under a 70 km far plane left a high shot's far city
+ * metres of depth precision: the ground layers (slab 4 cm, avenue 12 cm,
+ * terrain 0) z-fought into dark blotches (Cairo at night, EWS/FS high).
+ * The main canvas has no logarithmic depth buffer (the flight's has).
+ */
+export function lensNear(pose: CameraPose): number {
+  const [x, y, z] = pose.position;
+  const reach = Math.hypot(pose.target[0] - x, pose.target[1] - y, pose.target[2] - z);
+  return Math.max(0.05, Math.min(Math.max(0, y) * 0.02, reach * 0.05, 10));
+}
+
 /** Applies a solved camera pose to the stage's camera, after GroundWorld's. */
-function SolvedLens({ pose, whip }: { pose: CameraPose; whip: number }) {
+function SolvedLens({ pose, near, whip }: { pose: CameraPose; near: number; whip: number }) {
   const { camera } = useThree();
   useFrame(() => {
     const cam = camera as THREE.PerspectiveCamera;
@@ -119,9 +153,9 @@ function SolvedLens({ pose, whip }: { pose: CameraPose; whip: number }) {
     cam.quaternion.set(...pose.quaternion);
     // A whip pan between scenes turns the camera fast through the cut.
     if (whip !== 0) cam.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, whip));
-    if (Math.abs(cam.fov - pose.fov) > 1e-4 || cam.near !== 0.05 || cam.far !== 70_000) {
+    if (Math.abs(cam.fov - pose.fov) > 1e-4 || cam.near !== near || cam.far !== 70_000) {
       cam.fov = pose.fov;
-      cam.near = 0.05;
+      cam.near = near;
       cam.far = 70_000;
       cam.updateProjectionMatrix();
     }

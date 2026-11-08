@@ -13,11 +13,12 @@ import type { GroundPose } from "./flight";
 import type { Season, Vec3 } from "./geo";
 import { areasGeometry, buildingsGeometry, flatGeometry, mansardGeometry, propsGeometry, roadsGeometry, windowTexture } from "./meshes";
 import type { ResolvedPlace } from "./places";
-import { mixHex, skyFor, type SkyLook } from "./sky";
-import { buildTerrain, type Terrain } from "./terrain";
+import { mixHex, nightFor, skyFor, sunGlowFor, type SkyLook } from "./sky";
+import { terrainFor, type Terrain } from "./terrain";
 import { TREE_KINDS, treeTemplates, type TreeKind } from "./trees";
 import { KitInstances } from "./KitInstances";
-import { kitPlacements } from "./kitTown";
+import { kitTown } from "./kitTown";
+import { KIT_LOD_RADIUS, lodRadius, nearMask } from "./kitLod";
 import { landmarkPlacements, landmarksFor } from "./landmarks";
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import { ActorsLayer } from "./actors/Actors";
@@ -25,20 +26,41 @@ import type { ActorScriptInput } from "./actors/script";
 import { cityAnchors, GROUND, openBlocks, blockCentre, type CityAnchors } from "./cityAnchors";
 import { crowdFor, crowdLevel, crowdCountFor } from "./crowd";
 import { plazaDressing, lampGroup } from "./atmosphere/dressing";
+import { cityMarket } from "./atmosphere/market";
+import { reactionEpicentre, reactionPlan, type ReactionSpec } from "./react/reaction";
+import { reactionSite } from "./react/debris";
+import { levelTrack } from "./react/track";
+import { ReactionLayers, type ReactKind } from "./react/ReactionLayers";
+import { crackScene, useCrackGround } from "./react/crackGround";
+import { slabGrid } from "./react/slab";
+import { DARK_SKY, darkExtent, darkPlan, discFade, hasDark } from "./react/dark";
+import { DARK_UNIFORMS, darkRig, patchDarkEmissive, patchDarkSky } from "./react/darkShader";
+import { buildingPlan, forceNear, kitLiftMatrices, kitLiftSlots, liftNearIds, placeLiftingBuildings } from "./react/buildings";
+import { buildingLiftDepthMaterial, buildingUniforms, KIT_UNDERSIDE_INSET, liftIdAttribute, patchBuildingLift, roofLiftIds, setLiftUniforms, undersideGeometry, wallLiftIds } from "./react/buildingsShader";
 import { flagSpots, Flags } from "./atmosphere/Flags";
 import { BirdsLayer } from "./atmosphere/Birds";
 import { applyCloudDrift, applyTreeSway, type LifeTime } from "./atmosphere/sway";
 import { applyHeightFog, type HeightFogOptions } from "./atmosphere/fog";
-import { windowGlowTexture } from "./atmosphere/night";
+import { lampSpots, windowGlowTexture } from "./atmosphere/night";
 import { applyMoodPalette, moodLook, type MoodLook } from "./atmosphere/mood";
 import { shaftStrength, sunShafts } from "./atmosphere/shafts";
 import { bankGeometry, pondGeometry, pondsFor, waterMaterial } from "./atmosphere/water";
+import { hasWater, waterPlan } from "./react/water";
+import { patchWaterDrop, patchWaterMarks, reactSurfaceMaterials, setWaterUniforms } from "./react/waterShader";
+import { hasSnow, snowPlan, SNOWFALL_NIGHT } from "./react/snow";
+import { patchSnowCover, setSnowUniforms } from "./react/snowShader";
+import { PARTICLE_KINDS, REACTION_PARTICLES } from "./react/particles";
 import { createFBMSkyDome } from "./atmosphere/fbmSky";
+import { MOON_DIST, SUN_KEY_GONE, keyFor, moonDisc, moonFor } from "./atmosphere/moon";
+import { starField, starsFor, starsMesh } from "./atmosphere/stars";
 import { Surface } from "./surface";
 
 const SKY_RADIUS = 55_000;
+/** At night the horizon's glow (the city's light on the haze) falls off over
+ *  this much height on the dome (sine of elevation), under a near-black sky. */
+const NIGHT_GLOW_BAND = 0.12;
 
-function skyDome(sky: SkyLook, sunDir: Vec3, mood: MoodLook | null = null): THREE.Mesh {
+function skyDome(sky: SkyLook, sunDir: Vec3, mood: MoodLook | null = null, glowAmount = 1, night = 0): THREE.Mesh {
   const geo = new THREE.SphereGeometry(SKY_RADIUS, 48, 24);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const zenith = new THREE.Color(sky.zenith);
@@ -46,14 +68,19 @@ function skyDome(sky: SkyLook, sunDir: Vec3, mood: MoodLook | null = null): THRE
   const glow = new THREE.Color(sky.sunColor);
   const below = new THREE.Color(sky.horizon).multiplyScalar(0.8);
   const c = new THREE.Color();
+  const band = new THREE.Color();
   const colors = new Float32Array(pos.count * 3);
   const sun = new THREE.Vector3(...sunDir);
   const v = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize();
-    if (v.y >= 0) c.copy(horizon).lerp(zenith, Math.pow(v.y, 0.55));
-    else c.copy(horizon).lerp(below, Math.min(1, -v.y * 6));
-    const g = Math.pow(Math.max(0, v.dot(sun)), 6) * 0.55;
+    if (v.y >= 0) {
+      c.copy(horizon).lerp(zenith, Math.pow(v.y, 0.55));
+      // Night (sky.ts nightFor): the gradient tightens into a glow band.
+      if (night > 0) c.lerp(band.copy(horizon).lerp(zenith, 1 - Math.exp(-v.y / NIGHT_GLOW_BAND)), night);
+    } else c.copy(horizon).lerp(below, Math.min(1, -v.y * 6));
+    // The sunward glow fades out below the horizon (sunGlowFor).
+    const g = Math.pow(Math.max(0, v.dot(sun)), 6) * 0.55 * glowAmount;
     c.lerp(glow, g);
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
@@ -66,6 +93,8 @@ function skyDome(sky: SkyLook, sunDir: Vec3, mood: MoodLook | null = null): THRE
   );
   mesh.renderOrder = -1;
   mesh.frustumCulled = false;
+  // Lights out fades the dome to a night sky (react/darkShader.ts).
+  patchDarkSky(mesh);
   // The dome shifts with the mood grade too, one material, deterministic.
   applyMoodPalette(mesh.material, mood);
   return mesh;
@@ -170,13 +199,20 @@ function landmarksGroup(list: Landmark[]): THREE.Group {
   return group;
 }
 
-function cloudsMesh(clouds: Cloud[], seed: string): { mesh: THREE.InstancedMesh; drift: LifeTime } {
+/** The clouds at full night: their colour (grey-blue, so the moon key lights
+ *  them dim rather than white) and how much of their daylight glow stays. */
+const CLOUD_NIGHT = "#5d667e";
+const CLOUD_NIGHT_GLOW = 0.15;
+
+function cloudsMesh(clouds: Cloud[], seed: string, night = 0): { mesh: THREE.InstancedMesh; drift: LifeTime } {
   const r = makeRng(`clouds:${seed}`);
-  const mesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(1, 1),
-    new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 1, flatShading: true, emissive: "#c9d2e0", emissiveIntensity: 0.35 }),
-    Math.max(1, clouds.length),
-  );
+  const material = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 1, flatShading: true, emissive: "#c9d2e0", emissiveIntensity: 0.35 });
+  // Night (sky.ts nightFor): the clouds lose the day sky's light with it.
+  if (night > 0) {
+    material.color.lerp(new THREE.Color(CLOUD_NIGHT), night);
+    material.emissiveIntensity = 0.35 * (1 - night * (1 - CLOUD_NIGHT_GLOW));
+  }
+  const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), material, Math.max(1, clouds.length));
   mesh.count = clouds.length;
   const dummy = new THREE.Object3D();
   clouds.forEach((c, i) => {
@@ -201,8 +237,12 @@ export function GroundWorld({
   cast,
   mood: moodProp,
   kitWindows = true,
+  market: marketOn = true,
+  reaction,
   /** Use FBM procedural sky instead of gradient dome (default off). */
   fbmSky = false,
+  lodPath,
+  kitLod = KIT_LOD_RADIUS,
 }: {
   place: ResolvedPlace;
   pose: GroundPose;
@@ -219,10 +259,30 @@ export function GroundWorld({
   mood?: string;
   /** The kit buildings' night window glow (default: follows night). */
   kitWindows?: boolean;
+  /** The market of kit-model stalls in the main plaza (atmosphere/market.ts). */
+  market?: boolean;
+  /** The story's reaction in this place (docs/factory/11-world-reactions.md):
+   *  the spec's counter (its `react`) and world events over this scene, at
+   *  video time t. Milestone A draws lift (also from gravity-off/on),
+   *  confetti and money; milestone B the cracks and breaking slabs (also
+   *  from ground-break) and the lights going out in a wave from the
+   *  epicentre, sun or moon and sky dimming with them ("dark", also from
+   *  lights-out). */
+  reaction?: { spec: ReactionSpec; scene: { from: number; to: number }; t: number };
   /** Use FBM procedural sky with fractal clouds. */
   fbmSky?: boolean;
+  /** Every camera position the scene will use (e.g. the flight's path):
+   *  the kit core keeps its kit pieces for the buildings near any of them
+   *  and fixes that for the whole scene, so nothing switches on screen.
+   *  Without it, the buildings near this frame's camera. */
+  lodPath?: readonly Vec3[];
+  /** Kit core levels of detail (kitLod.ts): the near radius in metres at
+   *  the 1080x1920, 62 degree reference (scaled to the lens and picture);
+   *  past it buildings are baked far cards. 0: cards only; Infinity or a
+   *  negative value: kit pieces everywhere, as before the levels of detail. */
+  kitLod?: number;
 }) {
-  const { camera, scene } = useThree();
+  const { camera, scene, size } = useThree();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const style = place.style;
@@ -258,7 +318,8 @@ export function GroundWorld({
     }
     for (const m of [flat, streets, open]) m.receiveShadow = true;
     // Hills, dunes or mountains beyond the city; flat (y = 0) under it.
-    const terrain = buildTerrain({
+    // Shared with the camera planner (terrainFor keeps one build per place).
+    const terrain = terrainFor({
       seed: place.place.id,
       surface: place.surface,
       season: place.season,
@@ -298,9 +359,14 @@ export function GroundWorld({
       lambda: 700,
       sunColor: sky.sunColor,
       sunDir: place.sun.dir,
-      sunStrength: 0.35,
+      // No sunward in-scatter once the sun is well below the horizon.
+      sunStrength: 0.35 * sunGlowFor(place.sun.elevation),
+      // Lights out fades the haze with the sky (react/dark.ts).
+      night: { amount: DARK_UNIFORMS.uDarkSky, ...DARK_SKY },
     };
-    for (const mat of [groundMat, wallsMat, ...([roofs.material, props.material, land.material] as THREE.Material[])]) applyHeightFog(mat, fogOpts);
+    // The far-ground disc too: without it the disc past the terrain's edge
+    // stood as a lit band under a hazed horizon (Cairo at night, EWS high).
+    for (const mat of [groundMat, wallsMat, ...([roofs.material, props.material, land.material, disc.material] as THREE.Material[])]) applyHeightFog(mat, fogOpts);
 
     // Story mood: the toon palette per mood family (atmosphere/mood.ts),
     // deterministic per mood + place id; null (no mood) changes nothing.
@@ -312,6 +378,7 @@ export function GroundWorld({
       deep: "#2e7d84",
       sunColor: sky.sunColor,
       sunDir: place.sun.dir,
+      light: DARK_UNIFORMS.uDarkSkyGain,
     });
 
     // Ocean water: for coastal/ocean places, draw a proper water surface
@@ -362,8 +429,10 @@ export function GroundWorld({
     );
 
     // The dressed plazas (fountain, stalls, benches) and their flags; the
-    // fountain's pool shares the drawn-water material.
-    const dressing = plazaDressing(layout, style, place.place.id, 3, water.mat);
+    // fountain's pool shares the drawn-water material. The main plaza holds
+    // the market (the world cameras keep out of it from the same call).
+    const market = marketOn ? cityMarket(layout, style, place.place.id) : null;
+    const dressing = plazaDressing(layout, style, place.place.id, 3, water.mat, !!market);
     const flags = flagSpots(
       layout,
       style,
@@ -380,6 +449,21 @@ export function GroundWorld({
     // on them (crowd.ts): avenue walkers, crossers, a plaza cluster.
     const anchors = cityAnchors(layout, style);
     const scripts: ActorScriptInput[] = crowdFor(`${place.place.id}:crowd`, style, anchors);
+
+    // Water rising and snow (react/water.ts, react/snow.ts): every world
+    // surface takes the wet marks and the snow cover in every scene (at rest
+    // they draw nothing), so every render tab compiles the same programs; the
+    // ponds, the fountain's pool and the coastal ocean drop with a drain.
+    const landmarks = landmarksGroup(layout.landmarks);
+    const surfaces = new Set<THREE.Material>([groundMat, wallsMat, waterBankMat, ...([roofs.material, props.material, land.material, disc.material] as THREE.Material[])]);
+    for (const root of [treeMeshes, dressing, lamps, landmarks]) for (const m of reactSurfaceMaterials(root, new Set([water.mat]))) surfaces.add(m);
+    for (const m of surfaces) {
+      patchWaterMarks(m);
+      patchSnowCover(m);
+    }
+    patchWaterDrop(water.mat);
+    // The coastal ocean drops by its mesh instead (useFrame): its own
+    // material stays exactly as it was.
 
     return {
       layout,
@@ -401,16 +485,165 @@ export function GroundWorld({
       // Famous landmarks and the kit-built core (kit styles), drawn as two
       // instanced sets so the night window glow can key on the kit pieces.
       landmarkModels: landmarkPlacements(famous, terrain.heightAt),
-      kitModels: kitPlacements(layout.kitBuildings),
+      kitTown: kitTown(layout.kitBuildings),
+      marketModels: market?.placements ?? [],
       waterMeshes,
       waterU: water.uTime,
       shafts,
-      landmarks: landmarksGroup(layout.landmarks),
-      clouds: cloudsMesh(layout.clouds, place.place.id),
+      landmarks,
+      clouds: cloudsMesh(layout.clouds, place.place.id, nightFor(place.sun.elevation)),
       fogOpts,
+      mood,
       oceanWater,
+      // Water rising: the ponds whose beds show when they drain.
+      ponds: pondsFor(layout, place.place.id),
     };
-  }, [place, style, cloudPassage, sky, moodProp]);
+  }, [place, style, cloudPassage, sky, moodProp, marketOn]);
+
+  // The story's reaction (react/): fixed per scene, then a pure function of
+  // (t, the camera's position). Lifting comes from the counter's "lift" or
+  // from gravity-off/on events; confetti and money from the counter.
+  const reactSpec = reaction?.spec;
+  const reactScene = reaction?.scene;
+  const reacting = useMemo(() => {
+    if (!reactSpec || !reactScene) return [];
+    const plan = reactionPlan(reactSpec, reactScene);
+    const react = reactSpec.statPanel?.react;
+    const kinds: ReactKind[] = [];
+    if (react === "lift" || (reactSpec.worldEvents ?? []).some((e) => e.name === "gravity-off")) kinds.push("lift");
+    if (react === "confetti" || react === "money") kinds.push(react);
+    // Cracks from the counter's "crack" or a ground-break; past the break
+    // level the ground breaks into slabs (react/slab.ts).
+    if (react === "crack" || (reactSpec.worldEvents ?? []).some((e) => e.name === "ground-break")) kinds.push("crack");
+    // Water from the counter's "water" or a water event; snow from the
+    // counter's "snow" or snow-start/stop (react/water.ts, react/snow.ts).
+    if (hasWater(reactSpec)) kinds.push("water");
+    if (hasSnow(reactSpec)) kinds.push("snow");
+    if (!kinds.length) return [];
+    const site = reactionSite(world.layout, style, place.place.id, reactionEpicentre(world.layout, style));
+    const bursts = plan(reactScene.from).bursts;
+    return kinds.map((kind) => {
+      if (kind === "crack") {
+        const crack = crackScene(plan, reactScene);
+        return { kind, site, bursts, track: crack.track, crack, slabs: crack.breaking ? slabGrid(world.layout, style, site, place.place.id) : null, buildings: null };
+      }
+      // The level's history from the video's start (a beat before the scene still counts).
+      const track = levelTrack((tt) => plan(tt)[kind === "lift" ? "lift" : "level"], 0, reactScene.to);
+      return {
+        kind,
+        site,
+        bursts,
+        track,
+        crack: null,
+        slabs: null,
+        // A strong lift takes whole buildings near the epicentre up too
+        // (react/buildings.ts), on the debris' track.
+        buildings: kind === "lift" ? buildingPlan(placeLiftingBuildings(world.layout, style, world.kitTown, place.place.id), track) : null,
+      };
+    });
+  }, [reactSpec, reactScene, world.layout, world.kitTown, style, place]);
+  // The market rides the slabs while the ground breaks, else lifts with a lift.
+  const cracking = reacting.find((r) => r.kind === "crack") ?? null;
+  const rideMarket = !!cracking?.slabs && world.marketModels.length > 0;
+  const liftMarket = !rideMarket && reacting.some((r) => r.kind === "lift") && world.marketModels.length > 0;
+  const reactionPatch = useMemo(
+    () => (m: THREE.Material) => {
+      applyHeightFog(m, world.fogOpts);
+      applyMoodPalette(m, world.mood);
+    },
+    [world.fogOpts, world.mood],
+  );
+  // Water and snow (react/waterLayer.tsx, react/snowLayer.tsx): their plans
+  // and looks, fixed per scene. The flood takes the drawn water's own look
+  // (sky, sun, the lights-out factor); the snowfall shares §5's particle
+  // budget with the scene's other particles and dims at night.
+  const waterSnow = useMemo(() => {
+    const kinds = reacting.map((r) => r.kind);
+    if (!reactSpec || !reactScene) return { water: null, snow: null };
+    const others = kinds
+      .flatMap((k) => (k === "lift" || k === "confetti" || k === "money" ? REACTION_PARTICLES[k] : []))
+      .reduce((n, k) => n + PARTICLE_KINDS[k].count, 0);
+    return {
+      water: kinds.includes("water")
+        ? {
+            plan: waterPlan(reactSpec, reactScene),
+            look: { sky: mixHex(sky.horizon, sky.zenith, 0.35), sunColor: sky.sunColor, sunDir: place.sun.dir, light: DARK_UNIFORMS.uDarkSkyGain },
+            ponds: world.ponds,
+          }
+        : null,
+      snow: kinds.includes("snow") ? { plan: snowPlan(reactSpec, reactScene), others, light: place.sun.elevation < 1 ? SNOWFALL_NIGHT : 1 } : null,
+    };
+  }, [reacting, reactSpec, reactScene, sky, place, world]);
+  // The ground's part in the crack reaction (react/crackGround.ts): the
+  // plaza's paving joints and the cracks on the shared ground material;
+  // while the ground breaks, the slabs' ground swapped for the soil pit
+  // beneath them (static per scene).
+  const crackGround = useCrackGround({
+    flat: world.flat,
+    open: world.open,
+    layout: world.layout,
+    style,
+    crack: cracking?.crack ?? null,
+    grid: cracking?.slabs ?? null,
+    epicentre: cracking ? [cracking.site.epicentre[0], cracking.site.epicentre[2]] : null,
+    t: reaction?.t ?? 0,
+    patchKey: world.mood ? "mood" : "",
+  });
+
+  // Whole buildings lifting (react/buildings.ts): only in a scene where one
+  // lets go; any other scene draws exactly as before (no patch, no mesh).
+  const lifted = reacting.find((r) => r.buildings?.episodes.some((e) => e.length > 0))?.buildings ?? null;
+  // Kit cities: each building's lift slot, and the ones that move stay near
+  // for the whole scene (the far cards can't move).
+  const liftKit = useMemo(
+    () => (lifted?.kind === "kit" ? { slotOf: kitLiftSlots(lifted, world.kitTown.buildings.length), near: liftNearIds(lifted) } : null),
+    [lifted, world.kitTown],
+  );
+  // Their undersides (a lifted building shows its bottom), and in box cities
+  // the merged walls, mansards and rooftop boxes moved by building in the
+  // vertex shader, shadows included (react/buildingsShader.ts).
+  const liftUnder = useMemo(() => {
+    if (!lifted) return null;
+    const depth = buildingLiftDepthMaterial();
+    let material: THREE.Material;
+    if (lifted.kind === "box") {
+      const ids = lifted.buildings.map((b) => b.id);
+      const walls = world.walls.geometry;
+      walls.setAttribute("aLiftId", liftIdAttribute(wallLiftIds(walls.getAttribute("aDark").array, ids)));
+      for (const m of [world.roofs, world.props]) m.geometry.setAttribute("aLiftId", liftIdAttribute(roofLiftIds(m.geometry.getAttribute("position").array, lifted.buildings)));
+      for (const m of [world.walls, world.roofs, world.props]) {
+        patchBuildingLift(m.material as THREE.Material);
+        (m.material as THREE.Material).needsUpdate = true;
+        m.customDepthMaterial = depth;
+      }
+      material = world.walls.material as THREE.Material;
+    } else {
+      material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+      reactionPatch(material);
+      patchBuildingLift(material);
+    }
+    const mesh = new THREE.Mesh(undersideGeometry(lifted.buildings, lifted.kind === "kit" ? KIT_UNDERSIDE_INSET : 0), material);
+    mesh.name = "building-undersides";
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    mesh.customDepthMaterial = depth;
+    return mesh;
+  }, [lifted, world, reactionPatch]);
+
+  // Kit core levels of detail: kit pieces near the camera (this frame's, or
+  // the whole scene's path), baked far cards beyond. A pure function of the
+  // pose, so every render tab draws a frame the same way.
+  const kitLodOn = Number.isFinite(kitLod) && kitLod >= 0;
+  const lodR = lodRadius(fov, size.height, kitLod);
+  const eye = lodPath ? null : pose.pos.join(",");
+  const liftNear = liftKit?.near;
+  const kitNear = useMemo(() => {
+    const mask = nearMask(world.kitTown.buildings, lodPath ?? [eye!.split(",").map(Number)], lodR);
+    return liftNear?.length ? forceNear(mask, liftNear) : mask;
+  }, [world, lodPath, eye, lodR, liftNear]);
+  // The lifting kit buildings' matrices this frame (a pure function of t and the lens).
+  const kitLift = liftKit && lifted && reaction ? { slotOf: liftKit.slotOf, matrices: kitLiftMatrices(lifted, reaction.t, pose.pos) } : undefined;
 
   const dome = useMemo(() => {
     if (fbmSky) {
@@ -426,14 +659,19 @@ export function GroundWorld({
         sunGlowIntensity: 1.0,
       });
     }
-    return skyDome(sky, place.sun.dir, moodLook(moodProp, place.place.id));
+    return skyDome(sky, place.sun.dir, moodLook(moodProp, place.place.id), sunGlowFor(place.sun.elevation), nightFor(place.sun.elevation));
   }, [fbmSky, sky, place, moodProp]);
 
   const lights = useMemo(() => {
-    // Night: a dim cool moon stands in for the sun, so the dark still reads.
-    const night = place.sun.elevation < 1;
-    const sun = new THREE.DirectionalLight(night ? "#8fa8cf" : sky.sunColor, night ? 0.85 : sky.sunIntensity);
-    sun.castShadow = place.sun.elevation > 0.5;
+    // The key: the day's sun from SUN_KEY_FROM up; below, the sun key fades
+    // out by the horizon and the full moon's (atmosphere/moon.ts) fades in
+    // from the other side, so the light changes sides at zero intensity.
+    const elevation = place.sun.elevation;
+    const key = keyFor(place.sun, sky);
+    const sun = new THREE.DirectionalLight(key.color, key.intensity);
+    const keyDir = new THREE.Vector3(...key.dir);
+    // The moon casts shadows too: whichever key is lit.
+    sun.castShadow = sun.intensity > 0;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.5;
@@ -441,14 +679,48 @@ export function GroundWorld({
     sun.shadow.camera.far = 6000;
     // No bounced light in the renderer, so the sky fill is strong enough to
     // stand in for it: streets in shade must stay readable.
-    const hemi = new THREE.HemisphereLight(sky.ambientSky, sky.ambientGround, night ? Math.max(sky.ambient * 2.4, 1.1) : sky.ambient * 2.4);
+    // (The night keys in sky.ts carry the moonlit night's cool fill.)
+    const hemi = new THREE.HemisphereLight(sky.ambientSky, sky.ambientGround, sky.ambient * 2.4);
     const disk = new THREE.Mesh(
       new THREE.SphereGeometry(700, 16, 12),
       new THREE.MeshBasicMaterial({ color: sky.sunColor, fog: false, toneMapped: false }),
     );
     disk.visible = place.sun.elevation > -1;
-    return { sun, hemi, disk };
+    // The night sky: the moon's disc as it rises, the stars as the sky darkens.
+    const moon = elevation < SUN_KEY_GONE ? moonFor(place.sun) : null;
+    const moonSprite = moon && moon.light > 0 ? moonDisc(moon) : null;
+    const starsOn = starsFor(elevation);
+    const stars = starsOn > 0 ? starsMesh(starField(place.place.id), starsOn) : null;
+    return { sun, hemi, disk, keyDir, moon: moonSprite, moonDir: moon ? new THREE.Vector3(...moon.disc) : null, stars };
   }, [sky, place]);
+
+  // Lights out (react/dark.ts): the counter's "dark" or a lights-out event.
+  // The sun or moon, sky light, sky and haze dim with the scene's power; the
+  // windows and lamps go out in a wave from the epicentre. Without one, the
+  // rig puts every lit value back each frame (one place is drawn at a time).
+  const darkAt = useMemo(() => {
+    if (!reactSpec || !reactScene || !hasDark(reactSpec)) return null;
+    const epi = reactionEpicentre(world.layout, style).pos;
+    const centre: [number, number] = [epi[0], epi[2]];
+    const lit: [number, number][] = [
+      ...world.layout.buildings.map((b): [number, number] => [b.x, b.z]),
+      ...world.kitTown.buildings.map((b): [number, number] => [b.x, b.z]),
+      ...lampSpots(style).map((s): [number, number] => [s.x, s.z]),
+    ];
+    if (place.sun.elevation < 1) {
+      // Each building's lit windows go out with it. Patched only in a scene
+      // that goes dark: the patched program rounds a last bit differently,
+      // so a lit scene keeps its walls' own program, byte for byte.
+      const walls = world.walls.material as THREE.Material;
+      patchDarkEmissive(walls);
+      walls.needsUpdate = true;
+    }
+    return darkPlan(reactSpec, reactScene, { centre, extent: darkExtent(lit, centre), sky });
+  }, [reactSpec, reactScene, world, style, sky, place]);
+  const darkLights = useMemo(
+    () => darkRig({ sun: lights.sun, hemi: lights.hemi, disk: lights.disk, clouds: world.clouds.mesh, moon: lights.moon, horizon: sky.horizon }),
+    [lights, world, sky],
+  );
 
   // Scene-wide background and fog for this place.
   useMemo(() => {
@@ -482,10 +754,26 @@ export function GroundWorld({
     cam.lookAt(...pose.target);
     cam.updateProjectionMatrix();
 
+    // In the main composition the stage before a world scene clears the fog
+    // and background in its unmount cleanup, which runs after this place made
+    // them (StreetStage's FogSetup sets scene.fog = null): put them back, or
+    // the first world frame crashed on fog.near.
+    if (!(scene.fog instanceof THREE.Fog)) scene.fog = new THREE.Fog(sky.horizon, 300, 7000);
+    if (!scene.background) scene.background = new THREE.Color(sky.horizon);
     const fog = scene.fog as THREE.Fog;
     const hazeK = 1 - style.haze * 0.45;
     fog.near = (500 + alt * 1.6) * hazeK;
     fog.far = (14000 + alt * 14) * hazeK;
+    // Lights out at the reaction's time (the lit values without one).
+    const dark = darkAt && reaction ? darkAt(reaction.t, fps || 30) : null;
+    darkLights(dark, scene);
+    // Lifting buildings' poses (every slot empty without them; one place at a time).
+    setLiftUniforms(lifted && reaction ? buildingUniforms(lifted, reaction.t, pose.pos) : null);
+    // Water and snow: their layers write the shared uniforms; without them, rest.
+    if (!waterSnow.water) setWaterUniforms(null);
+    if (!waterSnow.snow) setSnowUniforms(null);
+    // The coastal ocean drops with a drain (0.01: where it rests).
+    if (world.oceanWater) world.oceanWater.position.y = 0.01 - (waterSnow.water && reaction ? waterSnow.water.plan(reaction.t).drop : 0);
 
     dome.position.copy(cam.position);
     world.disc.position.set(cam.position.x, -0.3, cam.position.z);
@@ -505,19 +793,23 @@ export function GroundWorld({
     sc.top = half;
     sc.bottom = -half;
     sc.updateProjectionMatrix();
-    // The moon shines from a fixed high angle (the real sun is below the horizon).
-    const sunDir = place.sun.elevation < 1 ? new THREE.Vector3(0.35, 0.85, -0.4).normalize() : new THREE.Vector3(...place.sun.dir);
-    lights.sun.position.copy(focus).addScaledVector(sunDir, 2500);
+    // The key shines from the sun, or at night from the moon's side (moonFor).
+    lights.sun.position.copy(focus).addScaledVector(lights.keyDir, 2500);
     lights.sun.target.position.copy(focus);
     lights.sun.target.updateMatrixWorld();
-  lights.disk.position.copy(cam.position).addScaledVector(sunDir, 50_000);
+    lights.disk.position.copy(cam.position).addScaledVector(new THREE.Vector3(...place.sun.dir), 50_000);
+    // The moon's disc and the stars hang on the sky around the camera, as the dome.
+    if (lights.moon && lights.moonDir) lights.moon.position.copy(cam.position).addScaledVector(lights.moonDir, MOON_DIST);
+    lights.stars?.position.copy(cam.position);
 
     // The shaft fan hangs at the camera focus, and thins with altitude
     // (aerials see blades from above, where they would wash the ground).
     if (world.shafts) {
       world.shafts.group.position.copy(cam.position);
       world.shafts.setCamera(cam.position, cam.quaternion);
-      world.shafts.setStrength(shaftStrength(place.sun.elevation) * Math.max(0.2, Math.min(1, 1.25 - alt / 420)));
+      world.shafts.setStrength(shaftStrength(place.sun.elevation) * Math.max(0.2, Math.min(1, 1.25 - alt / 420)) * (dark?.key ?? 1));
+      // Lights out fades the sun's halo and rays with its disc (no black sun).
+      world.shafts.setFade(dark ? discFade(dark.key) : 1);
     }
   });
 
@@ -528,14 +820,18 @@ export function GroundWorld({
       <primitive object={lights.sun.target} />
       <primitive object={lights.hemi} />
       <primitive object={lights.disk} />
+      {lights.stars && <primitive object={lights.stars} />}
+      {lights.moon && <primitive object={lights.moon} />}
       <primitive object={world.disc} />
       <primitive object={world.land} />
-      <primitive object={world.flat} />
+      <primitive object={crackGround.flat} />
       <primitive object={world.streets} />
-      <primitive object={world.open} />
+      <primitive object={crackGround.open} />
+      {crackGround.pit && <primitive object={crackGround.pit} />}
       <primitive object={world.walls} />
       <primitive object={world.roofs} />
       <primitive object={world.props} />
+      {liftUnder && <primitive object={liftUnder} />}
       <primitive object={world.trees} />
       <primitive object={world.landmarks} />
       <primitive object={world.dressing} />
@@ -544,7 +840,36 @@ export function GroundWorld({
       {world.oceanWater && <primitive object={world.oceanWater} />}
       {world.shafts && <primitive object={world.shafts.group} />}
       {world.landmarkModels.length > 0 && <KitInstances placements={world.landmarkModels} />}
-      {world.kitModels.length > 0 && <KitInstances placements={world.kitModels} windowGlow={kitWindows && place.sun.elevation < 1} />}
+      {/* A lifting or breaking reaction draws the market itself (at rest exactly where these stood). */}
+      {world.marketModels.length > 0 && !liftMarket && !rideMarket && <KitInstances placements={world.marketModels} />}
+      {reaction &&
+        reacting.map((r) => (
+          <ReactionLayers
+            key={r.kind}
+            react={r.kind}
+            site={r.site}
+            placeId={place.place.id}
+            track={r.track}
+            bursts={r.bursts}
+            t={reaction.t}
+            eye={pose.pos}
+            liftMarket={(r.kind === "lift" && liftMarket) || (r.kind === "crack" && rideMarket)}
+            slabs={r.slabs}
+            breakAt={r.crack?.breakAt}
+            patch={reactionPatch}
+            patchKey={moodProp ?? ""}
+            water={r.kind === "water" ? waterSnow.water : null}
+            snow={r.kind === "snow" ? waterSnow.snow : null}
+          />
+        ))}
+      {world.kitTown.placements.length > 0 && (
+        <KitInstances
+          placements={world.kitTown.placements}
+          windowGlow={kitWindows && place.sun.elevation < 1}
+          lod={kitLodOn ? { buildings: world.kitTown.buildings, near: kitNear } : undefined}
+          lift={kitLodOn ? kitLift : undefined}
+        />
+      )}
       <Flags spots={world.flags} />
       {birds && place.sun.elevation > -2 && <BirdsLayer seed={place.place.id} />}
       {wantCrowd && <ActorsLayer scripts={shownScripts} anchors={world.anchors as CityAnchors} onWarnings={(w) => console.warn(`[world crowd] ${w.join("\n")}`)} />}

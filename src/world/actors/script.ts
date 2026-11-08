@@ -157,6 +157,10 @@ const GESTURE_SECONDS: Partial<Record<ActorAction, number>> = {
 };
 /** One-shot clips: they play once and the actor returns to its posture. */
 const ONCE_SECONDS = { react: 1.0, jump: 1.1, fall: 1.4 } as const;
+/** Getting up from the ground: the fall clip played backwards. */
+export const GETUP_SECONDS = 1.2;
+/** Standing up from a seat: the sit clip's sitting down played backwards. */
+export const STANDUP_SECONDS = 1.0;
 /** Posture changes fade longer than clip changes. */
 const POSTURE_FADE = 0.5;
 /** Look-at and gesture overlays fade in and out over this. */
@@ -176,8 +180,11 @@ interface SegBase {
   fade: number;
   yawFrom: number;
   yaw: number;
-  /** Seconds to turn from yawFrom to yaw (from the segment start). */
+  /** Seconds to turn from yawFrom to yaw (from turnStart). */
   turn: number;
+  /** When the turn started, if before this segment (a turn carried on from
+   *  the segment before, toward the same yaw); default `from`. */
+  turnStart?: number;
 }
 export interface HoldSeg extends SegBase {
   kind: "hold";
@@ -185,7 +192,9 @@ export interface HoldSeg extends SegBase {
   clip: ClipKey;
   /** Clamp at the clip's end instead of looping (fallen actor). */
   once?: boolean;
-  /** Seconds already played when the segment starts (a clamped pose). */
+  /** Clip time when the segment starts (a clamped pose, a sit that starts
+   *  sitting down, a hold carrying on the hold before it). Default: the
+   *  actor's phase for looping holds, 0 for clamped ones. */
   offset?: number;
   seat?: Seat;
 }
@@ -208,6 +217,11 @@ export interface MoveSeg extends SegBase {
   /** Cruise speed (m/s) and ramp time (s). */
   speed: number;
   ramp: number;
+  /** Seconds of turning on the spot before the first step: the whole start
+   *  turn, when there is one. */
+  lead?: number;
+  /** The clip the move walks off from (the posture before it). */
+  after?: ClipKey;
 }
 export interface ClipSeg extends SegBase {
   kind: "clip";
@@ -215,6 +229,11 @@ export interface ClipSeg extends SegBase {
   clip: ClipKey;
   /** Loop the clip for the whole segment, or play it once. */
   loop: boolean;
+  /** Play backwards (getting up: the fall reversed; standing up: the sit
+   *  clip's sitting down reversed). */
+  reverse?: boolean;
+  /** Standing up from a seat: the seat the hips leave. */
+  seat?: Seat;
 }
 export type Segment = HoldSeg | MoveSeg | ClipSeg;
 
@@ -262,8 +281,26 @@ export function hash01(s: string): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** Turning time for an angle: half a second for an about-turn. */
-const turnSeconds = (from: number, to: number) => Math.min(0.55, Math.max(0.15, (Math.abs(angleDelta(from, to)) / Math.PI) * 0.55));
+/** Turning time for an angle: 0.8 s for an about-turn (peak ~6 rad/s; at
+ *  0.55 s it read as a snap). */
+const turnSeconds = (from: number, to: number) => Math.min(0.8, Math.max(0.2, (Math.abs(angleDelta(from, to)) / Math.PI) * 0.8));
+/** Steps a turn on the spot takes (see turnSteps in rig.ts): one per foot
+ *  up to ~1 rad; for bigger turns, steps of at most 0.7 rad and at least
+ *  three (with two, the second foot waits while the body turns half the way). */
+export const turnStepCount = (turn: number) => (Math.abs(turn) <= 1 ? 2 : Math.max(3, Math.ceil(Math.abs(turn) / 0.7)));
+/** A move that starts by turning more than this turns on the spot first. */
+const LEAD_TURN = 0.15;
+/** Shortest step of a turn on the spot before walking off, seconds. */
+const LEAD_STEP = 0.16;
+/** Turning on the spot before the first step, for a move that starts by
+ *  turning: the whole turn, the feet stepping round, at least LEAD_STEP a
+ *  step. Without it the actor slides sideways or backwards while still
+ *  facing the old way; with only part of the turn done first, the rest
+ *  swung the planted foot round under the body as it walked off (~1 m/s). */
+const leadSeconds = (from: number, to: number) => {
+  const d = Math.abs(angleDelta(from, to));
+  return d <= LEAD_TURN ? 0 : Math.max(turnSeconds(from, to), turnStepCount(d) * LEAD_STEP);
+};
 
 /**
  * Plan one actor. Unknown anchors throw ActorScriptError with a message that
@@ -299,6 +336,7 @@ export function planActor(
   const warnings: string[] = [];
   const segments: Segment[] = [];
   const overlays: Overlay[] = [];
+  const phase = hash01(script.id) * 7.3;
   const startSpot = place(script.start, "start");
   let pos: V3 = [...startSpot.pos];
   let yaw = 0;
@@ -308,7 +346,7 @@ export function planActor(
     if (a.kind === "point") yaw = headingOf(a.p[0] - pos[0], a.p[2] - pos[2]);
     else warnings.push(`${script.id}: facing another actor at the start is not supported; facing +z`);
   } else if (startSpot.facing !== undefined) yaw = startSpot.facing;
-  let posture: Posture = "stand";
+  let posture = "stand" as Posture;
   /** The seat while sitting on a seat anchor. */
   let seat: Seat | undefined;
   /** When the actor is free for the next step. */
@@ -319,20 +357,39 @@ export function planActor(
     // A hold that never got any time (the next step starts the moment it
     // begins) is dropped; its turn carries over into the new segment.
     let prev = segments[segments.length - 1];
-    while (prev && prev.kind === "hold" && prev.from >= seg.from && segments.length > 1) {
+    while (prev && prev.kind === "hold" && prev.from >= seg.from - 1e-9 && segments.length > 1) {
       segments.pop();
       prev = segments[segments.length - 1];
     }
     if (prev) {
       prev.to = seg.from;
-      // Turn from where the actor really faces when this segment starts.
-      const actual = evalSegment(prev, seg.from, 0).yaw;
-      seg.yawFrom = actual;
-      seg.turn = turnSeconds(actual, seg.yaw);
+      const prevTurnStart = prev.turnStart ?? prev.from;
+      if (seg.kind !== "move" && prev.kind !== "move" && seg.from < prevTurnStart + prev.turn && Math.abs(angleDelta(prev.yaw, seg.yaw)) < 1e-6) {
+        // Still turning toward the same way: the turn carries on (a new
+        // smoothstep from here would stall it mid-turn).
+        seg.yawFrom = prev.yawFrom;
+        seg.turn = prev.turn;
+        seg.turnStart = prevTurnStart;
+      } else {
+        // Turn from where the actor really faces when this segment starts.
+        const actual = evalSegment(prev, seg.from, phase).yaw;
+        seg.yawFrom = actual;
+        seg.turn = turnSeconds(actual, seg.yaw);
+        if (seg.kind === "move") {
+          seg.lead = leadSeconds(actual, seg.yaw);
+          seg.turn = Math.max(seg.turn, seg.lead);
+        }
+      }
+      if (seg.kind === "move" && prev.kind !== "move") seg.after = prev.clip;
+      // A hold of the clip the hold before was playing carries on its time
+      // (no restart, no cross-fade between two moments of one clip).
+      if (seg.kind === "hold" && prev.kind === "hold" && prev.clip === seg.clip && seg.offset === undefined) {
+        seg.offset = (prev.offset ?? (prev.once ? 0 : phase)) + (seg.from - prev.from);
+      }
     }
     segments.push(seg);
   };
-  const hold = (from: number, opt: { fade?: number; yawTo?: number } = {}) => {
+  const hold = (from: number, opt: { fade?: number; yawTo?: number; offset?: number } = {}) => {
     const to = opt.yawTo ?? yaw;
     push({
       kind: "hold",
@@ -345,6 +402,7 @@ export function planActor(
       pos: [...pos],
       clip: holdClip(),
       ...(posture === "down" ? { once: true, offset: ONCE_SECONDS.fall } : {}),
+      ...(opt.offset !== undefined ? { offset: opt.offset } : {}),
       ...(posture === "sit" && seat !== undefined ? { seat } : {}),
     });
     yaw = to;
@@ -372,6 +430,25 @@ export function planActor(
     }
     const speed = SPEED[gait] * Math.sqrt(height / 1.75);
     const ramp = RAMP[gait];
+    // Walking on from a walk that just arrived (the next step was waiting
+    // for it): one move through the old destination, no stop and restart.
+    const arrival = segments[segments.length - 1];
+    const before = segments[segments.length - 2];
+    if (arrival?.kind === "hold" && arrival.from >= start - 1e-9 && before?.kind === "move" && before.speed === speed && Math.abs(before.from + (before.lead ?? 0) + moveDuration(before) - start) < 1e-6) {
+      segments.pop();
+      const joined: V3[] = [...before.path, ...path.slice(1)];
+      before.path = joined;
+      before.lengths = [0];
+      for (let i = 1; i < joined.length; i++) before.lengths.push(before.lengths[i - 1] + Math.hypot(joined[i][0] - joined[i - 1][0], joined[i][2] - joined[i - 1][2]));
+      before.dist = before.lengths[before.lengths.length - 1];
+      before.to = Infinity;
+      const end = before.from + (before.lead ?? 0) + moveDuration(before);
+      const last = joined.length - 1;
+      yaw = headingOf(joined[last][0] - joined[last - 1][0], joined[last][2] - joined[last - 1][2]);
+      pos = [...dest.pos];
+      hold(end, { yawTo: dest.facing ?? yaw });
+      return end;
+    }
     const seg: MoveSeg = {
       kind: "move",
       gait: gait === "walk" ? "walk" : "run",
@@ -388,7 +465,7 @@ export function planActor(
       ramp,
     };
     push(seg);
-    const end = start + moveDuration(seg);
+    const end = start + (seg.lead ?? 0) + moveDuration(seg);
     const last = path.length - 1;
     yaw = headingOf(path[last][0] - path[last - 1][0], path[last][2] - path[last - 1][2]);
     pos = [...dest.pos];
@@ -424,13 +501,31 @@ export function planActor(
 
     // Getting up first, unless the action works from this posture.
     const seatedOk = a === "idle" || a === "sit" || a === "wave" || a === "point" || a === "clap" || a === "cheer";
-    if (posture === "sit" && !seatedOk) posture = "stand";
-    if (posture === "down" && a !== "fall") posture = "stand";
+    let begin = start;
+    if (posture === "sit" && !seatedOk) {
+      // Up off the seat first: the sit clip's sitting down backwards (a plain
+      // cross-fade slid the hips off the seat in half a second).
+      posture = "stand";
+      push({ kind: "clip", from: begin, to: Infinity, fade: FADE, yawFrom: yaw, yaw, turn: 0, pos: [...pos], clip: "sit", loop: false, reverse: true, ...(seat !== undefined ? { seat } : {}) });
+      begin += STANDUP_SECONDS;
+      free = begin;
+    }
     if (posture !== "sit") seat = undefined;
+    if (posture === "down" && a !== "fall") {
+      // Up off the ground first: the fall clip backwards (a plain cross-fade
+      // swung the stiff body up around its feet, through the ground).
+      posture = "stand";
+      push({ kind: "clip", from: begin, to: Infinity, fade: 0.15, yawFrom: yaw, yaw, turn: 0, pos: [...pos], clip: "fall", loop: false, reverse: true });
+      begin += GETUP_SECONDS;
+      free = begin;
+    }
     const wasPosture = segments[segments.length - 1];
     const postureChanged = wasPosture.kind === "hold" && wasPosture.clip !== holdClip() && wasPosture.clip !== "idle";
     const fade = postureChanged ? POSTURE_FADE : FADE;
+    act(a, step, begin, fade);
+  }
 
+  function act(a: ActorAction, step: ActorStep, start: number, fade: number) {
     switch (a) {
       case "idle": {
         const target = step.target === undefined ? undefined : aim(step.target, "target");
@@ -474,7 +569,11 @@ export function planActor(
           } else t0 = travel(start, step.to, step.via, "walk");
         }
         posture = "sit";
-        hold(t0 + (t0 > start ? 0.35 : 0), { fade: POSTURE_FADE });
+        // Sits once mostly turned to the seat's way (the arrival hold turns),
+        // the sit clip from its start: many sit clips sit down first.
+        const arrived = segments[segments.length - 1];
+        const wait = t0 > start ? Math.max(0.35, (arrived.turnStart ?? arrived.from) + arrived.turn * 0.7 - t0) : 0;
+        hold(t0 + wait, { fade: POSTURE_FADE, offset: 0 });
         free = t0 + POSTURE_FADE;
         break;
       }
@@ -520,7 +619,7 @@ export function planActor(
 
   const clips = new Set<ClipKey>();
   for (const s of segments) clips.add(s.kind === "move" ? s.gait : s.clip);
-  return { id: script.id, height, phase: hash01(script.id) * 7.3, segments, overlays, clips: [...clips], warnings };
+  return { id: script.id, height, phase, segments, overlays, clips: [...clips], warnings };
 }
 
 /** Seconds a move takes: accelerate, cruise, decelerate (a triangle when short). */
@@ -563,13 +662,90 @@ function pointAt(path: V3[], lengths: number[], s: number): V3 {
   return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
 }
 
-/** Heading along a path at s, smoothed around corners. */
+/** Corner rounding: the actor follows the path averaged over this many
+ *  metres either side, so its position and its facing round a corner
+ *  together (facing a smoothed heading while moving along the sharp corner
+ *  crabbed sideways by up to half the corner's angle). */
+const CORNER = 0.6;
+
+/** Mean of the path's points over arc lengths [a, b] (exact: the path is
+ *  straight between its points). */
+function meanOver(path: V3[], lengths: number[], a: number, b: number): V3 {
+  if (b - a < 1e-9) return pointAt(path, lengths, a);
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  let x0 = a;
+  let p0 = pointAt(path, lengths, a);
+  const knots = lengths.filter((l) => l > a && l < b);
+  knots.push(b);
+  for (const x1 of knots) {
+    const p1 = pointAt(path, lengths, x1);
+    const w = (x1 - x0) / 2;
+    sx += (p0[0] + p1[0]) * w;
+    sy += (p0[1] + p1[1]) * w;
+    sz += (p0[2] + p1[2]) * w;
+    x0 = x1;
+    p0 = p1;
+  }
+  const n = b - a;
+  return [sx / n, sy / n, sz / n];
+}
+
+/** Rounding half-width per inner path point: CORNER, or less where a leg is
+ *  short, so a corner's averaging window never reaches another corner or an
+ *  end of the path. */
+function cornerWidths(lengths: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 1; i < lengths.length - 1; i++) out.push(Math.min(CORNER, (lengths[i] - lengths[i - 1]) / 2, (lengths[i + 1] - lengths[i]) / 2));
+  return out;
+}
+
+/** Where the actor is `s` metres along a path, corners rounded: within a
+ *  corner's reach, the path averaged over a window of fixed width around s
+ *  (smooth, and tangent to the straight legs where it joins them). Exactly
+ *  the path everywhere else. */
+function roundedAt(path: V3[], lengths: number[], s: number): V3 {
+  const widths = cornerWidths(lengths);
+  for (let i = 0; i < widths.length; i++) {
+    const w = widths[i];
+    const c = lengths[i + 1];
+    if (w > 1e-6 && s > c - w && s < c + w) return meanOver(path, lengths, s - w, s + w);
+  }
+  return pointAt(path, lengths, s);
+}
+
+/** Heading of the rounded path at s (its tangent). */
 function headingAt(path: V3[], lengths: number[], s: number): number {
-  const w = 0.6;
   const total = lengths[lengths.length - 1];
-  const a = pointAt(path, lengths, Math.max(0, Math.min(total - 0.02, s - w)));
-  const b = pointAt(path, lengths, Math.min(total, Math.max(0.02, s + w)));
+  const e = Math.min(0.01, total / 4);
+  const a = roundedAt(path, lengths, Math.max(0, Math.min(total - 2 * e, s - e)));
+  const b = roundedAt(path, lengths, Math.min(total, Math.max(2 * e, s + e)));
   return headingOf(b[0] - a[0], b[2] - a[2]);
+}
+
+/** Metres really walked by arc length s: the rounded corners are a little
+ *  shorter than the path, and the feet must match what the body covers. */
+function walkedAt(path: V3[], lengths: number[], s: number): number {
+  // Corner stretches (they never overlap); exact elsewhere.
+  const widths = cornerWidths(lengths);
+  let out = s;
+  for (let i = 0; i < widths.length; i++) {
+    const a = lengths[i + 1] - widths[i];
+    const b0 = lengths[i + 1] + widths[i];
+    const b = Math.min(b0, s);
+    if (b <= a) continue;
+    const N = 16;
+    let len = 0;
+    let prev = roundedAt(path, lengths, a);
+    for (let k = 1; k <= N; k++) {
+      const q = roundedAt(path, lengths, a + ((b - a) * k) / N);
+      len += Math.hypot(q[0] - prev[0], q[2] - prev[2]);
+      prev = q;
+    }
+    out += len - (b - a);
+  }
+  return out;
 }
 
 /** One clip playing at a moment. */
@@ -582,6 +758,15 @@ export interface ClipLayer {
   once: boolean;
   /** For walk and run: metres covered; the renderer turns it into clip time. */
   distance?: number;
+  /** For walk and run: metres the whole move covers (the renderer fits the
+   *  stride so the feet stop in a standing pose). */
+  total?: number;
+  /** For walk and run: the clip the move walks off from (its first frame's
+   *  stance is where the feet stood: the renderer keeps them there until the
+   *  gait lifts them). */
+  after?: ClipKey;
+  /** Play the clip backwards from its end (getting up). */
+  reverse?: boolean;
   /** For sit on a seat: the renderer lands the hips on it. */
   seat?: Seat;
 }
@@ -589,13 +774,22 @@ export interface ClipLayer {
 export interface ActorPose {
   pos: V3;
   yaw: number;
-  /** One or two layers (two while cross-fading), weights summing to 1. */
+  /** Clip layers, oldest first, the current segment's last; weights sum to
+   *  1 (more than one while cross-fading). */
   layers: ClipLayer[];
   /** Overlays active now, with their fade weight. */
   overlays: { kind: Overlay["kind"]; weight: number; aim?: Aim; time: number }[];
   /** Moving speed, m/s (for the camera's lead room). */
   speed: number;
+  /** Turning on the spot (not walking): the turn's start and end yaw and how
+   *  far through it the actor is (0..1); the renderer steps the feet round
+   *  instead of pivoting them under the body. */
+  pivot?: { from: number; to: number; u: number };
 }
+
+/** A hold's or clip's turns smaller than this pivot on the feet; bigger ones
+ *  step (a move steps any start turn it has, see leadSeconds). */
+export const STEP_TURN = 0.35;
 
 function segmentAt(plan: ActorPlan, t: number): number {
   let i = 0;
@@ -605,34 +799,48 @@ function segmentAt(plan: ActorPlan, t: number): number {
 
 function evalSegment(seg: Segment, t: number, phase: number): { pos: V3; yaw: number; layer: Omit<ClipLayer, "weight">; speed: number } {
   const tau = t - seg.from;
-  const turnU = seg.turn > 0 ? smooth(tau / seg.turn) : 1;
+  const turnU = seg.turn > 0 ? smooth((t - (seg.turnStart ?? seg.from)) / seg.turn) : 1;
   if (seg.kind === "move") {
-    const s = moveDistance(seg, tau);
-    const ds = moveDistance(seg, tau + 0.02) - moveDistance(seg, tau - 0.02);
+    // Turning on the spot first (lead), then accelerate, cruise, slow down.
+    const m = tau - (seg.lead ?? 0);
+    const s = moveDistance(seg, m);
+    const ds = moveDistance(seg, m + 0.02) - moveDistance(seg, m - 0.02);
     const heading = headingAt(seg.path, seg.lengths, s);
     // The first turn blends from where the actor faced into the path's heading.
     const yaw = turnU < 1 ? lerpAngle(seg.yawFrom, heading, turnU) : heading;
-    return { pos: pointAt(seg.path, seg.lengths, s), yaw, layer: { clip: seg.gait, time: tau, once: false, distance: s }, speed: ds / 0.04 };
+    const distance = walkedAt(seg.path, seg.lengths, s);
+    const total = walkedAt(seg.path, seg.lengths, seg.dist);
+    return { pos: roundedAt(seg.path, seg.lengths, s), yaw, layer: { clip: seg.gait, time: tau, once: false, distance, total, ...(seg.after ? { after: seg.after } : {}) }, speed: ds / 0.04 };
   }
   const yaw = lerpAngle(seg.yawFrom, seg.yaw, turnU);
   if (seg.kind === "hold") {
-    const time = seg.once ? (seg.offset ?? 0) + tau : tau + phase;
+    const time = tau + (seg.offset ?? (seg.once ? 0 : phase));
     return { pos: seg.pos, yaw, layer: { clip: seg.clip, time, once: !!seg.once, ...(seg.seat !== undefined ? { seat: seg.seat } : {}) }, speed: 0 };
   }
-  return { pos: seg.pos, yaw, layer: { clip: seg.clip, time: tau, once: !seg.loop }, speed: 0 };
+  return { pos: seg.pos, yaw, layer: { clip: seg.clip, time: tau, once: !seg.loop, ...(seg.reverse ? { reverse: true } : {}), ...(seg.seat !== undefined ? { seat: seg.seat } : {}) }, speed: 0 };
 }
 
 /** The actor at time t (seconds). Pure. */
 export function poseAt(plan: ActorPlan, t: number): ActorPose {
   const i = segmentAt(plan, t);
-  const cur = plan.segments[i];
-  const now = evalSegment(cur, t, plan.phase);
-  const layers: ClipLayer[] = [{ ...now.layer, weight: 1 }];
-  const w = cur.fade > 0 ? smooth((t - cur.from) / cur.fade) : 1;
-  if (w < 1 && i > 0) {
-    const prev = evalSegment(plan.segments[i - 1], t, plan.phase);
-    layers[0].weight = w;
-    layers.unshift({ ...prev.layer, weight: 1 - w });
+  const now = evalSegment(plan.segments[i], t, plan.phase);
+  // The current segment fades in over the one before; if that one was itself
+  // still fading in (a short segment), its share goes on down the chain, so
+  // no layer drops out mid-fade (that popped).
+  // A move fades in as its first step begins: while it turns on the spot
+  // (its lead) the posture before it goes on (the walk's first frame can
+  // have a foot up, and fading into it dragged the planted foot).
+  const layers: ClipLayer[] = [];
+  let left = 1;
+  for (let k = i; k >= 0 && left > 1e-9; k--) {
+    const seg = plan.segments[k];
+    const from = seg.kind === "move" ? seg.from + (seg.lead ?? 0) : seg.from;
+    const w = k > 0 && seg.fade > 0 ? smooth((t - from) / seg.fade) : 1;
+    const last = w >= 1 || k === 0 || layers.length >= 3;
+    const weight = last ? left : left * w;
+    layers.unshift({ ...(k === i ? now : evalSegment(seg, t, plan.phase)).layer, weight });
+    left -= weight;
+    if (last) break;
   }
   const overlays: ActorPose["overlays"] = [];
   for (const o of plan.overlays) {
@@ -642,7 +850,17 @@ export function poseAt(plan: ActorPlan, t: number): ActorPose {
     const weight = Math.min(fadeIn, fadeOut);
     if (weight > 0) overlays.push({ kind: o.kind, weight, aim: o.aim, time: t - o.from });
   }
-  return { pos: now.pos, yaw: now.yaw, layers, overlays, speed: now.speed };
+  const cur = plan.segments[i];
+  let pivot: ActorPose["pivot"];
+  // A move steps round through its whole lead (its start turn ends as the
+  // first step begins, the feet back under the body: nothing to hand over);
+  // a hold or a clip steps its big turns.
+  const stepped = cur.kind === "move" ? (cur.lead ?? 0) > 0 : Math.abs(angleDelta(cur.yawFrom, cur.yaw)) > STEP_TURN;
+  if (cur.turn > 0 && stepped) {
+    const u = (t - (cur.turnStart ?? cur.from)) / cur.turn;
+    if (u > 0 && u < 1) pivot = { from: cur.yawFrom, to: cur.yaw, u };
+  }
+  return { pos: now.pos, yaw: now.yaw, layers, overlays, speed: now.speed, ...(pivot ? { pivot } : {}) };
 }
 
 /** Where an aim points at time t: a fixed point, or another actor's head. */
@@ -668,7 +886,7 @@ export function actorSubject(plan: ActorPlan, t: number): { center: V3; radius: 
 export function planEnd(plan: ActorPlan): number {
   let end = 0;
   for (const s of plan.segments) {
-    if (s.kind === "move") end = Math.max(end, s.from + moveDuration(s));
+    if (s.kind === "move") end = Math.max(end, s.from + (s.lead ?? 0) + moveDuration(s));
     else end = Math.max(end, s.from);
   }
   for (const o of plan.overlays) if (Number.isFinite(o.to)) end = Math.max(end, o.to);

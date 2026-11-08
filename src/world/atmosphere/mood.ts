@@ -11,6 +11,11 @@
  * Pure and deterministic: `moodLook(mood, placeId)` is seeded by the mood
  * family and the place id (makeRng), so the same story mood over the same
  * place always grades identically - on any machine, in any tab order.
+ *
+ * The grade runs AFTER the fog (three's linear fog and the height fog,
+ * fog.ts), so the haze is graded like the sky dome it fades into: graded
+ * before the fog, a far ground fogged to the raw horizon colour stood as a
+ * flat band under the graded sky (Cairo at night, Phase 6 QA).
  */
 import * as THREE from "three";
 import { makeRng } from "../rng";
@@ -78,14 +83,18 @@ uniform float uMoodContrast;
 uniform float uMoodLift;
 `;
 
+// The contrast pivots on 0.5, which in linear light would crush every
+// value under ~0.03 to black; the toe keeps at least 60 % of the palette
+// colour, so a night (sky, haze, moonlit walls) stays dark blue, not black.
+// Above ~0.07 the grade is unchanged.
 const GRADE = /* glsl */ `
-#include <colorspace_fragment>
 {
   float mLum = dot( gl_FragColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
-  vec3 mCol = mix( vec3( mLum ), gl_FragColor.rgb, uMoodSat );
+  vec3 mCol = max( mix( vec3( mLum ), gl_FragColor.rgb, uMoodSat ), vec3( 0.0 ) );
   mCol *= uMoodTint;
+  vec3 mToe = mCol * 0.6;
   mCol = ( mCol - 0.5 ) * uMoodContrast + 0.5 + uMoodLift;
-  gl_FragColor.rgb = max( mCol, vec3( 0.0 ) );
+  gl_FragColor.rgb = max( mCol, mToe );
 }
 `;
 
@@ -100,6 +109,13 @@ export function applyMoodPalette(mat: THREE.Material, look: MoodLook | null): vo
     shader.uniforms.uMoodTint = { value: new THREE.Vector3(...look.tint) };
     shader.uniforms.uMoodContrast = { value: look.contrast };
     shader.uniforms.uMoodLift = { value: look.lift };
-    shader.fragmentShader = MOOD + shader.fragmentShader.replace("#include <colorspace_fragment>", GRADE);
+    // After the fog (premultiplied alpha follows fog_fragment in every
+    // built-in material); a shader without that hook grades after the
+    // colourspace step as before.
+    const AFTER_FOG = "#include <premultiplied_alpha_fragment>";
+    const fs = shader.fragmentShader;
+    shader.fragmentShader = MOOD + (fs.includes(AFTER_FOG)
+      ? fs.replace(AFTER_FOG, `${GRADE}\n${AFTER_FOG}`)
+      : fs.replace("#include <colorspace_fragment>", `#include <colorspace_fragment>\n${GRADE}`));
   });
 }

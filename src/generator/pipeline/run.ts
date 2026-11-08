@@ -136,7 +136,7 @@ export async function runPlan(input: {
   const { id, premise, settings, audio } = input;
   const models = resolveRoleModels(["writer", "director", "sound", "critic"], input.cli);
   if (!process.env.FACTORY_LLM_FIXTURES && !models.writer.model) {
-    throw new Error("No model chosen for the Writer. Choose one in Providers → Model roles (or pass --model).");
+    throw new Error("No model chosen for the Writer. Choose one in Settings → AI models → Model roles (or pass --model).");
   }
   const warnings: string[] = [];
   const voice = { narration: !!audio.narration?.enabled, characters: !!audio.dialogs?.enabled };
@@ -232,6 +232,34 @@ export function mergeAudio(plan: AudioConfig, override?: AudioConfig): AudioConf
   return { ...override, dialogs: { ...override.dialogs, voices: recast } };
 }
 
+/** Settings that shape the timeline (length, size, scene tiling): only a new plan changes them. */
+const TIMELINE_SETTINGS = ["format", "targetDuration", "sceneCount"] as const;
+
+/**
+ * The settings a rebuild uses. The approved spec's look-only choices
+ * (quality, caption style, critic flag) win over the plan's, so an edit to
+ * output/<id>/spec.json reaches the render; format, target length and scene
+ * count stay as planned (the timeline was built for them), with a warning
+ * when the approved spec asks for something else.
+ */
+export function approvedSettings(plan: VideoSettings, approved?: Partial<VideoSettings>): { settings: VideoSettings; warnings: string[] } {
+  if (!approved) return { settings: plan, warnings: [] };
+  // The approved spec is the whole of the user's choice: a caption style or
+  // critic flag it leaves out is unset, not inherited from the plan.
+  const settings: VideoSettings = { ...plan, quality: approved.quality ?? plan.quality };
+  delete settings.captions;
+  delete settings.critic;
+  if (approved.captions !== undefined) settings.captions = approved.captions;
+  if (approved.critic !== undefined) settings.critic = approved.critic;
+  const warnings: string[] = [];
+  for (const k of TIMELINE_SETTINGS) {
+    if (approved[k] !== undefined && approved[k] !== plan[k]) {
+      warnings.push(`the approved spec's ${k} (${approved[k]}) differs from the plan's (${plan[k] ?? "unset"}); the plan's is kept, since changing it needs a new plan`);
+    }
+  }
+  return { settings, warnings };
+}
+
 /** True when this spec was planned by the pipeline and its stage files are present. */
 export function canReassemble(id: string): boolean {
   return ["story", "direction", "sound", "plan"].every((n) => existsSync(join(OUTPUT, id, `${n}.json`)));
@@ -244,7 +272,9 @@ export function canReassemble(id: string): boolean {
  * `approved` is an edited spec (the editor's saved film): its story texts are
  * adopted (a changed line is re-voiced — the voice cache reuses the rest) and
  * its caption texts are kept wherever the window still matches (keep-timing:
- * the voice is untouched, the words re-timed inside the same window).
+ * the voice is untouched, the words re-timed inside the same window). Its
+ * look-only settings (quality, captions, critic) override the plan's; see
+ * approvedSettings.
  */
 export async function reassemble(
   id: string,
@@ -259,17 +289,22 @@ export async function reassemble(
   if (!story || !direction || !sound || !plan) throw new Error(`output/${id}/ is missing stage files; write the plan again`);
   const audio = mergeAudio(plan.audio, audioOverride);
   const linesChanged = adoptEdits(story, approved);
+  const chosen = approvedSettings(plan.settings, approved?.settings);
+  const settings = chosen.settings;
   stage("voice");
-  const timed = await timeStory(story, plan.settings, audio, id, mode, true);
-  if (timed.timeline.overflow) throw new Error(`the measured voice needs ${timed.timeline.duration.toFixed(0)}s, more than ${plan.settings.format} allows`);
+  const timed = await timeStory(story, settings, audio, id, mode, true);
+  if (timed.timeline.overflow) throw new Error(`the measured voice needs ${timed.timeline.duration.toFixed(0)}s, more than ${settings.format} allows`);
   save(id, "voice", timed.lines);
   save(id, "timeline", timed.timeline);
   stage("assemble");
-  const done = finish(id, plan.premise, plan.settings, story, timed.timeline, direction, sound, audio);
+  const done = finish(id, plan.premise, settings, story, timed.timeline, direction, sound, audio);
   keepCaptionTexts(done.spec, approved);
   save(id, "story", story);
+  // The approved look settings become the plan's, so a later rebuild (the
+  // editor's, the server's) keeps them too.
+  if (JSON.stringify(settings) !== JSON.stringify(plan.settings)) save(id, "plan", { ...plan, settings });
   validateSpec(done.spec);
-  const warned = [...timed.warnings, ...done.warnings];
+  const warned = [...chosen.warnings, ...timed.warnings, ...done.warnings];
   if (linesChanged) warned.push(`${linesChanged} story line(s) updated from the approved edits, so they were re-voiced`);
   return { spec: done.spec, warnings: warned };
 }

@@ -83,8 +83,8 @@ const visible = (videos ?? [])
     .filter((v) => (filter === "all" ? true : filter === "story" ? v.engine === "story" : v.engine !== "story"))
     .filter((v) => !queryText || (v.premise ?? "").toLowerCase().includes(queryText.toLowerCase()))
     .sort((a, b) => {
-      const ta = a.generatedAt ?? 0;
-      const tb = b.generatedAt ?? 0;
+      const ta = Number(a.generatedAt ?? 0);
+      const tb = Number(b.generatedAt ?? 0);
       return sortDesc ? tb - ta : ta - tb;
     });
 

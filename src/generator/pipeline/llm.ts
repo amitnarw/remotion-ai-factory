@@ -272,6 +272,6 @@ export async function callRole<T>(opts: CallOptions<T>): Promise<CallResult<T>> 
 
   throw new Error(
     `${opts.label}: no usable reply after ${max} attempts from ${rm.provider}/${rm.model}. Last problem: ${lastProblem}. ` +
-      `Try a stronger model for the ${opts.role} role in Providers → Model roles.`,
+      `Try a stronger model for the ${opts.role} role in Settings → AI models → Model roles.`,
   );
 }

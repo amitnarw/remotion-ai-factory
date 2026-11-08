@@ -1,12 +1,13 @@
 import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
+import { spawn, spawnSync } from "child_process";
 import { join, basename } from "path";
 import fs from "fs";
 import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
 const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
-import { createJob, getJob, getAllJobs, premiseSlug, runJob, cancelJob, subscribeSSE, removeJobFile } from "./jobs";
+import { createJob, getJob, getAllJobs, premiseSlug, runJob, deleteJob, subscribeSSE } from "./jobs";
 import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
@@ -14,10 +15,13 @@ import { ROLE_DEFS, ROLE_NAMES, pickRoleModel } from "../src/generator/ai/roles"
 import { resolveRoleModels } from "../src/generator/pipeline/llm";
 import { canReassemble, reassemble } from "../src/generator/pipeline/run";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
-import { KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription } from "../src/generator/voices";
+import { AUDITION_TEXT, KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription, voxTransform, voxReferenceId, voiceLabel, voiceMeta } from "../src/generator/voices";
 import { resolveTtsPython } from "../src/generator/tts-python";
-import { cacheKey, synthesizeLines } from "../src/generator/tts";
-import { registerFilmRoutes } from "./film";
+import { cacheKey, synthesizeLines, voicePreviewKey, voicePreviewLine } from "../src/generator/tts";
+import { queueFilmChange, registerFilmRoutes } from "./film";
+import { checkRecast } from "../src/generator/film/recast";
+import { captionOverrides } from "../src/generator/film/store";
+import { applyCaptionOverrides } from "../src/generator/film/diff";
 
 const app = express();
 app.use(cors());
@@ -52,7 +56,7 @@ app.put("/api/roles", (req, res) => {
     if (!provider || !cfg.providers[provider]) {
       return res.status(400).json({
         error: `provider "${provider}" is not configured`,
-        fix: "Add it in the Providers tab first",
+        fix: "Add it in Settings → AI models first",
       });
     }
     const model = (value.model ?? "").trim();
@@ -177,7 +181,7 @@ app.post("/api/providers/:name/test", async (req, res) => {
       ok: false,
       model: chosenModel,
       error: `API key not set (${pc.apiKeyEnv})`,
-      fix: `Save your key in the Providers tab — create one at ${keyUrlFor(name)}`,
+      fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(name)}`,
     });
   }
 
@@ -205,7 +209,7 @@ app.post("/api/providers/:name/test", async (req, res) => {
           ...base,
           ok: false,
           error: resolution.error ?? "could not resolve model reference",
-          fix: "Pick another model on the Generate tab, or check the provider's baseUrl/package in ai.config.json",
+          fix: "Pick another model in Settings → AI models, or check the provider's baseUrl/package in ai.config.json",
         });
       }
       const { generateText } = await import("ai");
@@ -248,7 +252,7 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
   const apiKey = pc.apiKeyEnv ? env[pc.apiKeyEnv] ?? "" : "";
   fetchProviderModels(name, pc, apiKey)
     .then((result) => {
-      // Persist the live list so the Generate tab + CLI use real models.
+      // Persist the live list so the dashboard + CLI use real models.
       pc.models = result.models;
       saveConfig(cfg);
       res.json(result);
@@ -323,7 +327,7 @@ app.post("/api/plan", async (req, res) => {
       const known = Object.keys(config.providers ?? {}).join(", ") || "(none)";
       return res.status(400).json({
         error: `Provider "${provName}" is not configured`,
-        fix: `Add it in the Providers tab, or pick one of: ${known}, or "offline"`,
+        fix: `Add it in Settings → AI models, or pick one of: ${known}, or "offline"`,
       });
     }
     const baseUrl = provCfg.baseUrl ?? "";
@@ -335,7 +339,7 @@ app.post("/api/plan", async (req, res) => {
       } catch {
         return res.status(400).json({
           error: `Local endpoint ${baseUrl} is not reachable`,
-          fix: "Start the local server (e.g. `ollama serve`) first — or switch the provider to its cloud URL in the Providers tab — don't render into a dead endpoint",
+          fix: "Start the local server (e.g. `ollama serve`) first — or switch the provider to its cloud URL in Settings → AI models — don't render into a dead endpoint",
         });
       }
     }
@@ -343,7 +347,7 @@ app.post("/api/plan", async (req, res) => {
       if (!savedEnv[provCfg.apiKeyEnv]) {
         return res.status(400).json({
           error: `API key not set for provider "${provName}" (${provCfg.apiKeyEnv})`,
-          fix: `Save your key in the Providers tab — create one at ${keyUrlFor(provName)}`,
+          fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(provName)}`,
         });
       }
     }
@@ -374,32 +378,34 @@ app.post("/api/plan", async (req, res) => {
     for (const [role, rm] of Object.entries(roleModels)) {
       const pc = config.providers?.[rm.provider];
       if (!pc) {
-        return res.status(400).json({ error: `the ${role} role uses provider "${rm.provider}", which is not configured`, fix: "Fix it in Providers → Model roles" });
+        return res.status(400).json({ error: `the ${role} role uses provider "${rm.provider}", which is not configured`, fix: "Fix it in Settings → AI models → Model roles" });
       }
       if (pc.apiKeyEnv && rm.provider !== "gateway" && !savedEnv[pc.apiKeyEnv]) {
         return res.status(400).json({
           error: `API key not set for provider "${rm.provider}" (used by the ${role} role)`,
-          fix: `Save your key in the Providers tab — create one at ${keyUrlFor(rm.provider)}`,
+          fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(rm.provider)}`,
         });
       }
       if (!rm.model) {
-        return res.status(400).json({ error: `no model chosen for the ${role} role`, fix: "Choose one in Providers → Model roles" });
+        return res.status(400).json({ error: `no model chosen for the ${role} role`, fix: "Choose one in Settings → AI models → Model roles" });
       }
     }
   }
 
-  const job = createJob(premise, provName, model);
+  // Under fixtures no configured model writes anything: say so in the job
+  // (GET /api/spec) and in plan.json (jobs.ts relabels it when the plan is done).
+  const job = fixtures ? createJob(premise, "fixtures", process.env.FACTORY_LLM_FIXTURES) : createJob(premise, provName, model);
   job.engine = "plan";
-  (job as any).explicitModel = typeof body.provider === "string" || typeof body.model === "string";
+  job.explicitModel = !fixtures && (typeof body.provider === "string" || typeof body.model === "string");
   if (body.audio) {
-    (job as any).audio = body.audio;
+    job.audio = body.audio;
     // Voice comes first in the pipeline, so the plan needs the voice settings too.
     const rel = `output/plan-${job.id}-audio.json`;
     fs.mkdirSync(join(ROOT, "output"), { recursive: true });
     fs.writeFileSync(join(ROOT, rel), JSON.stringify(body.audio, null, 2));
-    (job as any).audioFile = rel;
+    job.audioFile = rel;
   }
-  if (settings) (job as any).settings = settings;
+  if (settings) job.settings = settings;
   runJob(job, { noRender: true });
   res.json({ jobId: job.id });
 });
@@ -440,22 +446,47 @@ app.get("/api/spec/:jobId", (req, res) => {
  */
 app.post("/api/plan/:specId/recast", async (req, res) => {
   const { specId } = req.params;
-  const { name, voice } = req.body as { name?: string; voice?: string };
-  if (!/^[a-z0-9-]+$/.test(specId) || !name || !voice) {
-    return res.status(400).json({ error: "specId, character name and voice are required" });
+  const { name, voice } = (req.body ?? {}) as { name?: unknown; voice?: unknown };
+  if (!/^[a-z0-9-]+$/.test(specId)) {
+    return res.status(400).json({ error: "bad plan id" });
   }
   if (!canReassemble(specId)) {
     return res.status(404).json({ error: `plan "${specId}" has no saved stages`, fix: "Write the plan again" });
   }
+  const dir = join(ROOT, "output", specId);
+  /** The name must be a character of the story, the voice one the dialogs engine knows. */
+  const problem = () => {
+    const story = JSON.parse(fs.readFileSync(join(dir, "story.json"), "utf8")) as { characters?: Array<{ name: string }> };
+    const plan = JSON.parse(fs.readFileSync(join(dir, "plan.json"), "utf8")) as { audio?: { dialogs?: { engine?: string } } };
+    return checkRecast({ characters: story.characters ?? [], engine: plan.audio?.dialogs?.engine, name, voice });
+  };
   try {
-    const planPath = join(ROOT, "output", specId, "plan.json");
-    const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
-    plan.audio = plan.audio ?? {};
-    plan.audio.dialogs = { ...(plan.audio.dialogs ?? {}), voices: { ...(plan.audio.dialogs?.voices ?? {}), [name]: voice } };
-    fs.writeFileSync(planPath, JSON.stringify(plan, null, 2));
-    const { spec, warnings } = await reassemble(specId, "plan");
-    fs.writeFileSync(join(ROOT, "output", specId, "spec.json"), JSON.stringify(spec, null, 2));
-    res.json({ spec, warnings });
+    // Checked before queueing (and again in the queue, after any edit ahead of it).
+    const early = problem();
+    if (early) return res.status(400).json(early);
+    // The film's queue: a recast rewrites the stage files the editor's
+    // background measurement reads.
+    const out = await queueFilmChange(specId, async () => {
+      const late = problem();
+      if (late) return { problem: late };
+      const planPath = join(dir, "plan.json");
+      const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
+      plan.audio = plan.audio ?? {};
+      plan.audio.dialogs = { ...(plan.audio.dialogs ?? {}), voices: { ...(plan.audio.dialogs?.voices ?? {}), [name as string]: voice } };
+      fs.writeFileSync(planPath, JSON.stringify(plan, null, 2));
+      const { spec, warnings } = await reassemble(specId, "plan");
+      // The editor's keep-timing caption wording stays on screen (and on the
+      // film: reading it records the recast as a version that keeps it).
+      const overrides = captionOverrides(specId);
+      if (overrides.length > 0) {
+        const applied = applyCaptionOverrides(spec, overrides);
+        if (applied < overrides.length) warnings.push(`${overrides.length - applied} kept caption wording(s) no longer line up with a caption window`);
+      }
+      fs.writeFileSync(join(dir, "spec.json"), JSON.stringify(spec, null, 2));
+      return { spec, warnings };
+    });
+    if ("problem" in out) return res.status(400).json(out.problem);
+    res.json(out);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -493,7 +524,7 @@ app.post("/api/render-spec", (req, res) => {
   }
   const job = createJob(title);
   job.specId = specId;
-  if (audio) (job as any).audio = audio;
+  if (audio) job.audio = audio;
   if (audio) {
     try {
       const sidecar = join(ROOT, "output", specId, "audio.json");
@@ -554,7 +585,7 @@ app.post("/api/generate", async (req, res) => {
       const known = Object.keys(config.providers ?? {}).join(", ") || "(none)";
       return res.status(400).json({
         error: `Provider "${provName}" is not configured`,
-        fix: `Add it in the Providers tab, or pick one of: ${known}, or "offline"`,
+        fix: `Add it in Settings → AI models, or pick one of: ${known}, or "offline"`,
       });
     }
     // Local endpoints fail cryptically mid-render — ping them now, fix now.
@@ -568,7 +599,7 @@ app.post("/api/generate", async (req, res) => {
       } catch {
         return res.status(400).json({
           error: `Local endpoint ${baseUrl} is not reachable`,
-          fix: "Start the local server (e.g. `ollama serve`) first — or switch the provider to its cloud URL in the Providers tab — don't render into a dead endpoint",
+          fix: "Start the local server (e.g. `ollama serve`) first — or switch the provider to its cloud URL in Settings → AI models — don't render into a dead endpoint",
         });
       }
     }
@@ -578,7 +609,7 @@ app.post("/api/generate", async (req, res) => {
       if (!key) {
         return res.status(400).json({
           error: `API key not set for provider "${provName}" (${provCfg.apiKeyEnv})`,
-          fix: `Save your key in the Providers tab — create one at ${keyUrlFor(provName)}`,
+          fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(provName)}`,
         });
       }
     }
@@ -593,7 +624,7 @@ app.post("/api/generate", async (req, res) => {
     if (!chosenModelId) {
       return res.status(400).json({
         error: `Provider "${provName}" has no model available`,
-        fix: "Open the Providers tab and click 'Fetch models' to load the real model list, then pick one on the Generate tab",
+        fix: "Open Settings → AI models and press 'Get models' to load the real model list, then pick one under Model roles",
       });
     }
   }
@@ -642,15 +673,20 @@ app.get("/api/jobs/:id/events", (req, res) => {
 /** Audition syntheses in progress, by cache key. */
 const sampleJobs = new Map<string, Promise<string>>();
 app.post("/api/voice-sample", async (req, res) => {
-  const body = req.body as { engine?: string; voice?: string; voiceDesc?: string; text?: string };
+  const body = req.body as { engine?: string; voice?: string; voiceDesc?: string; text?: string; referenceWav?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number } };
   const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
   if (!resolveTtsPython(engine)) {
-    return res.status(400).json({ error: "engine not installed", fix: "Install it from the Setup tab first" });
+    return res.status(400).json({ error: "engine not installed", fix: "Install it in Settings → Voice engines first" });
   }
-  const text = body.text || "Hey there! This is my real voice. Let's make something amazing together.";
+  const text = body.text || AUDITION_TEXT;
   const voice = body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm");
   const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, body.voiceDesc) : undefined;
-  const key = cacheKey({ engine, voice, voiceDesc, text });
+  const voiceTransform = engine === "voxcpm2" ? (body.voiceTransform ?? voxTransform(voice)) : undefined;
+  const refId = voxReferenceId(voice);
+  const presetRefWav = refId ? join(REF_ROOT, refId, "reference.wav") : null;
+  const referenceWav = body.referenceWav ?? (presetRefWav && fs.existsSync(presetRefWav) ? presetRefWav : undefined);
+  const voiceStyle = body.voiceStyle;
+  const key = cacheKey({ engine, voice, voiceDesc, text, referenceWav, voiceStyle, voiceTransform });
   try {
     // One synthesis per distinct sample: a second click on the same voice waits
     // for the first, and each sample gets its own job folder, so two auditions
@@ -658,7 +694,7 @@ app.post("/api/voice-sample", async (req, res) => {
     let job = sampleJobs.get(key);
     if (!job) {
       const id = `_sample-${key.slice(0, 12)}`;
-      const line = { id: "sample", text, at: 0, engine, voice, voiceDesc, kind: "narration" as const };
+      const line = { id: "sample", text, at: 0, engine, voice, voiceDesc, referenceWav, voiceStyle, voiceTransform, kind: "narration" as const };
       job = synthesizeLines([line], id, { publish: false })
         .then((m) => m.lines[0].file)
         .finally(() => {
@@ -676,33 +712,111 @@ app.post("/api/voice-sample", async (req, res) => {
     res.status(500).json({ error: "sample generation failed", detail: (e instanceof Error ? e.message : String(e)).slice(-500) });
   }
 });
+
+// ---------- Voice preview route (definition-hash keyed, immutable) ----------
+app.get("/api/voice-preview/:engine/:voice/:key.wav", (req, res) => {
+  const engine = req.params.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
+  const voice = safeId(req.params.voice || "") || req.params.voice || "";
+  const learned = voicePreviewKey(engine, voice);
+  if (!learned || learned !== req.params.key) return res.status(404).end();
+  const wav = join(ROOT, ".cache", "voice", learned + ".wav");
+  if (!fs.existsSync(wav)) return res.status(404).end();
+  res.type("audio/wav").sendFile(wav, { dotfiles: "allow", maxAge: 31536000, immutable: true });
+});
+
+// ---------- Voice preview warmup (hash-keyed, only missing/stale) ----------
+app.post("/api/voice-previews/warm", async (req, res) => {
+  const body = (req.body ?? {}) as { engine?: string; voices?: string[] };
+  const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
+  if (!resolveTtsPython(engine)) return res.status(400).json({ error: "engine not installed" });
+  const list = engine === "voxcpm2" ? VOXCPM_VOICE_DESCRIPTIONS : KNOWN_VOICES;
+  const requested = (body.voices ?? []).filter(Boolean);
+  const voices = requested.length ? requested : list.map((v: any) => v.id);
+  const results: Array<{ voice: string; ok: boolean; url?: string; error?: string }> = [];
+  for (const voice of voices) {
+    const key = voicePreviewKey(engine, voice);
+    const wavExisting = key ? join(ROOT, ".cache", "voice", `${key}.wav`) : null;
+    if (key && wavExisting && fs.existsSync(wavExisting)) {
+      results.push({ voice, ok: true, url: `/api/voice-preview/${engine}/${voice}/${key}.wav` });
+      continue;
+    }
+    try {
+      const line = voicePreviewLine(engine, voice);
+      if (!line) throw new Error("unknown voice");
+      const m = await synthesizeLines([line], `_preview-${engine}-${voice}`, { publish: false });
+      const file = m.lines[0]?.file;
+      if (!file || !fs.existsSync(file)) throw new Error("no file");
+      results.push({ voice, ok: true, url: `/api/voice-preview/${engine}/${voice}/${key}.wav` });
+    } catch (e) {
+      results.push({ voice, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(-200) });
+    }
+  }
+  res.json({ engine, warmed: results.filter((r) => r.ok).length, total: results.length, results });
+});
+
+// ---------- Voice reference design (premium cloning) ----------
+app.post("/api/voice-reference/design", async (req, res) => {
+  const body = req.body as { engine?: string; voice?: string; voiceDesc?: string; text?: string; referenceWav?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number } };
+  const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "kitten2";
+  if (!resolveTtsPython(engine)) {
+    return res.status(400).json({ error: "engine not installed", fix: "Install it in Settings -> Voice engines first" });
+  }
+  const text = body.text || AUDITION_TEXT;
+  const voice = body.voice || (engine === "kitten2" ? "Bruno" : "narrator-calm");
+  const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, body.voiceDesc) : undefined;
+  const voiceTransform = engine === "voxcpm2" ? (body.voiceTransform ?? voxTransform(voice)) : undefined;
+  const referenceWav = body.referenceWav;
+  const id = `_ref-${Date.now().toString(36)}`;
+  try {
+    const line = { id: "sample", text, at: 0, engine, voice, voiceDesc, referenceWav, voiceStyle: body.voiceStyle, voiceTransform, kind: "narration" as const };
+    const m = await synthesizeLines([line], id, { publish: true });
+    const file = m.lines[0]?.file ?? `voice/${id}/sample.wav`;
+    res.json({ id, file, url: `/media/${file}` });
+  } catch (e) {
+    res.status(500).json({ error: "reference design failed", detail: (e instanceof Error ? e.message : String(e)).slice(-500) });
+  }
+});
+
 app.get("/api/videos", (_req, res) => {
   const dir = join(ROOT, "output");
   if (!fs.existsSync(dir)) return res.json([]);
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith("-report.json"));
-  const videos = files.map((f) => {
-    const id = f.replace("-report.json", "");
-    const report = JSON.parse(fs.readFileSync(join(dir, f), "utf8"));
-    const reviewDir = (report.id || id) + "-review";
+  // Per-video folders (output/<id>/report.json, since 2026-10-25) and the old
+  // flat files (output/<id>-report.json). Paths are returned relative to
+  // output/, as the dashboard loads them from /media/<path>.
+  const found: Array<{ id: string; reportFile: string; base: string }> = [];
+  for (const f of fs.readdirSync(dir)) {
+    const p = join(dir, f);
+    if (f.endsWith("-report.json")) found.push({ id: f.replace("-report.json", ""), reportFile: p, base: "" });
+    else if (fs.statSync(p).isDirectory() && fs.existsSync(join(p, "report.json"))) found.push({ id: f, reportFile: join(p, "report.json"), base: `${f}/` });
+  }
+  type Report = { id?: string; output?: string; spec?: string; generatedAt?: number; [key: string]: unknown };
+  const videos: Report[] = found.flatMap(({ id, reportFile, base }) => {
+    let report: Report;
+    try {
+      report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+    } catch {
+      return [];
+    }
+    const reviewDir = base ? `${base}review` : (report.id || id) + "-review";
     const reviewExists = fs.existsSync(join(dir, reviewDir));
-    const thumbPath = join(dir, `${id}-thumb.jpg`);
+    const thumbRel = base ? `${base}thumb.jpg` : `${id}-thumb.jpg`;
+    const thumbPath = join(dir, thumbRel);
     if (!fs.existsSync(thumbPath) && report.output) {
-      const mp4Abs = join(dir, basename(report.output));
+      const mp4Abs = join(dir, `${base}${basename(report.output)}`);
       if (fs.existsSync(mp4Abs) && fs.existsSync(FFMPEG)) {
         try {
-          const { spawn: sp } = require("child_process");
-          sp(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbPath], { stdio: "ignore", detached: true }).unref();
+          spawn(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbPath], { stdio: "ignore", detached: true }).unref();
         } catch { /* ignore */ }
       }
     }
-    return {
-      id,
+    return [{
       ...report,
-      output: report.output ? "video.mp4" : undefined,
-      spec: report.spec ? basename(report.spec) : undefined,
+      id,
+      output: report.output ? `${base}${basename(report.output)}` : undefined,
+      spec: report.spec ? `${base}${basename(report.spec)}` : undefined,
       reviewFolder: reviewExists ? reviewDir : undefined,
-      thumbnail: fs.existsSync(thumbPath) ? `${id}-thumb.jpg` : undefined,
-    };
+      thumbnail: fs.existsSync(thumbPath) ? thumbRel : undefined,
+    }];
   });
   videos.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
   res.json(videos);
@@ -739,6 +853,101 @@ app.get("/api/tts/job/:id", (req, res) => {
   });
 });
 
+// Resolve the stable URL for a pre-rendered audition preview, if it exists.
+
+// ---------- Voice references (premium, lawful recorded clips) ----------
+const REF_ROOT = join(ROOT, "public", "voice", "references");
+interface VoiceRefMeta {
+  id: string; label: string; archetype: string; tags: string[];
+  transcript: string; url: string; duration: number; sr: number; channels: number;
+  license: string; consent: boolean; createdAt: number; notes?: string;
+}
+function safeId(s: string): string { return String(s || "").replace(/[^a-z0-9-]/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase(); }
+function probeAudio(path: string): { duration: number; sr: number; channels: number } | null {
+  const r = spawnSync(FFMPEG, ["-hide_banner", "-i", path], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  const txt = `${r.stderr ?? ""}
+${r.stdout ?? ""}`;
+  const dm = txt.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+  if (!dm) return null;
+  const dur = Number(dm[1]) * 3600 + Number(dm[2]) * 60 + Number(dm[3]);
+  const hzMatch = txt.match(/(\d{4,6})\s*Hz/);
+  const sr = hzMatch ? Number(hzMatch[1]) : 0;
+  let channels = 1;
+  if (/stereo/i.test(txt)) channels = 2;
+  else if (/(\d+)\s*channels/i.test(txt)) { const m = txt.match(/(\d+)\s*channels/i); channels = m ? Number(m[1]) : 1; }
+  return { duration: Math.round(dur * 100) / 100, sr, channels };
+}
+function readRefs(): VoiceRefMeta[] {
+  if (!fs.existsSync(REF_ROOT)) return [];
+  const out: VoiceRefMeta[] = [];
+  for (const d of fs.readdirSync(REF_ROOT, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const metaPath = join(REF_ROOT, d.name, "meta.json");
+    if (!fs.existsSync(metaPath)) continue;
+    try { out.push(JSON.parse(fs.readFileSync(metaPath, "utf8")) as VoiceRefMeta); } catch { /* skip */ }
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt);
+}
+app.get("/api/voice-references", (_req, res) => {
+  res.json(readRefs());
+});
+app.post("/api/voice-references", (req, res) => {
+  const b = (req.body ?? {}) as { id?: string; label?: string; archetype?: string; tags?: string[]; audioBase64?: string; transcript?: string; license?: string; consent?: boolean; notes?: string };
+  if (!b.audioBase64) return res.status(400).json({ error: "audioBase64 (wav/mp3/ogg) required" });
+  if (!b.consent) return res.status(400).json({ error: "consent is required for storing and deriving a voice" });
+  const id = safeId(b.id || b.label || `voice-${Date.now().toString(36)}`) || `voice-${Date.now().toString(36)}`;
+  const dir = join(REF_ROOT, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const src = join(dir, "upload.bin");
+  const buf = Buffer.from(b.audioBase64, "base64");
+  fs.writeFileSync(src, buf);
+  const out = join(dir, "reference.wav");
+  // normalise to 48 kHz mono wav
+  const r = spawnSync(FFMPEG, ["-y", "-i", src, "-vn", "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", out], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  try { fs.unlinkSync(src); } catch { /* ignore */ }
+  if (!fs.existsSync(out)) return res.status(500).json({ error: "conversion failed", detail: (r.stderr ?? "").slice(-300) });
+  const probe = probeAudio(out);
+  if (!probe || probe.duration < 3 || probe.duration > 20) return res.status(400).json({ error: "clip must be 3-20 seconds" });
+  const meta: VoiceRefMeta = {
+    id, label: (b.label || id).slice(0, 64),
+    archetype: b.archetype || "narrator", tags: Array.isArray(b.tags) ? b.tags : [],
+    transcript: (b.transcript ?? "").trim(), url: `/media/voice/references/${id}/reference.wav`,
+    duration: probe.duration, sr: probe.sr, channels: 1,
+    license: b.license || "unknown", consent: true, createdAt: Date.now(), notes: b.notes,
+  };
+  fs.writeFileSync(join(dir, "meta.json"), JSON.stringify(meta, null, 2));
+  res.json(meta);
+});
+app.delete("/api/voice-references/:id", (req, res) => {
+  const id = safeId(req.params.id || "");
+  const dir = join(REF_ROOT, id);
+  if (!id) return res.status(400).json({ error: "invalid id" });
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: "not found" });
+  fs.rmSync(dir, { recursive: true, force: true });
+  res.json({ ok: true });
+});
+app.post("/api/voice-references/:id/audition", async (req, res) => {
+  const id = safeId(req.params.id || "");
+  const metaPath = join(REF_ROOT, id, "meta.json");
+  if (!fs.existsSync(metaPath)) return res.status(404).json({ error: "not found" });
+  const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as VoiceRefMeta;
+  const body = (req.body ?? {}) as { engine?: string; text?: string };
+  const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "voxcpm2";
+  const voice = meta.label || id;
+  const line = { id: "sample", text: body.text || AUDITION_TEXT, at: 0, engine, voice, voiceDesc: undefined, referenceWav: join(REF_ROOT, id, "reference.wav"), referenceText: meta.transcript, kind: "narration" as const };
+  try {
+    const nId = `_ref-audition-${id}`;
+    const m = await synthesizeLines([line as any], nId, { publish: false });
+    const wav = m.lines[0]?.file;
+    if (!wav || !fs.existsSync(wav)) throw new Error("no file");
+    res.setHeader("Content-Type", "audio/wav");
+    res.sendFile(wav, { dotfiles: "allow" });
+    fs.rmSync(join(ROOT, "output", `${nId}-voice`), { recursive: true, force: true });
+  } catch (e) {
+    res.status(500).json({ error: "audition failed", detail: (e instanceof Error ? e.message : String(e)).slice(-400) });
+  }
+});
+
 // ---------- TTS voices / engines ----------
 app.get("/api/voices", (req, res) => {
   const engine = (req.query.engine as string) || "kitten2";
@@ -750,17 +959,43 @@ app.get("/api/voices", (req, res) => {
     return res.json({
       engine,
       available: voxcpmAvailable,
-      voices: VOXCPM_VOICE_DESCRIPTIONS.map((v) => ({ id: v.id, pace: "steady" as const, sample: null })),
+      voices: VOXCPM_VOICE_DESCRIPTIONS.map((v) => {
+        const m = voiceMeta(v.id) ?? undefined;
+         const key = voicePreviewKey("voxcpm2", v.id);
+         const ready = !!key && fs.existsSync(join(ROOT, ".cache", "voice", `${key}.wav`));
+        return {
+          id: v.id,
+          label: voiceLabel(v.id),
+          sample: key ? `/api/voice-preview/voxcpm2/${v.id}/${key}.wav` : null,
+           sampleKey: key ?? undefined,
+           previewReady: ready,
+          gender: m?.gender,
+          age: m?.age,
+        };
+      }),
       descriptions: VOXCPM_VOICE_DESCRIPTIONS,
       defaultNarrator: VOXCPM_VOICE_DESCRIPTIONS[0].id,
-      defaultCharacter: VOXCPM_VOICE_DESCRIPTIONS[2].id,
+      defaultCharacter: "character-hero",
       venvPath: voxcpmPython,
     });
   }
   res.json({
     engine: "kitten2",
     available: kittenAvailable,
-    voices: KNOWN_VOICES,
+    voices: KNOWN_VOICES.map((v) => {
+        const m = voiceMeta(v.id) ?? undefined;
+        const key = voicePreviewKey("kitten2", v.id);
+        const ready = !!key && fs.existsSync(join(ROOT, ".cache", "voice", `${key}.wav`));
+        return {
+          ...v,
+          label: v.label ?? voiceLabel(v.id),
+           sample: key ? `/api/voice-preview/kitten2/${v.id}/${key}.wav` : null,
+           sampleKey: key ?? undefined,
+           previewReady: ready,
+          age: m?.age,
+           gender: m?.gender,
+        };
+      }),
     defaultNarrator: "Bruno",
     defaultCharacter: "Rosie",
     venvPath: kittenPython,
@@ -768,11 +1003,11 @@ app.get("/api/voices", (req, res) => {
   });
 });
 
+/** A running job is cancelled (it stays listed as cancelled); a finished one is deleted. */
 app.delete("/api/jobs/:id", (req, res) => {
-  removeJobFile(req.params.id);
-  const ok = cancelJob(req.params.id);
-  if (!ok) return res.status(404).json({ error: "job not running or unknown" });
-  res.json({ cancelled: true });
+  const done = deleteJob(req.params.id);
+  if (!done) return res.status(404).json({ error: "unknown job" });
+  res.json({ cancelled: done === "cancelled", deleted: done === "deleted" });
 });
 app.delete("/api/videos/:id", (req, res) => {
   const { id } = req.params;
@@ -796,6 +1031,16 @@ app.delete("/api/videos/:id", (req, res) => {
       deleted += 1;
     } catch (e) {
       errors.push(`${f}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  // The per-video folder (output/<id>/: spec, stage files, video, report).
+  const videoDir = join(dir, id);
+  if (fs.existsSync(videoDir) && fs.statSync(videoDir).isDirectory()) {
+    try {
+      fs.rmSync(videoDir, { recursive: true, force: true });
+      deleted += 1;
+    } catch (e) {
+      errors.push(`${id}/: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   const reviewDir = join(dir, `${id}-review`);
@@ -850,7 +1095,8 @@ if (fs.existsSync(join(UI_DIST, "index.html"))) {
   });
 }
 
-const PORT = 5178;
+// PORT lets a second server run beside the dashboard's (tests, screenshots).
+const PORT = Number(process.env.PORT) || 5178;
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Server listening on http://127.0.0.1:${PORT}`);
 });

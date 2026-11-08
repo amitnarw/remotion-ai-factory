@@ -1,7 +1,7 @@
 {
   "name": "remotion",
   "version": "1.0.0",
-  "description": "AI Video Factory — 100% automated 'What If' Shorts generator",
+  "description": "AI Video Factory \u2014 100% automated 'What If' Shorts generator",
   "repository": {},
   "license": "UNLICENSED",
   "private": true,
@@ -14,9 +14,11 @@
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "9.2.0",
     "@react-three/postprocessing": "3.0.4",
+    "@remotion/bundler": "4.0.536",
     "@remotion/cli": "^4.0.536",
     "@remotion/fonts": "^4.0.536",
     "@remotion/media": "^4.0.536",
+    "@remotion/renderer": "4.0.536",
     "@remotion/three": "^4.0.536",
     "@remotion/zod-types": "^4.0.536",
     "@types/express": "^5.0.6",
@@ -70,7 +72,7 @@
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc && node scripts/check-ui-icons.mjs",
     "generate": "tsx src/generator/generate.ts",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --test \"src/**/*.test.ts\" \"server/**/*.test.ts\"",
     "sfx": "tsx scripts/setup-sfx.ts",
     "sfx:cc0": "tsx scripts/setup-sfx-cc0.ts",
     "audio:library": "tsx scripts/setup-audio-library.ts",
@@ -94,6 +96,7 @@
     "preview:roads": "tsx scripts/preview-roads.ts",
     "lane:stills": "tsx scripts/phase3-lane-stills.ts",
     "enrich:spec": "tsx scripts/enrich-example-spec.ts",
-    "probe:gpu": "tsx scripts/probe-nvidia.ts"
+    "probe:gpu": "tsx scripts/probe-nvidia.ts",
+    "voices:warm": "tsx scripts/warm-voice-previews.ts"
   }
 }

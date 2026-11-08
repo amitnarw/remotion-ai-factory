@@ -19,6 +19,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
 import { solveShot, type Subject, type Vec3 } from "../generator/camera/solve";
+import { insideOccluder, type Blocker } from "../generator/camera/occlusion";
 import { SIZE_DEFAULTS, type Shot, type ShotSize } from "../generator/camera/shot";
 import { statScaleAt } from "../generator/statPanel";
 import { WeatherLayer, lightsOutAt } from "./weather";
@@ -336,8 +337,8 @@ export function restoreRigLens(camera: THREE.Camera) {
   cam.updateProjectionMatrix();
 }
 
-type ForestTree = { x: number; z: number; scale: number; variant: "pine" | "oak" | "birch" | "maple" | "dead"; rot: number };
-type ForestLayout = {
+export type ForestTree = { x: number; z: number; scale: number; variant: "pine" | "oak" | "birch" | "maple" | "dead"; rot: number };
+export type ForestLayout = {
   trees: ForestTree[];
   rocks: Array<{ x: number; z: number; scale: number; rot: number }>;
   logs: Array<{ x: number; z: number; rot: number; scale: number }>;
@@ -363,16 +364,49 @@ function treeSize(tr: ForestTree) {
   };
 }
 
-/**
- * Something the camera must not sit in or look through: a vertical column or a
- * ball. `owner` groups the parts of one prop (-1: none). The clearance helpers
- * here are shared by the other nature stages (Countryside, River).
- */
-export type Blocker =
-  | { kind: "column"; x: number; z: number; r: number; top: number; owner: number }
-  | { kind: "ball"; x: number; y: number; z: number; r: number; owner: number };
+/** Something the camera must not sit in or look through (camera/occlusion.ts);
+ *  the clearance helpers here are shared by the other nature stages. */
+export type { Blocker };
 
-function forestBlockers(layout: ForestLayout): Blocker[] {
+/** The seeded forest: 180 trees round the clearing (none within 8 m of it), rocks and logs. */
+export function forestLayout(specId: string): ForestLayout {
+  const trees: ForestTree[] = [];
+  const variants: Array<"pine" | "oak" | "birch" | "maple" | "dead"> = ["pine", "oak", "birch", "maple", "dead"];
+  // Dense scatter in a 200x200 area
+  for (let i = 0; i < 180; i++) {
+    const angle = random(`${specId}-tree-${i}-a`) * Math.PI * 2;
+    const r = 8 + random(`${specId}-tree-${i}-r`) * 85;
+    trees.push({
+      x: Math.sin(angle) * r,
+      z: Math.cos(angle) * r - 5,
+      scale: 0.7 + random(`${specId}-tree-${i}-s`) * 0.6,
+      variant: variants[Math.floor(random(`${specId}-tree-${i}-v`) * variants.length)],
+      rot: random(`${specId}-tree-${i}-rot`) * Math.PI * 2,
+    });
+  }
+  const rocks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
+  for (let i = 0; i < 30; i++) {
+    rocks.push({
+      x: (random(`${specId}-rock-${i}-x`) - 0.5) * 180,
+      z: (random(`${specId}-rock-${i}-z`) - 0.5) * 180 - 10,
+      scale: 0.5 + random(`${specId}-rock-${i}-s`) * 1.2,
+      rot: random(`${specId}-rock-${i}-rot`) * Math.PI * 2,
+    });
+  }
+  const logs: Array<{ x: number; z: number; rot: number; scale: number }> = [];
+  for (let i = 0; i < 15; i++) {
+    logs.push({
+      x: (random(`${specId}-log-${i}-x`) - 0.5) * 160,
+      z: (random(`${specId}-log-${i}-z`) - 0.5) * 160 - 10,
+      rot: random(`${specId}-log-${i}-rot`) * Math.PI * 2,
+      scale: 0.6 + random(`${specId}-log-${i}-s`) * 0.8,
+    });
+  }
+  return { trees, rocks, logs };
+}
+
+/** What the forest's camera must keep out of: trunks, crowns, rocks, logs. */
+export function forestBlockers(layout: ForestLayout): Blocker[] {
   const out: Blocker[] = [];
   layout.trees.forEach((tr, i) => {
     const s = treeSize(tr);
@@ -393,11 +427,7 @@ function forestBlockers(layout: ForestLayout): Blocker[] {
 /** Margin kept between the lens and anything solid, metres. */
 const LENS_MARGIN = 0.6;
 
-function insideBlocker(b: Blocker, p: Vec3): boolean {
-  const r = b.r + LENS_MARGIN;
-  if (b.kind === "column") return p[1] < b.top + LENS_MARGIN && (p[0] - b.x) ** 2 + (p[2] - b.z) ** 2 < r * r;
-  return (p[0] - b.x) ** 2 + (p[1] - b.y) ** 2 + (p[2] - b.z) ** 2 < r * r;
-}
+const insideBlocker = (b: Blocker, p: Vec3): boolean => insideOccluder(b, p, LENS_MARGIN);
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -530,6 +560,82 @@ export function clearestFacing(
   return best;
 }
 
+/** How far a clearing box may reach from its subject, and the ground's edge
+ *  (the forest floor is a 400 m plane round the origin). */
+const CLEARING_REACH = 120;
+const FLOOR_EDGE = 195;
+const CLEARING_STEP = 0.5;
+
+/** Does a blocker's footprint (its radius plus the lens margin, seen from
+ *  above) reach into the box? */
+function footprintInBox(b: Blocker, box: { minX: number; maxX: number; minZ: number; maxZ: number }): boolean {
+  const dx = Math.max(box.minX - b.x, 0, b.x - box.maxX);
+  const dz = Math.max(box.minZ - b.z, 0, b.z - box.maxZ);
+  const r = b.r + LENS_MARGIN;
+  return dx * dx + dz * dz < r * r;
+}
+
+/**
+ * The clearing round a subject, as camera bounds: a box (x/z) about its
+ * centre that no trunk, crown, rock or log reaches into (the lens margin
+ * kept), grown half a metre at a time. The camera's usual bearings (front
+ * and the three-quarter sides) get the room first, the other sides what is
+ * left. The box is convex, so a lens inside it also has a clear line to the
+ * subject: no trunk in the foreground. The subject's own things (`skip`: its
+ * tree; anything over its centre: the rock it sits round, a crown over a
+ * light shaft) make the box's core, so a lens pulled in stops outside them.
+ * A shot over the treetops (`openAbove`: the tallest tree within reach, plus
+ * a metre) may leave the box.
+ */
+export function clearingBounds(
+  center: Vec3, facing: number, blockers: Blocker[], skip: Set<number>, treeTop: (x: number, z: number, reach: number) => number,
+): NonNullable<Subject["bounds"]> {
+  const [cx, , cz] = center;
+  // The core: the subject's own things and their footprints.
+  let core = 0.25;
+  for (const b of blockers) {
+    const d = Math.hypot(b.x - cx, b.z - cz);
+    if (skip.has(b.owner) || d < b.r + LENS_MARGIN) core = Math.max(core, d + b.r + LENS_MARGIN);
+  }
+  const box = { minX: cx - core, maxX: cx + core, minZ: cz - core, maxZ: cz + core };
+  const near = blockers.filter((b) => !skip.has(b.owner) && Math.hypot(b.x - cx, b.z - cz) < CLEARING_REACH * 1.5 + b.r);
+  type Side = "minX" | "maxX" | "minZ" | "maxZ";
+  const open = new Set<Side>(["minX", "maxX", "minZ", "maxZ"]);
+  // One step out on a side, or close it for good (a blocker in the new strip,
+  // the reach, the floor's edge). Only the strip is tested: what reaches into
+  // the core is the subject's.
+  const grow = (side: Side) => {
+    const up = side === "maxX" || side === "maxZ";
+    const next = box[side] + (up ? CLEARING_STEP : -CLEARING_STEP);
+    const from = side === "minX" || side === "maxX" ? cx : cz;
+    const strip = { ...box, [side]: next, [side.replace(up ? "max" : "min", up ? "min" : "max")]: box[side] };
+    if (Math.abs(next - from) > CLEARING_REACH || Math.abs(next) > FLOOR_EDGE || near.some((b) => footprintInBox(b, strip))) open.delete(side);
+    else box[side] = next;
+  };
+  // The camera's usual bearings (the solver's front and three-quarter sides):
+  // the shortest of them grows first, through the side it leaves the box by.
+  const exit = (yaw: number): { t: number; side: Side } => {
+    const dx = Math.sin(yaw);
+    const dz = Math.cos(yaw);
+    const tx = Math.abs(dx) < 1e-9 ? Infinity : ((dx > 0 ? box.maxX : box.minX) - cx) / dx;
+    const tz = Math.abs(dz) < 1e-9 ? Infinity : ((dz > 0 ? box.maxZ : box.minZ) - cz) / dz;
+    return tx < tz ? { t: tx, side: dx > 0 ? "maxX" : "minX" } : { t: tz, side: dz > 0 ? "maxZ" : "minZ" };
+  };
+  const bearings = [0, 35, -35].map((d) => facing + (d * Math.PI) / 180);
+  for (;;) {
+    let shortest: { t: number; side: Side } | null = null;
+    for (const yaw of bearings) {
+      const e = exit(yaw);
+      if (open.has(e.side) && (!shortest || e.t < shortest.t)) shortest = e;
+    }
+    if (!shortest) break;
+    grow(shortest.side);
+  }
+  // Then whatever room is left round the other sides.
+  while (open.size) for (const side of [...open]) grow(side);
+  return { ...box, openAbove: treeTop(cx, cz, CLEARING_REACH) + 1 };
+}
+
 const yawTo = (fromX: number, fromZ: number, toX: number, toZ: number) => Math.atan2(toX - fromX, toZ - fromZ);
 
 const CLOSE_SIZES = ["CU", "MS", "FS", "WS"] as const;
@@ -553,9 +659,9 @@ export function forestAnchors(layout: ForestLayout, aspect: number): Anchors {
       .sort((a, b) => a.rank - b.rank)
       .slice(0, n)
       .map(({ p }) => p);
-  const anchors: Anchors = {};
-  const keep = (name: string, s: Subject) => {
-    anchors[name] = () => s;
+  const kept: Record<string, { s: Subject; skip: Set<number> }> = {};
+  const keep = (name: string, s: Subject, skip = new Set<number>()) => {
+    kept[name] = { s, skip };
   };
 
   // tree: a big living tree with room round it, from its cleanest side.
@@ -571,7 +677,7 @@ export function forestAnchors(layout: ForestLayout, aspect: number): Anchors {
     const value = pick.cost + 0.03 * dist(tr.x, tr.z);
     if (value < best) {
       best = value;
-      keep("tree", { ...base, facing: pick.facing });
+      keep("tree", { ...base, facing: pick.facing }, new Set([i]));
       treeIndex = i;
     }
   }
@@ -586,7 +692,7 @@ export function forestAnchors(layout: ForestLayout, aspect: number): Anchors {
     const value = pick.cost + 0.03 * dist(tr.x, tr.z);
     if (value < best) {
       best = value;
-      keep("canopy", { ...base, facing: pick.facing });
+      keep("canopy", { ...base, facing: pick.facing }, new Set([i]));
     }
   }
 
@@ -635,6 +741,20 @@ export function forestAnchors(layout: ForestLayout, aspect: number): Anchors {
       keep("scene", { ...base, facing: pick.facing });
     }
   }
+
+  // Each chosen subject's clearing: the camera bounds (see clearingBounds).
+  // The trunks, crowns, rocks and logs go with it as the solver's blockers:
+  // a shot whose lens the clearing pulls in too close (a wide shot behind the
+  // path's own rock, a crowded tree seen from its back as all crown) or whose
+  // sight line crosses a crown (a high wide over the treetops) takes another
+  // bearing or height (solve.ts, clearView).
+  const treeTop = (x: number, z: number, reach: number) =>
+    layout.trees.reduce((top, tr) => (Math.hypot(tr.x - x, tr.z - z) < reach ? Math.max(top, treeSize(tr).top) : top), 0);
+  const anchors: Anchors = {};
+  for (const [name, { s, skip }] of Object.entries(kept)) {
+    const subject: Subject = { ...s, bounds: clearingBounds(s.center, s.facing ?? 0, blockers, skip, treeTop), blockers, own: [...skip] };
+    anchors[name] = () => subject;
+  }
   return anchors;
 }
 
@@ -653,41 +773,7 @@ export function ForestStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType
   }, [look.fog, look.fogDensity, threeScene]);
 
   // Procedural forest layout
-  const layout = useMemo((): ForestLayout => {
-    const trees: ForestTree[] = [];
-    const variants: Array<"pine" | "oak" | "birch" | "maple" | "dead"> = ["pine", "oak", "birch", "maple", "dead"];
-    // Dense scatter in a 200x200 area
-    for (let i = 0; i < 180; i++) {
-      const angle = random(`${spec.id}-tree-${i}-a`) * Math.PI * 2;
-      const r = 8 + random(`${spec.id}-tree-${i}-r`) * 85;
-      trees.push({
-        x: Math.sin(angle) * r,
-        z: Math.cos(angle) * r - 5,
-        scale: 0.7 + random(`${spec.id}-tree-${i}-s`) * 0.6,
-        variant: variants[Math.floor(random(`${spec.id}-tree-${i}-v`) * variants.length)],
-        rot: random(`${spec.id}-tree-${i}-rot`) * Math.PI * 2,
-      });
-    }
-    const rocks: Array<{ x: number; z: number; scale: number; rot: number }> = [];
-    for (let i = 0; i < 30; i++) {
-      rocks.push({
-        x: (random(`${spec.id}-rock-${i}-x`) - 0.5) * 180,
-        z: (random(`${spec.id}-rock-${i}-z`) - 0.5) * 180 - 10,
-        scale: 0.5 + random(`${spec.id}-rock-${i}-s`) * 1.2,
-        rot: random(`${spec.id}-rock-${i}-rot`) * Math.PI * 2,
-      });
-    }
-    const logs: Array<{ x: number; z: number; rot: number; scale: number }> = [];
-    for (let i = 0; i < 15; i++) {
-      logs.push({
-        x: (random(`${spec.id}-log-${i}-x`) - 0.5) * 160,
-        z: (random(`${spec.id}-log-${i}-z`) - 0.5) * 160 - 10,
-        rot: random(`${spec.id}-log-${i}-rot`) * Math.PI * 2,
-        scale: 0.6 + random(`${spec.id}-log-${i}-s`) * 0.8,
-      });
-    }
-    return { trees, rocks, logs };
-  }, [spec.id]);
+  const layout = useMemo(() => forestLayout(spec.id), [spec.id]);
 
   // Subjects for the director's shots (only measured when the spec has shots).
   const { width, height } = useVideoConfig();

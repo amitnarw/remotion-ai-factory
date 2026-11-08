@@ -22,7 +22,7 @@ import { writeFileSync, mkdirSync, statSync, readFileSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { validateSpec, SettingsSchema, videoSeconds, type ShotSpec, type VideoSettings } from "./spec.schema";
-import { disposeTtsWorkers, runTtsStage } from "./tts";
+import { disposeTtsWorkers, runTtsStage, type TtsAudioConfig } from "./tts";
 import { resolveAudio } from "./audio-resolve";
 import { masterAudio } from "./audio-master";
 import { secToFrame } from "./timing";
@@ -189,7 +189,13 @@ function main() {
           ? fromSpec
           : join(process.cwd(), fromSpec);
         if (!statSync(abs)) throw new Error(`spec file not found: ${abs} — fix: run the plan step first`);
-        const id = abs.replace(/\\/g, "/").split("/").pop()!.replace(/-spec\.json$/, "");
+        // output/<id>/spec.json (per-video folders, what the dashboard and the
+        // editor pass) -> <id> from the folder; the old output/<id>-spec.json ->
+        // <id> from the file name. (Taking the file name for both made every
+        // dashboard render's id "spec.json".)
+        const parts = abs.replace(/\\/g, "/").split("/");
+        const file = parts.pop()!;
+        const id = file === "spec.json" ? parts.pop()! : file.replace(/-spec\.json$/, "");
         const valid = validateSpec(JSON.parse(readFileSync(abs, "utf8")));
         const premise = valid.title;
         console.log(`[render-only] ${id} — "${premise}" (${valid.scenes.length} scenes)`);
@@ -312,8 +318,8 @@ if (valid.story && canReassemble(id)) {
   console.log(`[voice] done — ${(valid.audio?.voiceFiles ?? []).length} lines, ${(durFrames / FPS).toFixed(1)}s`);
 } else {
 // Also fall back to spec.audio for narration/dialogs config (UI-injected).
-const specAudio = (valid as any).audio ?? {};
-const mergedAudio = {
+const specAudio = valid.audio ?? {};
+const mergedAudio: TtsAudioConfig = {
   narration: audioConfig?.narration ?? specAudio.narration,
   dialogs: audioConfig?.dialogs ?? specAudio.dialogs,
 };
@@ -322,7 +328,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
   try {
     const manifest = await runTtsStage(valid, mergedAudio, id);
     if (manifest) {
-      (valid as any).audio = { ...(valid as any).audio, voiceFiles: manifest.lines };
+      valid = { ...valid, audio: { ...valid.audio, voiceFiles: manifest.lines } };
       console.log(`[voice] done — ${manifest.lines.length} lines`);
     }
   } catch (e) {

@@ -24,6 +24,8 @@ import { Birds } from "./Birds";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
 import { clearestFacing, type Blocker } from "./ForestStage";
 import type { Subject } from "../generator/camera/solve";
+import type { Occluder } from "../generator/camera/occlusion";
+import { turnedBox } from "../generator/camera/shapes";
 
 const CANOE_FILE = "assets/nature/nature-kit/Models/GLTF format/canoe.glb";
 
@@ -52,7 +54,7 @@ const CANOE_H = 0.67;
 const SWELL = 0.46;
 
 /** Canoes: seeded positions INSIDE the narrow portrait view cone. */
-function canoeLayout(specId: string): Array<{ x: number; z: number; rot: number }> {
+export function canoeLayout(specId: string): Array<{ x: number; z: number; rot: number }> {
   const out: Array<{ x: number; z: number; rot: number }> = [];
   for (let i = 0; i < 4; i++) {
     const a1 = random(`${specId}-canoe-${i}-a`);
@@ -399,6 +401,39 @@ function heroCanoe(specId: string, sunYaw: number): { x: number; z: number; rot:
   return { ...hero, facing: sides[0] };
 }
 
+/** Owner ids of the props in the camera's blockers (parasol i: PARASOL_OWNER + i, canoe i: CANOE_OWNER + i). */
+const JETTY_OWNER = 800;
+const PARASOL_OWNER = 900;
+const CANOE_OWNER = 950;
+
+/**
+ * The beach and the jetty as the solver's shapes (Subject.blockers): the
+ * jetty from under the water to its deck (the lens neither stands under the
+ * deck nor films the shallows through the piles, with the deck across the
+ * frame) and its end lamp; each parasol's pole and canopy; the sand (the dry
+ * apron, and the wet slope stepped every metre at its higher edge, from where
+ * it rises out of the drained basin). And where the lens must not stand but
+ * may look across (Subject.keepOut): under each canopy.
+ */
+function shoreSolids(): { blockers: Occluder[]; keepOut: Occluder[] } {
+  const blockers: Occluder[] = [];
+  const keepOut: Occluder[] = [];
+  // Jetty: 20 planks 0.72 m deep from z 10 to -9, 2 m wide, the deck 0.06 m over JETTY_DECK; the lamp 3.3 m over it.
+  blockers.push({ kind: "box", minX: JETTY_X - 1, maxX: JETTY_X + 1, minY: -10, maxY: JETTY_DECK + 0.06, minZ: -9.36, maxZ: 10.36, owner: JETTY_OWNER });
+  blockers.push({ kind: "column", x: JETTY_X, z: -9, r: 0.2, bottom: JETTY_DECK, top: JETTY_DECK + 3.35, owner: JETTY_OWNER });
+  // Parasols: the pole, and the canopy (a cone 1.15 m round from 1.875 to 2.625 m over the pole's foot).
+  PARASOLS.forEach(([x, z], i) => {
+    const foot = slopeTop(z) + 0.05;
+    blockers.push({ kind: "column", x, z, r: 0.06, top: foot + 2.2, owner: PARASOL_OWNER + i });
+    blockers.push({ kind: "column", x, z, r: 1.15, bottom: foot + 1.875, top: foot + 2.625, owner: PARASOL_OWNER + i });
+    keepOut.push({ kind: "column", x, z, r: 1.15, top: foot + 1.875, owner: PARASOL_OWNER + i });
+  });
+  // Sand: the apron (z 8..16) and the slope below it (Beach: 160 m wide).
+  blockers.push({ kind: "box", minX: -80, maxX: 80, minY: -6, maxY: APRON_TOP, minZ: 8, maxZ: 16, owner: -1 });
+  for (let z = 2; z < 8; z++) blockers.push({ kind: "box", minX: -80, maxX: 80, minY: -6, maxY: slopeTop(z + 1), minZ: z, maxZ: z + 1, owner: -1 });
+  return { blockers, keepOut };
+}
+
 /**
  * The ocean's subjects (KIT_SUBJECTS.ocean) as pure functions of t, measured
  * from the layout above. The set is built to be seen looking out to sea
@@ -426,11 +461,55 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
   };
   const landGround = (t: number) => Math.max(APRON_TOP, water(t).ground);
 
+  // The solver's blockers (Subject.blockers): the shore's (shoreSolids), and
+  // the canoes (hulls turned with them) and the buoy at the water's level, as
+  // high and as low as the swell takes them (the canoes ride seaSwellAt at
+  // amp 1). One list per water level, so a shot's frames share it and the
+  // solver's choice is made once; a drained basin has no boats.
+  const shore = shoreSolids();
+  const canoes = canoeLayout(spec.id);
+  const heroIndex = canoes.findIndex((c) => c.x === canoe.x && c.z === canoe.z);
+  const afloat = new Map<string, Occluder[]>();
+  const hull = (c: { x: number; z: number; rot: number }, i: number, level: number) => {
+    const bob = SWELL * waveAmp;
+    return turnedBox(c.x, c.z, 0.55, CANOE_LEN / 2, c.rot, level - bob - 0.06, level + bob - 0.06 + CANOE_H, CANOE_OWNER + i);
+  };
+  const seen = (t: number, own?: number[]): Pick<Subject, "blockers" | "keepOut" | "own"> => {
+    const w = water(t);
+    const key = w.visible ? w.level.toFixed(3) : "drained";
+    let blockers = afloat.get(key);
+    if (!blockers) {
+      const list = [...shore.blockers];
+      if (w.visible) {
+        const bob = SWELL * waveAmp;
+        canoes.forEach((c, i) => list.push(...hull(c, i, w.level)));
+        list.push({ kind: "column", x: BUOY[0], z: BUOY[1], r: 0.5, bottom: w.level - bob - 0.5, top: w.level + bob + 1.15, owner: -1 });
+      }
+      if (afloat.size > 64) afloat.clear();
+      afloat.set(key, list);
+      blockers = list;
+    }
+    return { blockers, keepOut: shore.keepOut, ...(own ? { own } : {}) };
+  };
+  // The hero canoe's own hull is a keep-out too, so the lens keeps a hand's
+  // width off it (an end-on close shot stood 0.2 m off its bow).
+  const heroRoom = new Map<string, Occluder[]>();
+  const heroKeepOut = (level: number): Occluder[] => {
+    const key = level.toFixed(3);
+    let list = heroRoom.get(key);
+    if (!list) {
+      list = heroIndex >= 0 ? [...shore.keepOut, ...hull(canoes[heroIndex], heroIndex, level)] : shore.keepOut;
+      if (heroRoom.size > 64) heroRoom.clear();
+      heroRoom.set(key, list);
+    }
+    return list;
+  };
+
   const sea = (t: number): Subject => {
     const w = water(t);
     // a patch of open water well out: wide shots put the lens over the open
     // sea (past the canoes, clear of the shore foam), looking further out
-    return { center: [0, w.up + 0.3, -70], radius: 2.5, height: 1.5, facing: 0, ground: w.ground };
+    return { center: [0, w.up + 0.3, -70], radius: 2.5, height: 1.5, facing: 0, ground: w.ground, ...seen(t) };
   };
 
 
@@ -442,7 +521,7 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
     y: slopeTop(p[1]) + 0.05 + 2.25,
     z: p[1],
     r: 1.15,
-    owner: 900 + i,
+    owner: PARASOL_OWNER + i,
   }));
   // The beach is filmed FROM THE SEA SIDE (facing +pi): on the land side the
   // apron cameras sit 2-3 m behind a canopy with the poles in front of the
@@ -483,6 +562,7 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
         height: 2.6,
         facing: 0.6,
         ground: Math.max(landGround(t), JETTY_DECK + 0.1),
+        ...seen(t),
       };
     },
     sea,
@@ -500,6 +580,7 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
       focus: "centre",
       facing: beachFacing,
       ground: landGround(t),
+      ...seen(t, PARASOLS.map((_, i) => PARASOL_OWNER + i)),
     }),
     // the seaward half of the jetty up to the lamp; faces 45° round to its +x
     // side so every auto side (front, ±35°) keeps the lens east of the deck
@@ -510,6 +591,7 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
       height: 4.6,
       facing: 0.8,
       ground: Math.max(JETTY_DECK + 0.1, water(t).ground),
+      ...seen(t, [JETTY_OWNER]),
     }),
     // the hero canoe (see heroCanoe), riding the same swell as its mesh. The
     // box reaches 0.25 m above the gunwale (close shots frame the top of a
@@ -526,6 +608,8 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
         height,
         facing: canoe.facing,
         ground: w.ground,
+        ...seen(t, [CANOE_OWNER + heroIndex]),
+        keepOut: heroKeepOut(w.level),
       };
     },
     // the band of sky over the far water line: centred well above the water
@@ -533,7 +617,7 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
     // low in frame with the sky above it
     horizon: (t) => {
       const w = water(t);
-      return { center: [0, w.up + 14, -160], radius: 4, height: 10, facing: 0, ground: w.ground };
+      return { center: [0, w.up + 14, -160], radius: 4, height: 10, facing: 0, ground: w.ground, ...seen(t) };
     },
   };
 }

@@ -323,6 +323,31 @@ function planLevels(flatHalf: number, half: number, s0: number, rings: number, f
 /*  Builder                                                             */
 /* ------------------------------------------------------------------ */
 
+const TERRAIN_CACHE = new Map<string, Terrain>();
+
+/**
+ * buildTerrain, kept per options (the same options always build the same
+ * mesh): the stage (Ground.tsx) and the camera planner
+ * (generator/camera/world.ts) read one build, so a lens can keep above the
+ * hills the stage draws without a second ~1 s build. A small LRU.
+ */
+export function terrainFor(opts: TerrainOptions): Terrain {
+  const key = [
+    opts.seed, opts.surface, opts.season, opts.lat, opts.half ?? 9000, opts.flatHalf ?? 2600,
+    opts.resolution ?? 40, opts.ringsPerLevel ?? 16, opts.maxTriangles ?? 60_000, opts.fill ?? true,
+  ].join("|");
+  const hit = TERRAIN_CACHE.get(key);
+  if (hit) {
+    TERRAIN_CACHE.delete(key);
+    TERRAIN_CACHE.set(key, hit);
+    return hit;
+  }
+  const built = buildTerrain(opts);
+  TERRAIN_CACHE.set(key, built);
+  while (TERRAIN_CACHE.size > 6) TERRAIN_CACHE.delete(TERRAIN_CACHE.keys().next().value as string);
+  return built;
+}
+
 export function buildTerrain(opts: TerrainOptions): Terrain {
   const { surface, season, lat } = opts;
   const half = opts.half ?? 9000;

@@ -259,6 +259,31 @@ export function validateFilm(film: Film): Film {
   return { ...film, direction: direction.data, plan: { ...film.plan, settings: settings.data } };
 }
 
+/**
+ * The checks that need no film: the edit's shape, its path syntax and the
+ * allow-list (and whether entries can be added or removed there). The server
+ * runs these before an edit waits on the film's queue; applyEdits repeats them.
+ */
+export function checkEdits(edits: unknown): Edit[] {
+  if (!Array.isArray(edits) || edits.length === 0) throw new EditError("edits are required");
+  return edits.map((raw, i) => {
+    const parsed = EditSchema.safeParse(raw);
+    if (!parsed.success) throw new EditError(`edit ${i + 1}: ${issues(parsed.error, "edit")}`);
+    const edit = parsed.data;
+    try {
+      const segs = parsePath(edit.path);
+      const rule = ruleFor(edit.path, segs);
+      const last = segs[segs.length - 1];
+      if (edit.op !== "set" && !rule.arrays) throw new EditError(`${edit.path}: entries cannot be added or removed here`);
+      if (edit.op === "insert" && !("key" in last)) throw new EditError(`${edit.path}: insert needs a list path (e.g. sound.hits)`);
+      if (edit.op === "remove" && "key" in last) throw new EditError(`${edit.path}: remove needs an entry path (e.g. sound.hits[2])`);
+    } catch (e) {
+      throw new EditError(`edit ${i + 1} (${edit.op} ${edit.path}): ${(e as Error).message}`);
+    }
+    return edit;
+  });
+}
+
 /** Applies the edits to a copy of the film; nothing changes if any edit fails. */
 export function applyEdits(film: Film, edits: Edit[]): EditResult {
   if (edits.length === 0) throw new EditError("no edits");
