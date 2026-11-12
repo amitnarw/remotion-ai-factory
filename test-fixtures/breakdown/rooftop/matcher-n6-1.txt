@@ -1,0 +1,9 @@
+```json
+{"verdicts": [
+  {"item": "clip:punch", "verdict": "same", "note": "a punch"},
+  {"item": "clip:punch_left", "verdict": "same"},
+  {"item": "clip:punch_right", "verdict": "same"},
+  {"item": "clip:attack_kick", "verdict": "close", "note": "a kick, not a punch"},
+  {"item": "clip:attack_kick_left", "verdict": "close"}
+]}
+```

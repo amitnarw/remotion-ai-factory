@@ -1,0 +1,13 @@
+{
+  "title": "Paris on Fast Forward",
+  "hook": "What if every price in Paris doubled every 3 seconds?",
+  "mood": "epic",
+  "characters": [{ "name": "Sophie", "gender": "female", "age": "adult", "look": "a baker in a flour-dusted apron" }],
+  "beats": [
+    { "id": "b1", "say": "At nine, a croissant costs 1 euro 20.", "lines": [], "see": "a price tag on a bakery counter", "pace": "normal", "stress": "croissant" },
+    { "id": "b2", "say": "By lunch, the same croissant costs more than a car.", "lines": [], "see": "the price tag spinning like a slot machine", "pace": "fast", "stress": "car" },
+    { "id": "b3", "say": "Economists would call it worse than Germany in 1923.", "lines": [], "see": "wheelbarrows of banknotes in the street", "pace": "normal", "stress": "1923" },
+    { "id": "b4", "say": "Scientists say a human brain cannot count past 4 billion.", "lines": [], "see": "a man counting coins, his eyes crossing", "pace": "normal", "stress": "billion" },
+    { "id": "b5", "say": "Sophie just laughs and closes the shop.", "lines": [{ "who": "Sophie", "text": "Today, bread is free." }], "see": "Sophie turning the sign to closed", "pace": "slow", "stress": "free" }
+  ]
+}

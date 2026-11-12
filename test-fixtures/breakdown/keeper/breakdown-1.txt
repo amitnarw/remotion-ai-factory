@@ -1,0 +1,17 @@
+<think>The story is set at a lighthouse in a storm. Elias appears in most beats. I list one need per thing.</think>
+```json
+{
+  "needs": [
+    { "kind": "location", "what": "a lighthouse on a rocky coast, stormy night", "words": ["lighthouse", "coast", "rocks", "sea", "storm"], "beats": ["b1", "b4", "b5", "b7", "b8"], "must": "yes", "fallback": "any stormy coast", "look": "night, rain, dark sea" },
+    { "kind": "character", "what": "an old lighthouse keeper with a grey beard", "words": ["old", "man", "keeper", "beard"], "beats": "b1-b8", "who": "Elias", "must": true, "look": "grey beard, wool coat" },
+    { "kind": "action", "what": "he climbs the spiral stairs", "words": ["climb", "stairs", "spiral"], "beats": [3], "who": "Elias", "must": false },
+    { "kind": "prop", "what": "an oil lantern", "words": ["lantern", "oil"], "beats": ["b2", "b3"], "must": true, "look": "old brass" },
+    { "kind": "effect", "what": "a storm with lightning", "words": ["storm", "lightning", "rain"], "beats": ["b4", "b5"], "must": false },
+    { "kind": "sound", "what": "a foghorn", "words": ["foghorn", "horn", "ship"], "beats": ["b6"], "must": false },
+    { "kind": "ambience", "what": "waves and wind", "words": ["waves", "wind", "sea", "storm"], "beats": ["b1", "b4", "b5"], "must": false },
+    { "kind": "music", "what": "slow, sad music", "words": ["sad", "slow"], "beats": ["b1", "b8"], "must": false },
+    { "kind": "vehicle", "what": "a ship in trouble", "words": ["ship", "boat"], "beats": ["b5", "b8"], "must": false, "fallback": "any sailing boat" },
+    { "kind": "camera", "what": "a slow orbit round the lamp", "words": ["orbit", "slow", "lamp"], "beats": ["b7"], "must": false },
+  ]
+}
+```

@@ -1,0 +1,13 @@
+{
+  "title": "The Tower That Grows",
+  "hook": "The Eiffel Tower grows 15 centimetres every summer.",
+  "mood": "documentary",
+  "characters": [{ "name": "Guide", "gender": "female", "age": "adult", "look": "a tour guide in a navy coat" }],
+  "beats": [
+    { "id": "b1", "say": "Gustave Eiffel's company built it in just over two years, for the 1889 World's Fair.", "lines": [], "see": "the tower half built, cranes on top", "pace": "normal", "stress": "1889" },
+    { "id": "b2", "say": "Scientists say iron towers will outlast stone ones by 400 years.", "lines": [], "see": "rust on a girder, then a stone bridge", "pace": "normal", "stress": "400" },
+    { "id": "b3", "say": "Every seven years, sixty tonnes of paint are brushed on by hand.", "lines": [], "see": "painters on ropes high on the tower", "pace": "normal", "stress": "sixty" },
+    { "id": "b4", "say": "It was the tallest structure in the world until 1930. Today it is a symbol of Paris.", "lines": [], "see": "the tower over the rooftops at dusk", "pace": "normal", "stress": "tallest" },
+    { "id": "b5", "say": "Nobody can say how long it will stand.", "lines": [{ "who": "Guide", "text": "More than 300 million people have visited it." }], "see": "the guide at the foot of the tower, the crowd behind her", "pace": "slow", "stress": "stand" }
+  ]
+}

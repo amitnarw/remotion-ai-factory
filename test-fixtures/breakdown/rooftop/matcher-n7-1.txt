@@ -1,0 +1,9 @@
+<think>Bullet time is exactly this: the world slows while she dodges.</think>
+{"verdicts": [
+  {"item": "planned:camera-bullet-time", "verdict": "same", "note": "bullet time on a dodge"},
+  {"item": "device:bullet-time", "verdict": "same", "note": "bullet time on a dodge"},
+  {"item": "device:time-lapse", "verdict": "no", "note": "time speeds up, it does not slow"},
+  {"item": "time:afternoon", "verdict": "no"},
+  {"item": "time:dawn", "verdict": "no"},
+  {"item": "time:golden", "verdict": "no"}
+]}

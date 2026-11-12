@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "model:polypizza-police-car", "verdict": "same", "note": ""},
+  {"item": "model:kaykit-city-builder-bits-car-police", "verdict": "same", "note": ""},
+  {"item": "model:kenney-car-kit-police", "verdict": "same", "note": ""},
+  {"item": "model:kenney-car-kit-tractor-police", "verdict": "no", "note": "a police tractor"},
+  {"item": "model:kaykit-city-builder-bits-car-hatchback", "verdict": "close", "note": "a plain car"}
+]}

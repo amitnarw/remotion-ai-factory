@@ -1,0 +1,4 @@
+{"music": [{"start": "b1", "mood": "tense"}, {"start": "b8", "mood": "upbeat"}],
+ "beds": [{"start": "b1", "end": "b4", "sound": "street_murmur", "level": 0.5}, {"start": "b1", "end": "b4", "sound": "traffic", "level": 0.35},
+          {"start": "b4", "end": null, "sound": "street_murmur", "level": 0.45}, {"start": "b4", "end": null, "sound": "traffic", "level": 0.25}],
+ "hits": [{"beat": "b7", "at": "start", "sound": "impact_soft_bodies"}]}

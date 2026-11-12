@@ -1,0 +1,1 @@
+{"verdicts": [{"item": "planned:graphic-graphics-layer", "verdict": "same", "note": "a map with a route line"}]}

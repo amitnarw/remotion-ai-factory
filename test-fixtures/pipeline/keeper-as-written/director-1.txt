@@ -1,0 +1,11 @@
+<think>One stormy coast, a counter and a timer would not suit a drama; the channel drops them anyway.</think>
+{
+  "scenes": [
+    {"start": "b1", "kit": "ocean", "time": "night", "weather": "storm", "subject": "none", "crowd": "none", "camera": "steady-push", "accent": "classic", "cast": []},
+    {"start": "b3", "kit": "interior", "time": "night", "weather": "storm", "subject": "none", "crowd": "none", "camera": "orbit-drift", "accent": "classic", "cast": []}
+  ],
+  "counter": {"title": "Years of light", "unit": "", "steps": [{"beat": "b1", "value": "40", "sub": "forty years"}]},
+  "timer": {"label": "The storm", "startBeat": "b1", "endBeat": "b3"},
+  "prop": null,
+  "world": []
+}

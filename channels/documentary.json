@@ -1,0 +1,66 @@
+{
+  "id": "documentary",
+  "version": 1,
+  "name": "Documentary",
+  "genre": "documentary",
+  "description": "A surprising fact, the question it raises, the context and the evidence, a turning point and what it means. Told plainly by one narrator.",
+  "language": "en",
+  "writer": {
+    "intro": "You write documentary videos for YouTube: a question, its context and its evidence, told plainly.",
+    "rules": [
+      "The hook is a surprising fact, stated, at most 14 words. It is read aloud first and shown on screen.",
+      "Then the question it raises, the context, the evidence point by point, a turning point, and what it means.",
+      "Every claim is concrete and could be checked; say so when something is uncertain or estimated.",
+      "End on a summary and an open thought. No \"thanks for watching\", no questions to the viewer, no call to action."
+    ],
+    "narration": "an authoritative narrator, plain speech; quotes are read by the narrator",
+    "hookExample": "Every clock in Paris stopped at the same second.",
+    "structure": [
+      { "part": "the fact and the question", "share": 0.15, "purpose": "why this matters" },
+      { "part": "context", "share": 0.2, "purpose": "what was true before" },
+      { "part": "evidence", "share": 0.4, "purpose": "one point per beat" },
+      { "part": "turning point", "share": 0.1, "purpose": "what changes the picture" },
+      { "part": "what it means", "share": 0.15, "purpose": "a summary and an open thought" }
+    ],
+    "tone": ["calm", "precise", "curious"],
+    "avoid": ["hype", "invented numbers", "certainty the evidence does not give"],
+    "modes": ["premise", "adapt"],
+    "scriptMode": "adapt",
+    "maxCharacters": 0
+  },
+  "critic": {
+    "intro": "You are a fact-minded editor of documentary videos for YouTube.",
+    "watchFor": "a claim stated as fact that is uncertain, a beat with no evidence, a jump in the argument, a vague number."
+  },
+  "voices": {
+    "narration": { "enabled": true, "engine": "kitten2", "voice": "Bruno" }
+  },
+  "music": { "moods": ["documentary", "ambient"], "fallback": "documentary", "ambience": true },
+  "look": {
+    "grades": ["overcast-documentary", "neutral"],
+    "times": ["noon", "afternoon", "overcast"],
+    "shotSeconds": [4, 8],
+    "notes": "Slow pushes and crane reveals; no dutch angles, no handheld. Flights between places carry the argument."
+  },
+  "captions": { "preset": "documentary" },
+  "formats": {
+    "default": "16:9",
+    "allowed": [
+      { "format": "16:9", "min": 120, "max": 600 },
+      { "format": "9:16", "min": 30, "max": 90 }
+    ]
+  },
+  "devices": {
+    "counter": true,
+    "react": true,
+    "timer": true,
+    "heroProp": false,
+    "bpm": false,
+    "worldEvents": true,
+    "lapse": true,
+    "flights": true,
+    "actors": false,
+    "bulletTime": false
+  },
+  "gates": { "story": true }
+}

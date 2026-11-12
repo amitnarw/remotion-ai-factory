@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "model:polypizza-hoodie-character", "verdict": "same", "note": "a young person in a hoodie; recolour it red"},
+  {"item": "model:polypizza-woman", "verdict": "close", "note": "a woman, no hoodie"},
+  {"item": "model:polypizza-woman-casual", "verdict": "close", "note": "casual clothes"},
+  {"item": "model:polypizza-woman-in-dress", "verdict": "no", "note": "a dress"},
+  {"item": "model:polypizza-woman-in-tank-top", "verdict": "close"}
+]}

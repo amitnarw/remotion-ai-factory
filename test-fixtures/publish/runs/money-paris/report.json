@@ -1,0 +1,14 @@
+{
+  "premise": "What if your money doubled every three seconds?",
+  "id": "money-paris",
+  "channel": "what-if",
+  "output": "video.mp4",
+  "frames": 790,
+  "durationSec": "26.33",
+  "fps": 30,
+  "scenes": 3,
+  "credits": [
+    "\"Pyramids\" by Poly by Google (https://poly.pizza/m/5KCc2tKu254), licensed under CC-BY 3.0",
+    "\"SM - EIffel Tower\" by Scott Marshall (https://poly.pizza/m/aIpJchqtRTg), licensed under CC-BY 3.0"
+  ]
+}

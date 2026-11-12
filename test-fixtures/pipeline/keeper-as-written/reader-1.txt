@@ -1,0 +1,14 @@
+<think>Three beats; only b1 has no direction. Mara and Tom speak.</think>
+{
+  "title": "The Keeper's Last Night",
+  "mood": "sad",
+  "characters": [
+    {"name": "Mara", "gender": "female", "age": "adult", "look": "the keeper's daughter in a yellow raincoat"},
+    {"name": "Tom", "gender": "male", "age": "old", "look": "a fisherman with a grey beard"}
+  ],
+  "beats": [
+    {"beat": "b1", "see": "A storm rolls in over the sea at dusk, the lighthouse lamp flickering", "pace": "linger", "stress": "storm"},
+    {"beat": "b2", "see": "A lighthouse on a rocky coast, waves breaking, a stormy night", "pace": "normal", "stress": "stairs"},
+    {"beat": "b3", "see": "The lamp room, rain running down the glass", "pace": "linger", "stress": "light"}
+  ]
+}

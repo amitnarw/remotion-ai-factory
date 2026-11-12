@@ -1,0 +1,5 @@
+{"verdicts": [
+  {"item": "sound-file:oga-100cc0-shot-01", "verdict": "same", "note": "a shot"},
+  {"item": "sound-file:oga-100cc0-shot-02", "verdict": "same", "note": "a shot"},
+  {"item": "sound:thunder_crack", "verdict": "no", "note": "thunder"}
+]}

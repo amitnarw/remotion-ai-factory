@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <!-- Action short's own logo: an orange disc with a white bolt (made for this project). -->
+  <circle cx="50" cy="50" r="46" fill="#ff6a1a"/>
+  <path d="M56,14 L26,56 L46,56 L40,86 L74,42 L54,42 Z" fill="#ffffff"/>
+</svg>

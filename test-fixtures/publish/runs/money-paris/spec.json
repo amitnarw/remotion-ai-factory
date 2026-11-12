@@ -1,0 +1,1058 @@
+{
+  "id": "what-if-money-doubled-every-3-seconds-in-paris",
+  "title": "Money That Won't Stop",
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "palette": "pastelDay",
+  "settings": {
+    "format": "9:16",
+    "targetDuration": 25,
+    "quality": "final"
+  },
+  "story": {
+    "title": "Money That Won't Stop",
+    "mood": "upbeat",
+    "hook": "What if your money doubled every three seconds?",
+    "characters": [
+      {
+        "name": "Ana",
+        "gender": "female",
+        "age": "adult",
+        "look": "café owner in a green apron",
+        "voice": "Rosie"
+      }
+    ],
+    "beats": [
+      {
+        "id": "b1",
+        "from": 3.1,
+        "to": 6.4,
+        "say": "It starts with one coin on a café table.",
+        "see": "A single coin on a café table, morning light",
+        "pace": "quick",
+        "stress": "coin",
+        "lines": [
+          {
+            "id": "b1-n1",
+            "who": "narrator",
+            "text": "It starts with one coin on a café table.",
+            "at": 3.267,
+            "dur": 2.991,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "from": 6.4,
+        "to": 11.033333333333333,
+        "say": "Three seconds later there are two of them.",
+        "see": "Two coins, the owner leans in",
+        "pace": "normal",
+        "stress": "two",
+        "lines": [
+          {
+            "id": "b2-n1",
+            "who": "narrator",
+            "text": "Three seconds later there are two of them.",
+            "at": 6.567,
+            "dur": 2.296,
+            "estimated": false
+          },
+          {
+            "id": "b2-d1",
+            "who": "Ana",
+            "text": "Did you just drop that?",
+            "at": 8.967,
+            "dur": 1.931,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "from": 11.033333333333333,
+        "to": 13.766666666666667,
+        "say": "A minute in, your pockets burst.",
+        "see": "Notes spilling from a jacket on the busy street",
+        "pace": "normal",
+        "stress": "bursting",
+        "lines": [
+          {
+            "id": "b3-n1",
+            "who": "narrator",
+            "text": "A minute in, your pockets burst.",
+            "at": 11.2,
+            "dur": 2.434,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b4",
+        "from": 13.766666666666667,
+        "to": 17.066666666666666,
+        "say": "The street lights flicker as banks overload.",
+        "see": "Street lights dim, shop signs go dark",
+        "pace": "quick",
+        "stress": "banks",
+        "lines": [
+          {
+            "id": "b4-n1",
+            "who": "narrator",
+            "text": "The street lights flicker as banks overload.",
+            "at": 13.933,
+            "dur": 2.991,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b5",
+        "from": 17.066666666666666,
+        "to": 19.933333333333334,
+        "say": "By noon you outweigh the planet.",
+        "see": "Earth from orbit, glowing city lights",
+        "pace": "linger",
+        "stress": "planet",
+        "lines": [
+          {
+            "id": "b5-n1",
+            "who": "narrator",
+            "text": "By noon you outweigh the planet.",
+            "at": 17.233,
+            "dur": 2.575,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b6",
+        "from": 19.933333333333334,
+        "to": 22.8,
+        "say": "Every price on Earth tries to keep up.",
+        "see": "Price signs spinning across the globe",
+        "pace": "normal",
+        "stress": "price",
+        "lines": [
+          {
+            "id": "b6-n1",
+            "who": "narrator",
+            "text": "Every price on Earth tries to keep up.",
+            "at": 20.1,
+            "dur": 2.575,
+            "estimated": false
+          }
+        ]
+      },
+      {
+        "id": "b7",
+        "from": 22.8,
+        "to": 25.533333333333335,
+        "say": "Every three seconds, it doubles.",
+        "see": "Earth slowly turning in silence",
+        "pace": "linger",
+        "stress": "doubles",
+        "lines": [
+          {
+            "id": "b7-n1",
+            "who": "narrator",
+            "text": "Every three seconds, it doubles.",
+            "at": 22.967,
+            "dur": 2.434,
+            "estimated": false
+          }
+        ]
+      }
+    ]
+  },
+  "shots": [
+    {
+      "subject": "scene",
+      "size": "EWS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "push_in",
+      "place": "center",
+      "energy": "calm",
+      "style": "smooth",
+      "from": 0,
+      "to": 3.1,
+      "beat": "hook"
+    },
+    {
+      "subject": "cafe",
+      "size": "WS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "push_in",
+      "place": "auto",
+      "energy": "calm",
+      "style": "smooth",
+      "from": 3.1,
+      "to": 6.4,
+      "beat": "b1"
+    },
+    {
+      "subject": "hero",
+      "size": "FS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "push_in",
+      "place": "auto",
+      "energy": "normal",
+      "style": "smooth",
+      "from": 6.4,
+      "to": 11.033333333333333,
+      "beat": "b2"
+    },
+    {
+      "subject": "plaza",
+      "size": "WS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "push_in",
+      "place": "auto",
+      "energy": "calm",
+      "style": "smooth",
+      "from": 11.033333333333333,
+      "to": 13.766666666666667,
+      "beat": "b3"
+    },
+    {
+      "subject": "scene",
+      "size": "MS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "push_in",
+      "place": "auto",
+      "energy": "bold",
+      "style": "handheld",
+      "from": 13.766666666666667,
+      "to": 17.066666666666666,
+      "beat": "b4"
+    },
+    {
+      "subject": "plaza",
+      "size": "WS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "orbit_left",
+      "place": "auto",
+      "energy": "calm",
+      "style": "smooth",
+      "from": 17.066666666666666,
+      "to": 19.933333333333334,
+      "beat": "b5"
+    },
+    {
+      "subject": "plaza",
+      "size": "MS",
+      "angle": "eye",
+      "side": "auto",
+      "move": "orbit_left",
+      "place": "auto",
+      "energy": "normal",
+      "style": "smooth",
+      "from": 19.933333333333334,
+      "to": 22.8,
+      "beat": "b6"
+    },
+    {
+      "subject": "scene",
+      "size": "WS",
+      "angle": "high",
+      "side": "auto",
+      "move": "crane_up",
+      "place": "auto",
+      "energy": "calm",
+      "style": "smooth",
+      "from": 22.8,
+      "to": 26.333333333333332,
+      "beat": "b7"
+    }
+  ],
+  "transitions": [
+    {
+      "t": 11.033333333333333,
+      "type": "whip",
+      "dur": 0.34
+    }
+  ],
+  "flights": [
+    {
+      "from": 14.933,
+      "to": 22.933
+    }
+  ],
+  "hook": {
+    "text": "What if your money doubled every three seconds?",
+    "keywordHighlight": [],
+    "t": 0,
+    "duration": 3.1
+  },
+  "events": [
+    {
+      "t": 0.05,
+      "name": "hook",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "pop_light"
+        }
+      ]
+    },
+    {
+      "t": 8.077,
+      "name": "counter-1",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "pop_light"
+        }
+      ]
+    },
+    {
+      "t": 11.083,
+      "name": "hit-b3-start",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "coins"
+        }
+      ]
+    },
+    {
+      "t": 12.97,
+      "name": "counter-2",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "pop_light"
+        }
+      ]
+    },
+    {
+      "t": 17.117,
+      "name": "hit-b5-start",
+      "targets": [],
+      "sfx": [
+        {
+          "tag": "whoosh_dissolve"
+        }
+      ]
+    }
+  ],
+  "captions": [
+    {
+      "text": "It starts with",
+      "from": 3.267,
+      "to": 4.292,
+      "keyword": [],
+      "words": [
+        {
+          "text": "It",
+          "from": 3.267,
+          "to": 3.438
+        },
+        {
+          "text": "starts",
+          "from": 3.438,
+          "to": 3.95
+        },
+        {
+          "text": "with",
+          "from": 3.95,
+          "to": 4.292
+        }
+      ]
+    },
+    {
+      "text": "one coin on a",
+      "from": 4.292,
+      "to": 5.147,
+      "keyword": [
+        "coin"
+      ],
+      "words": [
+        {
+          "text": "one",
+          "from": 4.292,
+          "to": 4.549
+        },
+        {
+          "text": "coin",
+          "from": 4.549,
+          "to": 4.89
+        },
+        {
+          "text": "on",
+          "from": 4.89,
+          "to": 5.061
+        },
+        {
+          "text": "a",
+          "from": 5.061,
+          "to": 5.147
+        }
+      ]
+    },
+    {
+      "text": "café table.",
+      "from": 5.147,
+      "to": 6.408,
+      "keyword": [],
+      "words": [
+        {
+          "text": "café",
+          "from": 5.147,
+          "to": 5.489
+        },
+        {
+          "text": "table.",
+          "from": 5.489,
+          "to": 6.258
+        }
+      ]
+    },
+    {
+      "text": "Three seconds",
+      "from": 6.567,
+      "to": 7.292,
+      "keyword": [],
+      "words": [
+        {
+          "text": "Three",
+          "from": 6.567,
+          "to": 6.869
+        },
+        {
+          "text": "seconds",
+          "from": 6.869,
+          "to": 7.292
+        }
+      ]
+    },
+    {
+      "text": "later there are",
+      "from": 7.292,
+      "to": 8.077,
+      "keyword": [],
+      "words": [
+        {
+          "text": "later",
+          "from": 7.292,
+          "to": 7.594
+        },
+        {
+          "text": "there",
+          "from": 7.594,
+          "to": 7.896
+        },
+        {
+          "text": "are",
+          "from": 7.896,
+          "to": 8.077
+        }
+      ]
+    },
+    {
+      "text": "two of them.",
+      "from": 8.077,
+      "to": 8.967,
+      "keyword": [
+        "two"
+      ],
+      "words": [
+        {
+          "text": "two",
+          "from": 8.077,
+          "to": 8.258
+        },
+        {
+          "text": "of",
+          "from": 8.258,
+          "to": 8.379
+        },
+        {
+          "text": "them.",
+          "from": 8.379,
+          "to": 8.863
+        }
+      ]
+    },
+    {
+      "text": "Did you just",
+      "from": 8.967,
+      "to": 9.844,
+      "keyword": [],
+      "speaker": "Ana",
+      "words": [
+        {
+          "text": "Did",
+          "from": 8.967,
+          "to": 9.23
+        },
+        {
+          "text": "you",
+          "from": 9.23,
+          "to": 9.493
+        },
+        {
+          "text": "just",
+          "from": 9.493,
+          "to": 9.844
+        }
+      ]
+    },
+    {
+      "text": "drop that?",
+      "from": 9.844,
+      "to": 11.048,
+      "keyword": [],
+      "speaker": "Ana",
+      "words": [
+        {
+          "text": "drop",
+          "from": 9.844,
+          "to": 10.195
+        },
+        {
+          "text": "that?",
+          "from": 10.195,
+          "to": 10.898
+        }
+      ]
+    },
+    {
+      "text": "A minute in,",
+      "from": 11.2,
+      "to": 12.159,
+      "keyword": [],
+      "words": [
+        {
+          "text": "A",
+          "from": 11.2,
+          "to": 11.274
+        },
+        {
+          "text": "minute",
+          "from": 11.274,
+          "to": 11.716
+        },
+        {
+          "text": "in,",
+          "from": 11.716,
+          "to": 12.159
+        }
+      ]
+    },
+    {
+      "text": "your pockets",
+      "from": 12.159,
+      "to": 12.97,
+      "keyword": [],
+      "words": [
+        {
+          "text": "your",
+          "from": 12.159,
+          "to": 12.454
+        },
+        {
+          "text": "pockets",
+          "from": 12.454,
+          "to": 12.97
+        }
+      ]
+    },
+    {
+      "text": "burst.",
+      "from": 12.97,
+      "to": 13.784,
+      "keyword": [
+        "burst"
+      ],
+      "words": [
+        {
+          "text": "burst.",
+          "from": 12.97,
+          "to": 13.634
+        }
+      ]
+    },
+    {
+      "text": "The street lights",
+      "from": 13.933,
+      "to": 15.028,
+      "keyword": [],
+      "words": [
+        {
+          "text": "The",
+          "from": 13.933,
+          "to": 14.152
+        },
+        {
+          "text": "street",
+          "from": 14.152,
+          "to": 14.59
+        },
+        {
+          "text": "lights",
+          "from": 14.59,
+          "to": 15.028
+        }
+      ]
+    },
+    {
+      "text": "flicker as banks",
+      "from": 15.028,
+      "to": 16.049,
+      "keyword": [
+        "banks"
+      ],
+      "words": [
+        {
+          "text": "flicker",
+          "from": 15.028,
+          "to": 15.538
+        },
+        {
+          "text": "as",
+          "from": 15.538,
+          "to": 15.684
+        },
+        {
+          "text": "banks",
+          "from": 15.684,
+          "to": 16.049
+        }
+      ]
+    },
+    {
+      "text": "overload.",
+      "from": 16.049,
+      "to": 17.074,
+      "keyword": [],
+      "words": [
+        {
+          "text": "overload.",
+          "from": 16.049,
+          "to": 16.924
+        }
+      ]
+    },
+    {
+      "text": "By noon you",
+      "from": 17.233,
+      "to": 18.006,
+      "keyword": [],
+      "words": [
+        {
+          "text": "By",
+          "from": 17.233,
+          "to": 17.405
+        },
+        {
+          "text": "noon",
+          "from": 17.405,
+          "to": 17.748
+        },
+        {
+          "text": "you",
+          "from": 17.748,
+          "to": 18.006
+        }
+      ]
+    },
+    {
+      "text": "outweigh the",
+      "from": 18.006,
+      "to": 18.95,
+      "keyword": [],
+      "words": [
+        {
+          "text": "outweigh",
+          "from": 18.006,
+          "to": 18.693
+        },
+        {
+          "text": "the",
+          "from": 18.693,
+          "to": 18.95
+        }
+      ]
+    },
+    {
+      "text": "planet.",
+      "from": 18.95,
+      "to": 19.958,
+      "keyword": [
+        "planet"
+      ],
+      "words": [
+        {
+          "text": "planet.",
+          "from": 18.95,
+          "to": 19.808
+        }
+      ]
+    },
+    {
+      "text": "Every price on",
+      "from": 20.1,
+      "to": 21.009,
+      "keyword": [
+        "price"
+      ],
+      "words": [
+        {
+          "text": "Every",
+          "from": 20.1,
+          "to": 20.479
+        },
+        {
+          "text": "price",
+          "from": 20.479,
+          "to": 20.857
+        },
+        {
+          "text": "on",
+          "from": 20.857,
+          "to": 21.009
+        }
+      ]
+    },
+    {
+      "text": "Earth tries to",
+      "from": 21.009,
+      "to": 21.918,
+      "keyword": [],
+      "words": [
+        {
+          "text": "Earth",
+          "from": 21.009,
+          "to": 21.388
+        },
+        {
+          "text": "tries",
+          "from": 21.388,
+          "to": 21.766
+        },
+        {
+          "text": "to",
+          "from": 21.766,
+          "to": 21.918
+        }
+      ]
+    },
+    {
+      "text": "keep up.",
+      "from": 21.918,
+      "to": 22.825,
+      "keyword": [],
+      "words": [
+        {
+          "text": "keep",
+          "from": 21.918,
+          "to": 22.221
+        },
+        {
+          "text": "up.",
+          "from": 22.221,
+          "to": 22.675
+        }
+      ]
+    },
+    {
+      "text": "Every three",
+      "from": 22.967,
+      "to": 23.683,
+      "keyword": [],
+      "words": [
+        {
+          "text": "Every",
+          "from": 22.967,
+          "to": 23.325
+        },
+        {
+          "text": "three",
+          "from": 23.325,
+          "to": 23.683
+        }
+      ]
+    },
+    {
+      "text": "seconds,",
+      "from": 23.683,
+      "to": 24.47,
+      "keyword": [],
+      "words": [
+        {
+          "text": "seconds,",
+          "from": 23.683,
+          "to": 24.47
+        }
+      ]
+    },
+    {
+      "text": "it doubles.",
+      "from": 24.47,
+      "to": 25.551,
+      "keyword": [
+        "doubles"
+      ],
+      "words": [
+        {
+          "text": "it",
+          "from": 24.47,
+          "to": 24.613
+        },
+        {
+          "text": "doubles.",
+          "from": 24.613,
+          "to": 25.401
+        }
+      ]
+    }
+  ],
+  "statPanel": {
+    "title": "YOUR MONEY",
+    "unit": "x",
+    "beats": [
+      {
+        "t": 4.549,
+        "value": "1",
+        "zoom": 1,
+        "sub": "ONE COIN",
+        "scale": 1
+      },
+      {
+        "t": 8.077,
+        "value": "2",
+        "zoom": 1.75,
+        "sub": "ALREADY DOUBLE",
+        "scale": 1.75
+      },
+      {
+        "t": 12.97,
+        "value": "1048576",
+        "zoom": 16,
+        "sub": "ONE MINUTE IN",
+        "scale": 16
+      }
+    ]
+  },
+  "heroProp": {
+    "style": "coin-stacks",
+    "growth": "multiply",
+    "anchor": "sidewalk-left"
+  },
+  "scenes": [
+    {
+      "scene": "street-block",
+      "from": 0,
+      "to": 11.033333333333333,
+      "kit": "street-block",
+      "look": {
+        "timeOfDay": "golden"
+      },
+      "street": {
+        "crowdCount": 25,
+        "vehicleCount": 9,
+        "accent": "mint",
+        "cameraStyle": "walk-through"
+      }
+    },
+    {
+      "scene": "world",
+      "from": 11.033333333333333,
+      "to": 19.933333333333334,
+      "kit": "world",
+      "look": {
+        "timeOfDay": "golden"
+      },
+      "street": {
+        "crowdCount": 12,
+        "vehicleCount": 4,
+        "accent": "classic",
+        "cameraStyle": "steady-push"
+      },
+      "world": {
+        "place": "paris",
+        "date": "2026-06-21",
+        "time": "19:30"
+      },
+      "flight": false
+    },
+    {
+      "scene": "world",
+      "from": 19.933333333333334,
+      "to": 26.333333333333332,
+      "kit": "world",
+      "look": {
+        "timeOfDay": "night"
+      },
+      "street": {
+        "crowdCount": 12,
+        "vehicleCount": 4,
+        "accent": "classic",
+        "cameraStyle": "steady-push"
+      },
+      "world": {
+        "place": "cairo",
+        "date": "2026-06-21",
+        "time": "22:00"
+      },
+      "flight": true
+    }
+  ],
+  "worldEvents": [],
+  "audio": {
+    "ambient": [
+      {
+        "tag": "street_murmur",
+        "from": 0,
+        "to": 11.033,
+        "vol": 0.55
+      },
+      {
+        "tag": "traffic",
+        "from": 0,
+        "to": 11.033,
+        "vol": 0.3
+      },
+      {
+        "tag": "street_murmur",
+        "from": 11.033,
+        "to": 19.933,
+        "vol": 0.5
+      },
+      {
+        "tag": "traffic",
+        "from": 11.033,
+        "to": 19.933,
+        "vol": 0.3
+      },
+      {
+        "tag": "forest_birds",
+        "from": 11.033,
+        "to": 19.933,
+        "vol": 0.15
+      },
+      {
+        "tag": "street_murmur",
+        "from": 19.933,
+        "to": 26.333,
+        "vol": 0.3
+      },
+      {
+        "tag": "traffic",
+        "from": 19.933,
+        "to": 26.333,
+        "vol": 0.15
+      },
+      {
+        "tag": "night_insects",
+        "from": 19.933,
+        "to": 26.333,
+        "vol": 0.3
+      },
+      {
+        "tag": "wind_city",
+        "from": 19.933,
+        "to": 26.333,
+        "vol": 0.2
+      }
+    ],
+    "music": [
+      {
+        "mood": "upbeat",
+        "from": 0,
+        "to": 17.067
+      },
+      {
+        "mood": "epic",
+        "from": 17.067,
+        "to": 26.333333333333332
+      }
+    ],
+    "voiceFiles": [
+      {
+        "id": "hook",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/hook.wav",
+        "at": 0.1,
+        "dur": 2.853,
+        "kind": "narration"
+      },
+      {
+        "id": "b1-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b1-n1.wav",
+        "at": 3.267,
+        "dur": 2.991,
+        "kind": "narration"
+      },
+      {
+        "id": "b2-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b2-n1.wav",
+        "at": 6.567,
+        "dur": 2.296,
+        "kind": "narration"
+      },
+      {
+        "id": "b2-d1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b2-d1.wav",
+        "at": 8.967,
+        "dur": 1.931,
+        "kind": "dialog"
+      },
+      {
+        "id": "b3-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b3-n1.wav",
+        "at": 11.2,
+        "dur": 2.434,
+        "kind": "narration"
+      },
+      {
+        "id": "b4-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b4-n1.wav",
+        "at": 13.933,
+        "dur": 2.991,
+        "kind": "narration"
+      },
+      {
+        "id": "b5-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b5-n1.wav",
+        "at": 17.233,
+        "dur": 2.575,
+        "kind": "narration"
+      },
+      {
+        "id": "b6-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b6-n1.wav",
+        "at": 20.1,
+        "dur": 2.575,
+        "kind": "narration"
+      },
+      {
+        "id": "b7-n1",
+        "file": "voice/what-if-money-doubled-every-3-seconds-in-paris/b7-n1.wav",
+        "at": 22.967,
+        "dur": 2.434,
+        "kind": "narration"
+      }
+    ],
+    "narration": {
+      "enabled": true,
+      "engine": "kitten2",
+      "voice": "Bruno"
+    },
+    "dialogs": {
+      "enabled": true,
+      "engine": "kitten2",
+      "voices": {
+        "Ana": "Rosie"
+      }
+    }
+  }
+}

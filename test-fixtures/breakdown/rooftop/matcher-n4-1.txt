@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "clip:sprint", "verdict": "same"},
+  {"item": "action:run", "verdict": "same", "note": "run to a spot"},
+  {"item": "clip:run", "verdict": "same"},
+  {"item": "clip:run_back", "verdict": "no", "note": "running backwards"},
+  {"item": "clip:run_holding", "verdict": "close", "note": "running while holding something"}
+]}

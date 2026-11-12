@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "note": "What acquisition took in (src/generator/library/acquire). Models are world-catalog records (src/world/catalog.ts), sounds audio-library entries; the files live in public/assets/acquired/ on this machine only. Rebuild a machine's files with: npx tsx scripts/acquire.ts sync",
+ "models": {
+  "v": 1,
+  "keys": "id; f=file under public/; pk=pack key (see packs: name, src=source, l=licence, by=author, u=url); c=category; pt=building part; p=placement; r=regions; io=i|o|b indoor/outdoor/both; n=name words; t=extra tags; s=[w,h,d] metres (scaled); o=[x,y,z] bottom-centre of the box from the model origin, metres (scaled); k=scale to apply (absent=1); tri=triangles; mm=[mesh nodes, materials]; an=animation names; l/by/u/cr=licence, author, url, credit line when they differ from the pack; lm=[landmark, city, country]",
+  "packs": {},
+  "assets": []
+ },
+ "sounds": [],
+ "items": []
+}

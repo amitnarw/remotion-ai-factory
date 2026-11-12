@@ -1,0 +1,11 @@
+{
+  "hooks": [
+    "One coin. Three seconds. Then everything breaks.",
+    "Your wallet just became the world's biggest problem.",
+    "Imagine never running out of money. Now imagine it never stops."
+  ],
+  "endings": [
+    "Would you spend it fast, or run? Tell me below.",
+    "And somewhere, a bank is still counting."
+  ]
+}

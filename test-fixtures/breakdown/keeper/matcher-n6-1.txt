@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "sound:ocean_ship_horn", "verdict": "same", "note": "a ship's foghorn blast"},
+  {"item": "sound:city_horn", "verdict": "no", "note": "a car horn"},
+  {"item": "sound:horn_distant", "verdict": "no", "note": "a car horn far away"},
+  {"item": "sound:space_whoosh", "verdict": "no"},
+  {"item": "bed:space_ship_engine", "verdict": "no"}
+]}

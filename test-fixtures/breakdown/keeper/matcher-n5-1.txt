@@ -1,0 +1,1 @@
+{"weather:storm": {"verdict": "same", "note": "storm weather with lightning"}, "event:rain-start": "close", "event:rain-stop": "no", "weather:rain": {"verdict": "close", "note": "rain without lightning"}, "reaction:water": "no"}

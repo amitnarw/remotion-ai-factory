@@ -1,0 +1,19 @@
+{"needs": [
+  {"kind": "set", "what": "the old streets of Rome at night, by the Colosseum", "words": ["rome", "colosseum", "street", "night"], "beats": ["b1", "b2"], "must": true, "fallback": "any old European city at night"},
+  {"kind": "set", "what": "a Paris square at dawn", "words": ["paris", "square", "plaza", "dawn"], "beats": ["b9"], "must": true},
+  {"kind": "character", "what": "a courier in a red hoodie", "words": ["courier", "hoodie", "woman"], "beats": ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], "who": "Mara", "must": true, "look": "red hoodie, messenger bag"},
+  {"kind": "action", "what": "she runs through the streets", "words": ["run", "sprint"], "beats": ["b2"], "who": "Mara", "must": true},
+  {"kind": "action", "what": "she leaps the gap between two rooftops", "words": ["jump", "leap", "rooftop"], "beats": ["b4"], "who": "Mara", "must": true},
+  {"kind": "action", "what": "she fights a guard off with a punch", "words": ["punch", "fight"], "beats": ["b6"], "who": "Mara", "must": false},
+  {"kind": "effect", "what": "time slows as she dodges a bullet", "words": ["slow motion", "bullet", "dodge"], "beats": ["b5"], "must": true},
+  {"kind": "vehicle", "what": "a police car with flashing lights", "words": ["police", "car"], "beats": ["b2"], "must": false},
+  {"kind": "vehicle", "what": "a motorbike", "words": ["motorbike", "motorcycle"], "beats": ["b7"], "must": false},
+  {"kind": "effect", "what": "an explosion throwing debris across the street", "words": ["explosion", "debris", "fire"], "beats": ["b7"], "must": false},
+  {"kind": "sound", "what": "police sirens", "words": ["siren", "police"], "beats": ["b3"], "must": false},
+  {"kind": "sound", "what": "gunshots", "words": ["gunshot", "gun", "shot"], "beats": ["b5"], "must": false},
+  {"kind": "ambience", "what": "night city traffic", "words": ["traffic", "city", "night"], "beats": ["b1"], "must": false},
+  {"kind": "music", "what": "fast, tense music", "words": ["tense", "fast"], "beats": ["b1", "b5"], "must": false},
+  {"kind": "camera", "what": "a shaky handheld camera", "words": ["handheld", "shaky"], "beats": ["b4", "b6"], "must": false},
+  {"kind": "graphic", "what": "a countdown timer on screen", "words": ["timer", "countdown"], "beats": ["b3"], "must": true},
+  {"kind": "graphic", "what": "a map with her route from Rome to Paris", "words": ["map", "route"], "beats": ["b8"], "must": false}
+]}

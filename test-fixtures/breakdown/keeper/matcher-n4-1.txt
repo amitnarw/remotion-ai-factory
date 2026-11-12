@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "model:kaykit-halloween-bits-lantern-hanging", "verdict": "same", "note": ""},
+  {"item": "model:kaykit-halloween-bits-lantern-standing", "verdict": "same", "note": "a standing lantern"},
+  {"item": "model:kaykit-halloween-bits-post-lantern", "verdict": "close", "note": "a lantern on a post"},
+  {"item": "model:kaykit-holiday-bits-lantern", "verdict": "close", "note": "a festive lantern"},
+  {"item": "model:kaykit-holiday-bits-lantern-decorated", "verdict": "no", "note": "decorated for the holidays"}
+]}

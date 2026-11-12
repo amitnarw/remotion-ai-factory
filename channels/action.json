@@ -1,0 +1,73 @@
+{
+  "id": "action",
+  "version": 2,
+  "name": "Action short",
+  "genre": "action short",
+  "description": "A cold open already in motion, a chase or a conflict, one set piece, a reversal and a button ending. Fast cuts, little narration, short lines.",
+  "language": "en",
+  "writer": {
+    "intro": "You write short, fast action videos for YouTube Shorts.",
+    "rules": [
+      "The hook is an image already in motion, not a question: at most 10 words. It is read aloud first and shown on screen.",
+      "Open cold, in the middle of a chase or a conflict. Every beat raises the stakes or the speed.",
+      "Build to one set piece, then a reversal that changes who is winning.",
+      "End on a beat of payoff or a joke. No \"thanks for watching\", no questions to the viewer, no call to action."
+    ],
+    "narration": "a few words at a time, present tense, punchy",
+    "hookExample": "The bridge is already falling.",
+    "structure": [
+      { "part": "cold open", "share": 0.15, "purpose": "motion from the first frame" },
+      { "part": "chase or conflict", "share": 0.45, "purpose": "the stakes rise beat by beat" },
+      { "part": "set piece", "share": 0.25, "purpose": "the biggest moment" },
+      { "part": "reversal and button", "share": 0.15, "purpose": "a turn, then a payoff or a joke" }
+    ],
+    "tone": ["fast", "physical", "clear about who wants what"],
+    "avoid": ["slow explanations", "long narration", "action the viewer cannot follow"],
+    "modes": ["premise", "adapt"],
+    "scriptMode": "adapt",
+    "maxCharacters": 3,
+    "maxLineWords": 8
+  },
+  "critic": {
+    "intro": "You are a ruthless editor of short action videos for YouTube.",
+    "watchFor": "a slow start, action that is hard to follow, a beat where nothing changes, a set piece that does not pay off."
+  },
+  "voices": {
+    "narration": { "enabled": true, "engine": "kitten2", "voice": "Bruno" },
+    "dialogs": { "enabled": true, "engine": "kitten2" }
+  },
+  "music": { "moods": ["epic", "tense"], "fallback": "epic", "ambience": true },
+  "look": {
+    "grades": ["epic-teal-orange", "golden-hour", "night-moonlight"],
+    "times": ["golden", "night"],
+    "shotSeconds": [1, 2.5],
+    "notes": "Follow shots, low angles and whip moves; handheld and dutch angles are welcome."
+  },
+  "captions": { "preset": "bold-pop" },
+  "formats": {
+    "default": "9:16",
+    "allowed": [{ "format": "9:16", "min": 15, "max": 45 }]
+  },
+  "devices": {
+    "counter": false,
+    "react": false,
+    "timer": true,
+    "heroProp": false,
+    "bpm": false,
+    "worldEvents": true,
+    "lapse": false,
+    "flights": false,
+    "actors": true,
+    "bulletTime": true
+  },
+  "gates": { "story": true },
+  "brand": {
+    "name": "Action short",
+    "mark": "bolt",
+    "colors": { "accent": "#ff6a1a", "text": "#ffffff", "background": "#0d0f14" },
+    "fonts": { "caption": "inter", "title": "anton" },
+    "intro": { "seconds": 1.5 },
+    "outro": { "seconds": 3, "subscribe": "Subscribe for more" },
+    "watermark": true
+  }
+}

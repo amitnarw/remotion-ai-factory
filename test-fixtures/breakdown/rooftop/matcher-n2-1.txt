@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "landmark:landmark-eiffel-tower", "verdict": "close", "note": "Paris, seen by its tower rather than a square"},
+  {"item": "place:paris", "verdict": "same", "note": "Paris; its main square at dawn"},
+  {"item": "spot:world:plaza", "verdict": "same", "note": "a city main square"},
+  {"item": "spot:world:plaza-east", "verdict": "close"},
+  {"item": "spot:world:plaza-north", "verdict": "close"}
+]}

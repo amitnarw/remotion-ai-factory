@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "camera-move:orbit_left", "verdict": "same", "note": ""},
+  {"item": "camera-move:orbit_right", "verdict": "same", "note": ""},
+  {"item": "camera-style:orbit-drift", "verdict": "close", "note": "a drifting orbit for a whole scene"},
+  {"item": "device:time-lapse", "verdict": "no", "note": ""},
+  {"item": "planned:camera-bullet-time", "verdict": "no", "note": ""}
+]}

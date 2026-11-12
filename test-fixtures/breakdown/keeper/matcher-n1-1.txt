@@ -1,0 +1,8 @@
+<think>The need is the whole set: a lighthouse on a rocky coast in a storm.</think>
+{"verdicts": [
+  {"item": "model:landmark-lighthouse", "verdict": "same", "note": "a lighthouse, but only the tower"},
+  {"item": "model:landmark-lighthouse-cottage", "verdict": "close", "note": "a lighthouse with a keeper's cottage, no coast"},
+  {"item": "kit:ocean", "verdict": "close", "note": "a coast with waves and a jetty, but a sandy beach: no lighthouse, no rocks"},
+  {"item": "spot:ocean:sea", "verdict": "close", "note": "the open sea only"},
+  {"item": "spot:ocean:beach", "verdict": "no", "note": "a sunny beach with umbrellas"}
+]}

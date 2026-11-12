@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "landmark:landmark-colosseum", "verdict": "same", "note": "the Colosseum in Rome"},
+  {"item": "landmark:landmark-colosseum-ruin", "verdict": "same", "note": "the Colosseum as a ruin"},
+  {"item": "spot:world:avenue", "verdict": "close", "note": "a city avenue, but not Rome"},
+  {"item": "spot:world:avenue-east", "verdict": "no"},
+  {"item": "spot:world:avenue-west", "verdict": "no"}
+]}

@@ -1,0 +1,11 @@
+<think>The video doubles money every three seconds, Paris then Cairo. Three angles: the premise, the payoff (outweighing the planet), the image (one coin on a café table).</think>
+```json
+{
+  "titles": [
+    "\"What If Your Money Doubled Every 3 Seconds?\"",
+    "By Noon You'd Outweigh the Planet #money",
+    "One Coin on a Café Table in Paris, Then Chaos"
+  ],
+  "tags": ["what if", "#money doubling", "exponential growth", "money doubled every 3 seconds", "paris", "compound interest explained", "what if scenarios", "economy collapse", "hyperinflation", "Exponential Growth", "animation"]
+}
+```

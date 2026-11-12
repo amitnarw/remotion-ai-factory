@@ -1,0 +1,9 @@
+```json
+{"verdicts": [
+  {"item": "1", "verdict": "close", "note": "an old keeper, but a graveyard look and no beard"},
+  {"item": "2", "verdict": "close", "note": "a man in outdoor clothes: recolour the coat grey; no beard"},
+  {"item": "3", "verdict": "no", "note": "an astronaut"},
+  {"item": "4", "verdict": "no", "note": "beachwear"},
+  {"item": "5", "verdict": "close", "note": "a man in a suit, no beard"}
+]}
+```

@@ -1,0 +1,65 @@
+{
+  "id": "drama",
+  "version": 1,
+  "name": "Story and drama",
+  "genre": "story or drama",
+  "description": "Character stories in three acts: who they are and what they want, the obstacle and the turn, the resolution. Often your own script, word for word.",
+  "language": "en",
+  "writer": {
+    "intro": "You write short dramas for YouTube: character stories told in three acts.",
+    "rules": [
+      "The hook is a line of character or situation, at most 12 words. It is read aloud first and shown on screen.",
+      "Act one shows who the characters are and what they want; act two puts an obstacle in the way and turns it; act three resolves it.",
+      "Let the characters' lines carry the story; the narrator, if any, tells it like a storyteller.",
+      "End on the resolution and a quiet last image. No \"thanks for watching\", no questions to the viewer, no call to action."
+    ],
+    "narration": "a storyteller's voice, past tense",
+    "hookExample": "The keeper had kept the light for forty years.",
+    "structure": [
+      { "part": "setup", "share": 0.25, "purpose": "who they are and what they want" },
+      { "part": "confrontation", "share": 0.5, "purpose": "the obstacle, and the turn" },
+      { "part": "resolution", "share": 0.25, "purpose": "how it ends, and a quiet last image" }
+    ],
+    "tone": ["warm", "human", "specific"],
+    "avoid": ["melodrama", "naming a feeling instead of showing it"],
+    "modes": ["as-written", "adapt", "premise"],
+    "scriptMode": "as-written",
+    "maxCharacters": 3
+  },
+  "critic": {
+    "intro": "You are a careful story editor of short dramas for YouTube.",
+    "watchFor": "a character whose wish is unclear, a motivation that does not hold, a plot hole, a scene that does not move the story."
+  },
+  "voices": {
+    "narration": { "enabled": true, "engine": "kitten2", "voice": "Bruno" },
+    "dialogs": { "enabled": true, "engine": "kitten2" }
+  },
+  "music": { "moods": ["sad", "ambient", "upbeat"], "fallback": "ambient", "ambience": true },
+  "look": {
+    "grades": ["dreamy-pastel", "golden-hour", "night-moonlight"],
+    "times": ["golden", "dawn", "night"],
+    "shotSeconds": [3, 8],
+    "notes": "Slow moves; push in on faces at the turns."
+  },
+  "captions": { "preset": "clean" },
+  "formats": {
+    "default": "16:9",
+    "allowed": [
+      { "format": "16:9", "min": 60, "max": 600 },
+      { "format": "9:16", "min": 45, "max": 90 }
+    ]
+  },
+  "devices": {
+    "counter": false,
+    "react": false,
+    "timer": false,
+    "heroProp": false,
+    "bpm": false,
+    "worldEvents": true,
+    "lapse": true,
+    "flights": false,
+    "actors": true,
+    "bulletTime": false
+  },
+  "gates": { "story": true }
+}

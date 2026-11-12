@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "action:jump", "verdict": "same", "note": "a jump; the gap between roofs is the set"},
+  {"item": "clip:gallop_jump", "verdict": "no", "note": "a horse jumping"},
+  {"item": "clip:jump", "verdict": "same"},
+  {"item": "clip:jump_idle", "verdict": "no"},
+  {"item": "clip:jump_land", "verdict": "close"}
+]}

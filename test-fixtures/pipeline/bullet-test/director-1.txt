@@ -1,0 +1,36 @@
+<think>Cairo for the courier, a flight to the Paris plaza, the bullet time on the silent beat, then a lapse to dusk for the delivery. Original staging. The actors' times are seconds into their scene, set to the timeline these replies plan (b5 at 4.8 s into Paris, b7 at 10.8 s). b5 films Karim raising the pistol as the crates lift behind him: the plaza from low was blocked by the fountain's basin.</think>
+{
+  "scenes": [
+    {"start": "b1", "world": {"place": "cairo", "date": "2026-11-14", "time": "16:10"}, "time": "golden",
+     "actors": [{"role": "Nadia, a woman courier in a yellow jacket", "where": "sidewalk-north-west", "carry": "box",
+                 "do": [{"at": 7.6, "action": "run", "to": "sidewalk-north-east"}]}]},
+    {"start": "b4", "world": {"place": "paris", "date": "2026-11-14", "time": "16:50"}, "time": "golden",
+     "actors": [
+       {"role": "Nadia, a woman courier in a yellow jacket", "where": "plaza-ring-west", "carry": "box",
+        "do": [{"at": 0.0, "action": "walk", "to": "plaza-ring-north"}, {"at": 5.0, "action": "talk", "target": "Karim"}, {"at": 11.4, "action": "run", "to": "plaza-north"}]},
+       {"role": "Karim, man in a grey hoodie", "where": "plaza-east",
+        "do": [{"at": 0.4, "action": "look", "target": "Nadia"}, {"at": 5.2, "action": "aim", "target": "Nadia"}, {"at": 11.0, "action": "react"}, {"at": 11.7, "action": "fall"}]}
+     ]},
+    {"start": "b8", "world": {"place": "paris", "date": "2026-11-14", "time": "17:00", "lapse": {"to": "dusk"}}, "time": "golden",
+     "actors": [
+       {"role": "Nadia, a woman courier in a yellow jacket", "where": "plaza-south", "do": [{"at": 0.2, "action": "talk", "target": "plaza-ring-south"}]},
+       {"role": "Florist, flower seller, man, 60s", "where": "plaza-ring-south", "do": [{"at": 1.0, "action": "wave", "target": "plaza-south"}]}
+     ]}
+  ],
+  "counter": null,
+  "timer": null,
+  "prop": null,
+  "world": [{"beat": "b5", "event": "gravity-off"}, {"beat": "b7", "event": "gravity-on"}],
+  "shots": [
+    {"beat": "b1", "subject": "avenue", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_down", "place": "auto", "energy": "calm", "style": "smooth"},
+    {"beat": "b2", "subject": "actor1", "size": "FS", "angle": "eye", "side": "auto", "move": "follow", "place": "auto", "energy": "bold", "style": "handheld"},
+    {"beat": "b3", "subject": "landmark", "size": "WS", "angle": "eye", "side": "auto", "move": "pull_out", "place": "auto", "energy": "normal", "style": "smooth"},
+    {"beat": "b4", "subject": "plaza", "size": "WS", "angle": "eye", "side": "auto", "move": "push_in", "place": "auto", "energy": "normal", "style": "smooth"},
+    {"beat": "b5", "subject": "actor2", "size": "WS", "angle": "low", "side": "auto", "move": "crane_up", "place": "auto", "energy": "normal", "style": "smooth"},
+    {"beat": "b6", "subject": "actor1", "size": "FS", "angle": "eye", "side": "auto", "move": "orbit_left", "place": "center", "energy": "bold", "style": "smooth"},
+    {"beat": "b7", "subject": "actor2", "size": "MS", "angle": "eye", "side": "auto", "move": "pull_out", "place": "auto", "energy": "bold", "style": "handheld"},
+    {"beat": "b8", "subject": "actor1", "size": "MS", "angle": "eye", "side": "auto", "move": "orbit_left", "place": "auto", "energy": "normal", "style": "smooth"},
+    {"beat": "b9", "subject": "scene", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_up", "place": "auto", "energy": "calm", "style": "smooth"}
+  ],
+  "bulletTime": {"beat": "b6", "hero": "Nadia", "from": "Karim", "shots": 3, "kind": "bullet", "dodge": "lean", "freeze": false}
+}

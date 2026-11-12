@@ -1,0 +1,18 @@
+{
+  "title": "The keeper's last night",
+  "hook": "For forty years, one man kept the light burning.",
+  "mood": "sad",
+  "characters": [
+    { "name": "Elias", "gender": "male", "age": "old", "look": "a lighthouse keeper with a grey beard and a wool coat" }
+  ],
+  "beats": [
+    { "id": "b1", "say": "For forty years, Elias kept the light burning on the rocks.", "lines": [], "see": "A lighthouse on a rocky coast at night, storm clouds rolling in from the sea", "pace": "linger", "stress": "forty" },
+    { "id": "b2", "say": "Tonight would be his last watch.", "lines": [], "see": "Elias lights an old oil lantern in the keeper's cottage", "pace": "normal", "stress": "last" },
+    { "id": "b3", "say": "Every step up the tower was a year of his life.", "lines": [], "see": "Elias climbs the spiral stairs, the lantern swinging in his hand", "pace": "linger", "stress": "step" },
+    { "id": "b4", "say": "The storm came early.", "lines": [], "see": "Lightning splits the sky over the sea; waves crash on the rocks below", "pace": "quick", "stress": "storm" },
+    { "id": "b5", "say": "Then he saw them: lights, far too close to the rocks.", "lines": [], "see": "Through the rain, a ship in trouble rolls on the waves, its lights flickering", "pace": "normal", "stress": "close" },
+    { "id": "b6", "say": "He sounded the horn until his arms gave out.", "lines": [{ "who": "Elias", "text": "Turn back! Turn back!" }], "see": "Elias pulls the foghorn cord again and again", "pace": "quick", "stress": "horn" },
+    { "id": "b7", "say": "And the old lamp turned, one last time, for them.", "lines": [], "see": "The camera circles slowly round the great lamp as it turns", "pace": "linger", "stress": "lamp" },
+    { "id": "b8", "say": "By dawn the ship was safe. The light was his to put out.", "lines": [], "see": "Dawn over a calm sea, the ship safe in the harbour; Elias sits by the cold lamp", "pace": "linger", "stress": "safe" }
+  ]
+}

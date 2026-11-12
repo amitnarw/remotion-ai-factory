@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "camera-style:handheld-urgency", "verdict": "same"},
+  {"item": "shot-style:handheld", "verdict": "same"},
+  {"item": "planned:camera-bullet-time", "verdict": "no"},
+  {"item": "camera-move:crane_down", "verdict": "no"},
+  {"item": "camera-move:crane_up", "verdict": "no"}
+]}

@@ -1,0 +1,30 @@
+<think>One place, Paris, two moments of the same night: the fountain catches fire, then the avenue's gas main blows. Effects only on the beats that show one: steam and flames at the fountain (the plaza), the explosion on the avenue, sparks on the north pavement, smoke at the end. Two shots are deliberately on other subjects (b4 the landmark, b5 the avenue), so the assembler's framing must turn them to the effects' spots. Original staging.</think>
+{
+  "scenes": [
+    {"start": "b1", "world": {"place": "paris", "date": "2026-10-17", "time": "21:40"}, "time": "night",
+     "vfx": [
+       {"kind": "smoke", "beat": "b2", "where": "plaza", "palette": "white", "seconds": 4},
+       {"kind": "fire", "beat": "b3", "where": "plaza", "scale": 1.5, "seconds": 12}
+     ]},
+    {"start": "b4", "world": {"place": "paris", "date": "2026-10-17", "time": "23:50"}, "time": "night",
+     "vfx": [
+       {"kind": "explosion", "beat": "b4", "where": "avenue", "scale": 2},
+       {"kind": "sparks", "beat": "b5", "where": "sidewalk-north", "palette": "gold", "seconds": 3},
+       {"kind": "smoke", "beat": "b6", "where": "plaza", "palette": "black", "seconds": 8}
+     ]}
+  ],
+  "counter": null,
+  "timer": null,
+  "prop": null,
+  "world": [],
+  "shots": [
+    {"beat": "b1", "subject": "scene", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_down", "place": "auto", "energy": "calm", "style": "smooth"},
+    {"beat": "b2", "subject": "plaza", "size": "WS", "angle": "eye", "side": "auto", "move": "push_in", "place": "auto", "energy": "normal", "style": "smooth"},
+    {"beat": "b3", "subject": "plaza", "size": "MS", "angle": "low", "side": "auto", "move": "push_in", "place": "auto", "energy": "bold", "style": "handheld"},
+    {"beat": "b4", "subject": "landmark", "size": "WS", "angle": "eye", "side": "auto", "move": "pull_out", "place": "auto", "energy": "bold", "style": "handheld"},
+    {"beat": "b5", "subject": "avenue", "size": "FS", "angle": "low", "side": "auto", "move": "truck_left", "place": "auto", "energy": "bold", "style": "handheld"},
+    {"beat": "b6", "subject": "plaza", "size": "WS", "angle": "high", "side": "auto", "move": "pull_out", "place": "auto", "energy": "calm", "style": "smooth"},
+    {"beat": "b7", "subject": "scene", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_up", "place": "auto", "energy": "calm", "style": "smooth"}
+  ],
+  "bulletTime": null
+}

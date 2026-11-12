@@ -1,0 +1,9 @@
+<think>Four sentences. The hook is the premise itself.</think>
+{
+  "claims": [
+    { "id": "c1", "claim": "prices double every 3 seconds", "verdict": "speculative", "framed": true, "reword": "" },
+    { "id": "c2", "claim": "a croissant at 1.20 euros", "verdict": "none", "framed": false, "reword": "" },
+    { "id": "c3", "claim": "worse than Germany's hyperinflation of 1923", "verdict": "speculative", "framed": true, "reword": "" },
+    { "id": "c4", "claim": "the brain cannot count past 4 billion", "verdict": "needs a source", "framed": false, "reword": "Nobody could count that high in one lifetime." }
+  ]
+}

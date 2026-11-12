@@ -1,0 +1,14 @@
+<think>A lighthouse in a storm, the keeper, his daughter and a fisherman; stairs, a wick, a ship.</think>
+{
+  "needs": [
+    { "kind": "set", "what": "a lighthouse on a rocky coast, stormy night", "words": ["lighthouse", "coast", "rocks", "sea", "storm"], "beats": ["b1", "b2"], "must": true, "fallback": "any stormy coast", "look": "night, rain, dark sea" },
+    { "kind": "set", "what": "the lamp room at the top of the lighthouse", "words": ["lamp", "room", "lighthouse", "glass"], "beats": ["b3"], "must": false },
+    { "kind": "character", "what": "an old lighthouse keeper", "words": ["old", "man", "keeper"], "beats": ["b1", "b2", "b3"], "must": true, "look": "grey beard, wool coat" },
+    { "kind": "character", "what": "the keeper's daughter Mara", "words": ["woman", "daughter", "raincoat"], "beats": ["b2", "b3"], "who": "Mara", "must": true },
+    { "kind": "action", "what": "he climbs the stairs", "words": ["climb", "stairs"], "beats": ["b2"], "who": "the keeper", "must": false },
+    { "kind": "effect", "what": "a storm with rain and wind", "words": ["storm", "rain", "wind"], "beats": ["b1", "b2"], "must": false },
+    { "kind": "vehicle", "what": "a ship far out at sea", "words": ["ship", "boat"], "beats": ["b3"], "must": false, "fallback": "any boat" },
+    { "kind": "ambience", "what": "waves and wind", "words": ["waves", "wind", "sea"], "beats": ["b1", "b2"], "must": false },
+    { "kind": "music", "what": "slow, sad music", "words": ["sad", "slow"], "beats": ["b1", "b3"], "must": false }
+  ]
+}

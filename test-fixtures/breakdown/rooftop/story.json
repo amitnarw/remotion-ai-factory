@@ -1,0 +1,19 @@
+{
+  "title": "Last Delivery",
+  "hook": "One package. One night. The whole city wants it.",
+  "mood": "tense",
+  "characters": [
+    { "name": "Mara", "gender": "female", "age": "adult", "look": "a courier in a red hoodie with a messenger bag" }
+  ],
+  "beats": [
+    { "id": "b1", "say": "Mara had one package left, and the whole city wanted it.", "lines": [], "see": "Night in Rome: the Colosseum lit up, traffic humming through the old streets", "pace": "normal", "stress": "package" },
+    { "id": "b2", "say": "Ten minutes to the drop.", "lines": [], "see": "Mara runs down a narrow street past the Colosseum, a police car skidding behind her", "pace": "quick", "stress": "ten" },
+    { "id": "b3", "say": "Every corner was a gamble.", "lines": [], "see": "A countdown timer ticks in the corner of the screen as sirens wail", "pace": "quick", "stress": "gamble" },
+    { "id": "b4", "say": "So she stopped using corners.", "lines": [], "see": "Mara leaps the gap between two rooftops, the camera shaking as she lands", "pace": "quick", "stress": "stopped" },
+    { "id": "b5", "say": "Then the shooting started.", "lines": [], "see": "Gunshots ring out; time slows as she dodges a bullet in slow motion", "pace": "linger", "stress": "shooting" },
+    { "id": "b6", "say": "", "lines": [{ "who": "Mara", "text": "Not tonight." }], "see": "A guard grabs her bag; she fights him off with a punch", "pace": "quick", "stress": "" },
+    { "id": "b7", "say": "A motorbike, a key in it, and a wall of fire behind.", "lines": [], "see": "Mara jumps on a motorbike as an explosion throws debris across the street", "pace": "quick", "stress": "fire" },
+    { "id": "b8", "say": "Across the river, over the border, into the dawn.", "lines": [], "see": "A map draws her route across Europe from Rome to Paris", "pace": "normal", "stress": "dawn" },
+    { "id": "b9", "say": "Delivered. Signed. Gone.", "lines": [], "see": "Dawn in a Paris square: Mara hands over the package and walks away", "pace": "linger", "stress": "delivered" }
+  ]
+}

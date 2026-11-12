@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "music-mood:tense", "verdict": "same", "note": "tense; the tracks lean to horror"},
+  {"item": "music-track:freepd-horror-alien-invasion", "verdict": "close"},
+  {"item": "music-track:freepd-horror-alien-spaceship-atmosphere", "verdict": "no", "note": "a slow atmosphere"},
+  {"item": "music-track:freepd-horror-asking-questions", "verdict": "close"},
+  {"item": "music-track:freepd-horror-cockroaches", "verdict": "no"}
+]}

@@ -1,0 +1,4 @@
+{ "sentences": [
+  { "id": "c3", "text": "Iron lasts only as long as its paint; left bare, it rusts long before stone wears away." },
+  { "id": "c6", "text": "Hundreds of millions of people have climbed it since it opened." }
+] }

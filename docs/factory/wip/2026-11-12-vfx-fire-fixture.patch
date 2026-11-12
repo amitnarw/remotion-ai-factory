@@ -1,0 +1,155 @@
+diff --git a/docs/factory/21-vfx-effekseer.md b/docs/factory/21-vfx-effekseer.md
+index 679f0be..95d1533 100644
+--- a/docs/factory/21-vfx-effekseer.md
++++ b/docs/factory/21-vfx-effekseer.md
+@@ -26,7 +26,7 @@ The web findings are claims read from the projects' own pages and source files o
+ 
+ ## Status (2026-11-11): built, our own
+ 
+-The user chose on 2026-11-11 to build our own (§6): no Effekseer runtime, no three.quarks, no three-nebula. Steps 1-3 and 6 of §6 and the world's half of step 5 are built. The director's choice is being wired by the vfx-director agent from the edits written in [status/vfx2.md](status/vfx2.md); the spec field landed in `f19cc45`. Still to come: the prompt, the assembler and the hit sounds.
++The user chose on 2026-11-11 to build our own (§6): no Effekseer runtime, no three.quarks, no three-nebula. Steps 1-3 and 6 of §6 and the world's half of step 5 are built. The director's choice is wired end to end (2026-11-12, the vfx-director agent): see "The director's effects" below.
+ 
+ **The code** (`src/world/vfx/`):
+ - **`emitter.ts`, the closed-form emitter.** A part is a fixed pool of instances, drawn as one instanced mesh:
+@@ -111,9 +111,22 @@ The user chose on 2026-11-11 to build our own (§6): no Effekseer runtime, no th
+    - glow parts use the RGB and alpha as they are (`material: "glow"`).
+    - A colour sheet would need its own fragment branch: today a card reads red as heat and green as dissolve noise.
+ 
++**The director's effects (2026-11-12):** how a story gets effects, from the director's reply to the spec ([status/vfx-director.md](status/vfx-director.md)).
++- **Nothing without intent.** A world scene's `"vfx": [{ "kind", "beat", "where", "scale", "palette", "seconds" }]`, at most 3 a scene, is the only way in. The director's prompt has `vfxForPrompt()` right after the world events, plus one rule: an effect is a story event (a blast, a fire, smoke or dust, sparks, a crash or a blow, a spell), never decoration; most videos have none.
++- **The director's words** (`pipeline/director.ts`) are read leniently: `effects` or `fx` for `vfx`, `type` for `kind`, `at` for `beat`, `spot` for `where`, and aliases for the family ("fireball" and "blast" an explosion, "flames" fire, "dust" a smoke with the dust palette, "short circuit" electric sparks, "spell" magic). A family or palette off the list, a beat outside its scene, or effects on a kit scene are asked about once (`vfxProblems`); after that the assembler drops them with a warning.
++- **The timing** (`assemble.ts` `sceneEffects`): each effect goes on the world scene its beat falls in. A one-shot (explosion, impact, magic) starts 0.3 s into its beat, as a world event does. A loop (fire, smoke, sparks) on its scene's first beat is already burning at the scene's start; its seconds are still counted from the beat. A spot that is not a city spot is dropped with a warning (the layer then uses the plaza, else the avenue).
++- **Flights** (`effectSound`): under a flight the globe fills the screen. A one-shot in the scene the flight lands in waits until 0.3 s after the landing; one under a take-off is dropped; a loop burns on unseen.
++- **The sound:**
++  - one hit per effect from `VFX_SOUND` at its start; none for smoke, or for a loop already burning when it is first seen. Every hit name has library files (explosion 8, impact_metal 20, impact_soft_bodies 20, whoosh_dissolve and rise_short 3).
++  - A fire or sparks gets a bed while it burns (`VFX_BED`). The library has no CC0 crackle, so the bed is the nearest name, `forest_wind_leaves`: the synthesized wind with a leaf rustle, which no library file matches, so it always plays that file. `wind_city` and `rain_hiss` would pick library recordings with birds or a rain storm in them.
++  - The sound designer sees `[effects: ...]` on those beats, and the hits they bring.
++- **The camera** (`shots.ts` `frameEffects`): an effect shows only where a shot films it (an effect on a spot no shot looks at never appears). The shot on screen when an effect is first seen films its spot (`where`, else the plaza) at MS, FS or WS, and holds on it 2.5 s, never past its scene or into a bullet time. A shot that began 1.2 s or more before is cut 0.2 s before the effect, so the director's framing stays up to the cut.
++- **The registry:** `effect:<family>` entries (kind `effect`), so a breakdown's explosion, fire, smoke, sparks or spell need is have, not build.
++- **Unchanged:** the five fixture plans are byte-identical, and so are the what-if prompts (`prompts.test.ts`). The render's chunk keys hash whole scenes, so `scene.vfx` re-renders only its own chunks.
++
+ **Open:**
+-- the director's prompt, the assembler and the hits (the vfx-director agent);
+-- effect sounds beyond the one hit per family (a fire or sparks bed needs a CC0 crackle with a name);
++- a CC0 crackle in the library for the fire and sparks beds, with a name of its own in `audio-resolve.ts` (`forest_wind_leaves` stands in);
++- in a city without a plaza, an effect with no `where` stands on the avenue, but its shot asks for the plaza, and the camera then films the whole place (the assembler doesn't know the city's layout);
+ - the flipbook loader for baked sheets;
+ - soft particles (no depth fade where a puff meets a wall);
+ - a director's `where` on an actor or the landmark (only city spots and positions today).
+diff --git a/src/generator/pipeline/director.test.ts b/src/generator/pipeline/director.test.ts
+index 4266ec4..d9ead78 100644
+--- a/src/generator/pipeline/director.test.ts
++++ b/src/generator/pipeline/director.test.ts
+@@ -1,6 +1,6 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+-import { mkdtempSync, rmSync, writeFileSync } from "fs";
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+ import { tmpdir } from "os";
+ import { join } from "path";
+ import { SettingsSchema } from "../spec.schema";
+@@ -400,3 +400,14 @@ test("director: the repair loop asks once about an effect off the list, then let
+   const still = await run([reply("lava"), reply("volcano")]);
+   assert.deepEqual(still.scenes[0].vfx, [{ kind: "volcano", beat: "b2" }], "asked once only: no third reply is read");
+ });
++
++test("director: the vfx-fire fixture's recorded reply parses into its effects, nothing to ask", () => {
++  const text = readFileSync(join(process.cwd(), "test-fixtures", "pipeline", "vfx-fire", "director-1.txt"), "utf8");
++  const d = direct(JSON.parse(text.slice(text.indexOf("{", text.indexOf("</think>")))));
++  assert.deepEqual(d.scenes.map((s) => (s.vfx ?? []).map((v) => `${v.kind}@${v.beat}:${v.where}`)), [
++    ["smoke@b2:plaza", "fire@b3:plaza"],
++    ["explosion@b4:avenue", "sparks@b5:sidewalk-north", "smoke@b6:plaza"],
++  ]);
++  const seven = { beats: ["b1", "b2", "b3", "b4", "b5", "b6", "b7"].map((id, i) => ({ id, from: 2 + i * 3, to: 5 + i * 3 })), duration: 23 } as unknown as Pick<Timeline, "beats" | "duration">;
++  assert.equal(vfxProblems(d, seven), null);
++});
+diff --git a/test-fixtures/pipeline/vfx-fire/audio.json b/test-fixtures/pipeline/vfx-fire/audio.json
+new file mode 100644
+index 0000000..ea2800d
+--- /dev/null
++++ b/test-fixtures/pipeline/vfx-fire/audio.json
+@@ -0,0 +1 @@
++{"narration": {"enabled": true, "engine": "kitten2", "voice": "Bruno"}, "dialogs": {"enabled": false, "engine": "kitten2"}}
+diff --git a/test-fixtures/pipeline/vfx-fire/director-1.txt b/test-fixtures/pipeline/vfx-fire/director-1.txt
+new file mode 100644
+index 0000000..fd0bfd5
+--- /dev/null
++++ b/test-fixtures/pipeline/vfx-fire/director-1.txt
+@@ -0,0 +1,30 @@
++<think>One place, Paris, two moments of the same night: the fountain catches fire, then the avenue's gas main blows. Effects only on the beats that show one: steam and flames at the fountain (the plaza), the explosion on the avenue, sparks on the north pavement, smoke at the end. Two shots are deliberately on other subjects (b4 the landmark, b5 the avenue), so the assembler's framing must turn them to the effects' spots. Original staging.</think>
++{
++  "scenes": [
++    {"start": "b1", "world": {"place": "paris", "date": "2026-10-17", "time": "21:40"}, "time": "night",
++     "vfx": [
++       {"kind": "smoke", "beat": "b2", "where": "plaza", "palette": "white", "seconds": 4},
++       {"kind": "fire", "beat": "b3", "where": "plaza", "scale": 1.5, "seconds": 12}
++     ]},
++    {"start": "b4", "world": {"place": "paris", "date": "2026-10-17", "time": "23:50"}, "time": "night",
++     "vfx": [
++       {"kind": "explosion", "beat": "b4", "where": "avenue", "scale": 2},
++       {"kind": "sparks", "beat": "b5", "where": "sidewalk-north", "palette": "gold", "seconds": 3},
++       {"kind": "smoke", "beat": "b6", "where": "plaza", "palette": "black", "seconds": 8}
++     ]}
++  ],
++  "counter": null,
++  "timer": null,
++  "prop": null,
++  "world": [],
++  "shots": [
++    {"beat": "b1", "subject": "scene", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_down", "place": "auto", "energy": "calm", "style": "smooth"},
++    {"beat": "b2", "subject": "plaza", "size": "WS", "angle": "eye", "side": "auto", "move": "push_in", "place": "auto", "energy": "normal", "style": "smooth"},
++    {"beat": "b3", "subject": "plaza", "size": "MS", "angle": "low", "side": "auto", "move": "push_in", "place": "auto", "energy": "bold", "style": "handheld"},
++    {"beat": "b4", "subject": "landmark", "size": "WS", "angle": "eye", "side": "auto", "move": "pull_out", "place": "auto", "energy": "bold", "style": "handheld"},
++    {"beat": "b5", "subject": "avenue", "size": "FS", "angle": "low", "side": "auto", "move": "truck_left", "place": "auto", "energy": "bold", "style": "handheld"},
++    {"beat": "b6", "subject": "plaza", "size": "WS", "angle": "high", "side": "auto", "move": "pull_out", "place": "auto", "energy": "calm", "style": "smooth"},
++    {"beat": "b7", "subject": "scene", "size": "EWS", "angle": "high", "side": "auto", "move": "crane_up", "place": "auto", "energy": "calm", "style": "smooth"}
++  ],
++  "bulletTime": null
++}
+diff --git a/test-fixtures/pipeline/vfx-fire/sound-1.txt b/test-fixtures/pipeline/vfx-fire/sound-1.txt
+new file mode 100644
+index 0000000..b58198d
+--- /dev/null
++++ b/test-fixtures/pipeline/vfx-fire/sound-1.txt
+@@ -0,0 +1,3 @@
++{"music": [{"start": "b1", "mood": "tense"}],
++ "beds": [{"start": "b1", "end": null, "sound": "street_murmur", "level": 0.3}, {"start": "b1", "end": null, "sound": "night_insects", "level": 0.15}],
++ "hits": [{"beat": "b7", "at": "start", "sound": "whoosh_dissolve"}]}
+diff --git a/test-fixtures/pipeline/vfx-fire/writer-1.txt b/test-fixtures/pipeline/vfx-fire/writer-1.txt
+new file mode 100644
+index 0000000..5e428f3
+--- /dev/null
++++ b/test-fixtures/pipeline/vfx-fire/writer-1.txt
+@@ -0,0 +1,17 @@
++```json
++{
++  "title": "The Night the Fountain Burned",
++  "hook": "What if the fountain in the square caught fire?",
++  "mood": "tense",
++  "characters": [],
++  "beats": [
++    {"say": "A quiet night in the old square.", "lines": [], "see": "The plaza at night, the fountain running, café lights", "pace": "normal", "stress": "quiet"},
++    {"say": "Then the water starts to steam.", "lines": [], "see": "White steam rising off the fountain", "pace": "normal", "stress": "steam"},
++    {"say": "With a crack, the fountain bursts into flames.", "lines": [], "see": "Flames leap from the fountain basin", "pace": "quick", "stress": "flames"},
++    {"say": "Under the avenue, a gas main explodes.", "lines": [], "see": "An explosion bursts up from the avenue, debris flying", "pace": "quick", "stress": "explodes"},
++    {"say": "Sparks rain down over the pavement.", "lines": [], "see": "Sparks spraying over the north pavement", "pace": "normal", "stress": "sparks"},
++    {"say": "By midnight only smoke is left.", "lines": [], "see": "Black smoke drifting over the dark plaza", "pace": "linger", "stress": "smoke"},
++    {"say": "And the fountain runs again.", "lines": [], "see": "The fountain running as if nothing happened", "pace": "linger", "stress": "again"}
++  ]
++}
++```
+diff --git a/test-fixtures/pipeline/vfx-fire/writer-revise-1.txt b/test-fixtures/pipeline/vfx-fire/writer-revise-1.txt
+new file mode 100644
+index 0000000..4d96a19
+--- /dev/null
++++ b/test-fixtures/pipeline/vfx-fire/writer-revise-1.txt
+@@ -0,0 +1,9 @@
++{"edits": [
++  {"beat": "b1", "say": "A quiet night in the square."},
++  {"beat": "b2", "say": "The water starts to steam."},
++  {"beat": "b3", "say": "The fountain bursts into flames."},
++  {"beat": "b4", "say": "Then a gas main explodes."},
++  {"beat": "b5", "say": "Sparks rain down."},
++  {"beat": "b6", "say": "Only smoke is left."},
++  {"beat": "b7", "say": "The fountain runs again."}
++]}

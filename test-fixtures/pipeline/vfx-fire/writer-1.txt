@@ -1,0 +1,17 @@
+```json
+{
+  "title": "The Night the Fountain Burned",
+  "hook": "What if the fountain in the square caught fire?",
+  "mood": "tense",
+  "characters": [],
+  "beats": [
+    {"say": "A quiet night in the old square.", "lines": [], "see": "The plaza at night, the fountain running, café lights", "pace": "normal", "stress": "quiet"},
+    {"say": "Then the water starts to steam.", "lines": [], "see": "White steam rising off the fountain", "pace": "normal", "stress": "steam"},
+    {"say": "With a crack, the fountain bursts into flames.", "lines": [], "see": "Flames leap from the fountain basin", "pace": "quick", "stress": "flames"},
+    {"say": "Under the avenue, a gas main explodes.", "lines": [], "see": "An explosion bursts up from the avenue, debris flying", "pace": "quick", "stress": "explodes"},
+    {"say": "Sparks rain down over the pavement.", "lines": [], "see": "Sparks spraying over the north pavement", "pace": "normal", "stress": "sparks"},
+    {"say": "By midnight only smoke is left.", "lines": [], "see": "Black smoke drifting over the dark plaza", "pace": "linger", "stress": "smoke"},
+    {"say": "And the fountain runs again.", "lines": [], "see": "The fountain running as if nothing happened", "pace": "linger", "stress": "again"}
+  ]
+}
+```

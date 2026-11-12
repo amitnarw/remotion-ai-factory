@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "bed:city_traffic_dense", "verdict": "same"},
+  {"item": "sound:city_horn", "verdict": "close", "note": "one horn, not a bed"},
+  {"item": "bed:traffic", "verdict": "same", "note": "a traffic bed"},
+  {"item": "bed:night_insects", "verdict": "no", "note": "crickets"},
+  {"item": "bed:street_murmur", "verdict": "close", "note": "a crowd more than traffic"}
+]}

@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "event:lights-out", "verdict": "no"},
+  {"item": "event:snow-start", "verdict": "no"},
+  {"item": "event:snow-stop", "verdict": "no"},
+  {"item": "event:water-return", "verdict": "no"},
+  {"item": "event:water-rise", "verdict": "no"}
+]}

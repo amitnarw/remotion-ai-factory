@@ -1,0 +1,24 @@
+A private test bed for bullet time (docs/factory/14-bullet-time.md section 7). Original characters, places, lines and staging. Short lines (seven beats spoken, as the writer's check asks), so the story fits 38 s, the silent beat b6 keeps its hold and the window ends before b7.
+```json
+{
+  "title": "One Second, All Hers",
+  "hook": "What if one second a day could last as long as you wanted?",
+  "mood": "tense",
+  "characters": [
+    {"name": "Nadia", "gender": "female", "age": "adult", "look": "courier in a yellow jacket, a parcel box"},
+    {"name": "Karim", "gender": "male", "age": "adult", "look": "man in a grey hoodie"},
+    {"name": "Florist", "gender": "male", "age": "old", "look": "flower seller with a cart"}
+  ],
+  "beats": [
+    {"say": "Cairo, late afternoon.", "lines": [], "see": "The avenue from high above: palms, traffic, the minaret", "pace": "normal", "stress": "Cairo"},
+    {"say": "Nadia runs parcels across Cairo. She is never late.", "lines": [], "see": "Nadia, a courier in a yellow jacket, runs along the sidewalk past the cars", "pace": "quick", "stress": "never"},
+    {"say": "The parcel is due in Paris.", "lines": [], "see": "Wide on the minaret, pulling out", "pace": "normal", "stress": "Paris"},
+    {"say": "Someone is waiting.", "lines": [{"who": "Karim", "text": "That parcel stays with me."}], "see": "Nadia walks into the clear ring round the fountain; Karim waits by the stalls", "pace": "normal", "stress": "waiting"},
+    {"say": "", "lines": [{"who": "Nadia", "text": "Then come and take it."}], "see": "The market's crates and litter drift up; Karim raises a pistol", "pace": "normal", "stress": "take"},
+    {"say": "", "lines": [], "see": "Time crawls: three bullets hang in the air with trails and rings, Nadia leans back under them, the camera sweeps round her", "pace": "linger", "stress": ""},
+    {"say": "One second. All hers.", "lines": [], "see": "The bullets strike the far wall, everything falls, Karim stumbles and falls", "pace": "normal", "stress": "hers"},
+    {"say": "Right on time.", "lines": [{"who": "Florist", "text": "You're early."}, {"who": "Nadia", "text": "Always."}], "see": "Nadia hands the parcel to a flower seller as the windows light up", "pace": "normal", "stress": "time"},
+    {"say": "Delivered before dark.", "lines": [], "see": "The city from high above as the lamps come on", "pace": "linger", "stress": "dark"}
+  ]
+}
+```

@@ -1,0 +1,128 @@
+{
+  "when": "2026-11-05T00:00:00.000Z",
+  "note": "Made for the publish tests: the frames are this spec shotFrames, the measures in the range real stills give.",
+  "checks": [
+    {
+      "beat": "hook",
+      "subject": "scene",
+      "size": "EWS",
+      "frame": 46,
+      "light": "day",
+      "luma": {
+        "mean": 0.55,
+        "crushed": 0,
+        "clipped": 0.01
+      },
+      "colour": 42.2,
+      "flat": 0.35,
+      "problems": []
+    },
+    {
+      "beat": "b1",
+      "subject": "cafe",
+      "size": "WS",
+      "frame": 142,
+      "light": "day",
+      "luma": {
+        "mean": 0.36,
+        "crushed": 0.002,
+        "clipped": 0.002
+      },
+      "colour": 33.8,
+      "flat": 0.34,
+      "problems": []
+    },
+    {
+      "beat": "b2",
+      "subject": "hero",
+      "size": "FS",
+      "frame": 262,
+      "light": "day",
+      "luma": {
+        "mean": 0.32,
+        "crushed": 0.004,
+        "clipped": 0.002
+      },
+      "colour": 35.8,
+      "flat": 0.3,
+      "problems": []
+    },
+    {
+      "beat": "b3",
+      "subject": "plaza",
+      "size": "WS",
+      "frame": 372,
+      "light": "day",
+      "luma": {
+        "mean": 0.46,
+        "crushed": 0.001,
+        "clipped": 0.004
+      },
+      "colour": 47.5,
+      "flat": 0.22,
+      "problems": []
+    },
+    {
+      "beat": "b4",
+      "subject": "scene",
+      "size": "MS",
+      "frame": 463,
+      "light": "day",
+      "luma": {
+        "mean": 0.4,
+        "crushed": 0.002,
+        "clipped": 0.003
+      },
+      "colour": 30.1,
+      "flat": 0.41,
+      "problems": []
+    },
+    {
+      "beat": "b5",
+      "subject": "plaza",
+      "size": "WS",
+      "frame": 555,
+      "light": "day",
+      "luma": {
+        "mean": 0.47,
+        "crushed": 0.001,
+        "clipped": 0.002
+      },
+      "colour": 61,
+      "flat": 0.12,
+      "problems": [
+        "one colour covers 62% of the frame"
+      ]
+    },
+    {
+      "beat": "b6",
+      "subject": "plaza",
+      "size": "MS",
+      "frame": 640,
+      "light": "night",
+      "luma": {
+        "mean": 0.21,
+        "crushed": 0.08,
+        "clipped": 0.001
+      },
+      "colour": 22.4,
+      "flat": 0.38,
+      "problems": []
+    },
+    {
+      "beat": "b7",
+      "subject": "scene",
+      "size": "WS",
+      "frame": 737,
+      "light": "night",
+      "luma": {
+        "mean": 0.18,
+        "crushed": 0.12,
+        "clipped": 0.001
+      },
+      "colour": 18,
+      "flat": 0.45,
+      "problems": []
+    }
+  ]
+}

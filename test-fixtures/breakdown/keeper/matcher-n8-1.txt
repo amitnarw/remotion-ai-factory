@@ -1,0 +1,8 @@
+<think>The sad mood is the need; the tracks sit under it.</think>
+{"verdicts": [
+  {"item": "music-mood:sad", "verdict": "same", "note": "sad music; not every track is slow"},
+  {"item": "music-track:freepd-romantic-a-very-brady-special", "verdict": "no", "note": "reads as a light comedy title"},
+  {"item": "music-track:freepd-romantic-amazing-grace", "verdict": "same", "note": "a slow hymn"},
+  {"item": "music-track:freepd-romantic-brothers-unite", "verdict": "close", "note": ""},
+  {"item": "music-track:freepd-romantic-burt-s-requiem", "verdict": "same", "note": "a requiem"}
+]}

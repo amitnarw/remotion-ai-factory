@@ -1,0 +1,5 @@
+{"edits": [
+  {"beat": "b1", "say": "Cairo, late afternoon."},
+  {"beat": "b3", "say": "The parcel is due in Paris."},
+  {"beat": "b9", "say": "Delivered before dark."}
+]}

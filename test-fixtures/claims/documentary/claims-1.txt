@@ -1,0 +1,12 @@
+```json
+{
+  "claims": [
+    { "id": "c1", "claim": "the tower grows about 15 cm in summer heat", "verdict": "known", "framed": false, "reword": "" },
+    { "id": "c2", "claim": "built in about two years for the 1889 World's Fair", "verdict": "known", "framed": false, "reword": "" },
+    { "id": "c3", "claim": "iron towers outlast stone by 400 years", "verdict": "source", "framed": false, "reword": "Iron lasts as long as it is painted; left bare, it rusts away long before stone." },
+    { "id": "c4", "claim": "about 60 tonnes of paint every seven years", "verdict": "known", "framed": false, "reword": "" },
+    { "id": "c5", "claim": "the world's tallest structure until 1930", "verdict": "known", "framed": false, "reword": "" },
+    { "id": "c6", "claim": "more than 300 million visitors", "verdict": "source", "framed": false, "reword": "Hundreds of millions of people have visited it." }
+  ]
+}
+```

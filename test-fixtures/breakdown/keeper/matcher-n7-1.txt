@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "bed:ocean_waves", "verdict": "same", "note": ""},
+  {"item": "bed:wind_city", "verdict": "same", "note": "a gusty wind bed"},
+  {"item": "sound:ocean_splash", "verdict": "close", "note": "one splash, not a bed"},
+  {"item": "sound:thunder_crack", "verdict": "no", "note": "a one-off hit"},
+  {"item": "bed:countryside_wind", "verdict": "same", "note": "wind over open ground"}
+]}

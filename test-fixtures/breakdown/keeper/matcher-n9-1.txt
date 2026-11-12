@@ -1,0 +1,7 @@
+{"verdicts": [
+  {"item": "model:kenney-pirate-kit-ship-ghost", "verdict": "close", "note": "a ghost ship with torn sails: it reads as spooky, not as a ship in trouble"},
+  {"item": "model:kenney-pirate-kit-ship-large", "verdict": "close", "note": "a pirate ship with cannons"},
+  {"item": "model:kenney-pirate-kit-ship-medium", "verdict": "close", "note": "a pirate ship"},
+  {"item": "model:kenney-pirate-kit-ship-pirate-large", "verdict": "close", "note": "a pirate ship"},
+  {"item": "model:kenney-pirate-kit-ship-pirate-medium", "verdict": "close", "note": "a pirate ship"}
+]}

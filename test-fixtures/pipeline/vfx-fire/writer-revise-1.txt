@@ -1,0 +1,9 @@
+{"edits": [
+  {"beat": "b1", "say": "A quiet night in the square."},
+  {"beat": "b2", "say": "The water starts to steam."},
+  {"beat": "b3", "say": "The fountain bursts into flames."},
+  {"beat": "b4", "say": "Then a gas main explodes."},
+  {"beat": "b5", "say": "Sparks rain down."},
+  {"beat": "b6", "say": "Only smoke is left."},
+  {"beat": "b7", "say": "The fountain runs again."}
+]}

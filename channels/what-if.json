@@ -1,0 +1,50 @@
+{
+  "id": "what-if",
+  "version": 1,
+  "name": "What if",
+  "genre": "what-if explainer",
+  "description": "One impossible premise followed to its consequences: the hook question, the first consequence, an escalation, a twist and a surprising conclusion. The factory's first channel.",
+  "language": "en",
+  "writer": {
+    "intro": "You write short, gripping \"what if\" videos for YouTube Shorts and long-form YouTube.",
+    "rules": [
+      "The hook is the premise as a question, at most 12 words. It is read aloud first and shown on screen.",
+      "Beat 1 answers the hook at once: the first consequence, concrete and visual.",
+      "Every beat escalates: bigger, stranger or closer to the viewer than the last. Use concrete places, people, numbers.",
+      "The last beat lands a surprising conclusion. No \"thanks for watching\", no questions to the viewer, no call to action."
+    ],
+    "hookExample": "What if ...?",
+    "modes": ["premise", "adapt"],
+    "scriptMode": "adapt",
+    "maxCharacters": 3
+  },
+  "critic": {
+    "intro": "You are a ruthless editor of short \"what if\" videos for YouTube.",
+    "watchFor": "a hook that does not grip, a beat that repeats the last one, a line that is vague, a missing payoff."
+  },
+  "voices": {
+    "narration": { "enabled": true, "engine": "kitten2", "voice": "Bruno" }
+  },
+  "music": { "moods": "all", "fallback": "epic", "ambience": true },
+  "look": { "grades": [], "times": [] },
+  "formats": {
+    "allowed": [
+      { "format": "9:16", "min": 8, "max": 90 },
+      { "format": "1:1", "min": 8, "max": 90 },
+      { "format": "16:9", "min": 8, "max": 600 }
+    ]
+  },
+  "devices": {
+    "counter": true,
+    "react": true,
+    "timer": true,
+    "heroProp": true,
+    "bpm": true,
+    "worldEvents": true,
+    "lapse": true,
+    "flights": true,
+    "actors": true,
+    "bulletTime": true
+  },
+  "gates": { "story": true }
+}
