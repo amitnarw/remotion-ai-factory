@@ -10,7 +10,7 @@
  */
 import { BlendFunction, Effect } from "postprocessing";
 import { Uniform, Vector3 } from "three";
-import { CONTRAST_PIVOT, GRAIN_STREAM_2, LUMA, resolveGrade, type GradeParams, type RGB } from "./grade";
+import { CONTRAST_PIVOT, GRAIN_STREAM_2, LUMA, resolveGrade, type GradeParams, type GradeUniforms, type RGB } from "./grade";
 
 const f = (n: number) => n.toFixed(6);
 
@@ -127,6 +127,24 @@ export class GradeEffect extends Effect {
     set("uShadowPush", v3(u.shadowPush));
     set("uHighlightPush", v3(u.highlightPush));
     set("uGrain", u.grain);
+  }
+
+  /** Update individual grade uniforms from a partial GradeUniforms (no shader rebuild). */
+  setUniforms(partial: Partial<GradeUniforms>): void {
+    const set = (name: string, value: unknown) => {
+      const uni = this.uniforms.get(name);
+      if (!uni) throw new Error(`GradeEffect: missing uniform ${name}`);
+      uni.value = value;
+    };
+    if (partial.wbGains !== undefined) set("uWbGains", v3(partial.wbGains));
+    if (partial.lift !== undefined) set("uLift", v3(partial.lift));
+    if (partial.invGamma !== undefined) set("uInvGamma", v3(partial.invGamma));
+    if (partial.gain !== undefined) set("uGain", v3(partial.gain));
+    if (partial.contrast !== undefined) set("uContrast", partial.contrast);
+    if (partial.saturation !== undefined) set("uSaturation", partial.saturation);
+    if (partial.shadowPush !== undefined) set("uShadowPush", v3(partial.shadowPush));
+    if (partial.highlightPush !== undefined) set("uHighlightPush", v3(partial.highlightPush));
+    if (partial.grain !== undefined) set("uGrain", partial.grain);
   }
 
   /** Grain cell size in device pixels (1 = per-pixel; 2 = 2x2 cells, cheaper to encode). */

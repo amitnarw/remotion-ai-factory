@@ -52,4 +52,11 @@ export function saveEnv(updates: Record<string, string>) {
   writeFileSync(ENV_PATH, lines.join("\n") + "\n");
 }
 
+/** Apply .env values over process.env so newly saved keys are used immediately. */
+export function applyEnv(): void {
+  for (const [k, v] of Object.entries(loadEnv())) {
+    process.env[k] = v;
+  }
+}
+
 export { ROOT };

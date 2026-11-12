@@ -396,3 +396,13 @@ export function registerFilmRoutes(app: Express) {
     });
   }
 }
+
+/**
+ * After a change made outside these routes (a producer's proposal, applied or
+ * undone): the film's playable spec and spec.json follow the new version, as
+ * after an edit. Call it inside queueFilmChange.
+ */
+export async function refreshFilm(id: string, redo: Redo): Promise<{ measuring: boolean }> {
+  const { measuring } = await prepareThenMeasure(id, redo);
+  return { measuring };
+}

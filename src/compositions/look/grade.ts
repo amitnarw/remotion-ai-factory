@@ -144,6 +144,28 @@ export function resolveGrade(p: GradeParams): GradeUniforms {
   };
 }
 
+/**
+ * A grade between two resolved grades: 0 gives `a`, 1 gives `b`, exactly
+ * (a·(1−k) + b·k keeps both ends bit for bit). Blended as uniforms, so a
+ * time-lapse ramps its grade without touching the shader; the split-tone
+ * pushes are linear in the tint's strength and colour, so they mix cleanly.
+ */
+export function mixGradeUniforms(a: GradeUniforms, b: GradeUniforms, k: number): GradeUniforms {
+  const m = (x: number, y: number) => x * (1 - k) + y * k;
+  const m3 = (x: RGB, y: RGB): RGB => [m(x[0], y[0]), m(x[1], y[1]), m(x[2], y[2])];
+  return {
+    wbGains: m3(a.wbGains, b.wbGains),
+    lift: m3(a.lift, b.lift),
+    invGamma: m3(a.invGamma, b.invGamma),
+    gain: m3(a.gain, b.gain),
+    contrast: m(a.contrast, b.contrast),
+    saturation: m(a.saturation, b.saturation),
+    shadowPush: m3(a.shadowPush, b.shadowPush),
+    highlightPush: m3(a.highlightPush, b.highlightPush),
+    grain: m(a.grain, b.grain),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Grain: integer hash (lowbias32, Chris Wellons) — bit-exact with the GLSL.
 // ---------------------------------------------------------------------------
