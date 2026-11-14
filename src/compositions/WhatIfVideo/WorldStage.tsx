@@ -24,6 +24,34 @@
  * solveWorldShot films a shot: in a scene whose story lifts buildings it
  * keeps the lens out of their space, and over a flood the anchors hold the
  * lens above the water.
+ *
+ * A time lapse (scene.world.lapse, docs/factory/13-light-and-time.md): the
+ * scene's clock (world/lapse.ts) is made once, and GroundWorld builds the
+ * place at the clock's start (a stable object, so the city is never rebuilt
+ * on a frame) and lights it every frame from the clock at t. The camera
+ * plans its light side from the start's sun too: the shots are framed for
+ * the light the scene opens on.
+ *
+ * Weather (docs/factory/18-world-weather.md): the director's look.weather
+ * (rain, storm, snow), timed by the scene's rain-start / rain-stop events,
+ * is planned once per scene (world/weather/weather.ts) and drawn round the
+ * lens by GroundWorld. A scene without weather passes none.
+ *
+ * Bullet time (scene.bulletTime, docs/factory/14-bullet-time.md): the
+ * scene's clocks (world/warp.ts) are made once. The camera, the grade and
+ * everything on screen over the place stay on real time t; the place lives
+ * on the world clock w(t): its reaction (with the story's events and steps
+ * moved onto w, so they still land on their real moments), its traffic (the
+ * lens seen through the clock's inverse, the lanes round the arc kept
+ * clear), its weather, and, inside GroundWorld, the sway, water, birds,
+ * flags and the cast (the hero on its own faster clock). The projectiles are
+ * planned once from the same cast. A scene without one passes exactly what
+ * it always did.
+ *
+ * Effects (scene.vfx, docs/factory/21-vfx-effekseer.md): the director's
+ * explosions, fires, smoke, sparks, impacts and magic, on the place's clock
+ * (a bullet time slows them with the world), drawn by GroundWorld on their
+ * spots. A scene that lists none passes none.
  */
 import { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -31,11 +59,16 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { SceneType, ShotSpec } from "../../generator/spec.schema";
 import type { CameraPose } from "../../generator/camera/solve";
-import { solveWorldShot, worldShotSet } from "../../generator/camera/world";
+import { castWalkers, solveWorldShot, worldShotSet } from "../../generator/camera/world";
+import { cityWalls, sceneProjectiles } from "../../world/projectiles";
+import { sceneClock, warpSpecTimes } from "../../world/warp";
 import { headingToGround, type Vec3 } from "../../world/geo";
 import { GroundWorld } from "../../world/Ground";
 import type { GroundPose } from "../../world/flight";
+import { lapseClock } from "../../world/lapse";
 import { resolvePlace } from "../../world/places";
+import { worldWeather } from "../../world/weather/weather";
+import { sceneVfx, specEffects } from "../../world/vfx/spec";
 import { whipYaw } from "../TransitionOverlay";
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -54,16 +87,25 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   const world = scene.world;
-  const resolved = useMemo(
+  // A time lapse's clock (null without one), once per scene.
+  const clock = useMemo(() => (world ? lapseClock(world, scene) : null), [world, scene]);
+  const placeAt = useMemo(
     () => (world ? resolvePlace(world.place, { date: world.date, time: world.time }) : null),
     [world],
   );
+  // The place GroundWorld builds and the camera plans with: with a lapse its
+  // clock's start (the same moment, a stable object).
+  const resolved = clock ? clock.start : placeAt;
+  // A bullet time's clocks (null without one), and the story's world-timed
+  // moments on the world's clock (the spec itself without one).
+  const bullet = useMemo(() => sceneClock(scene), [scene]);
+  const worldSpec = useMemo(() => (spec ? warpSpecTimes(spec, bullet) : spec), [spec, bullet]);
   // Anchor + cast tables: the city layout is generated with exactly the
   // arguments GroundWorld draws with, so the camera's subjects sit on the
   // set it renders, and its own plan of the cast matches these. With the
   // spec, the lens keeps out of the buildings the story lifts and above a
   // flood (planned as GroundWorld plans them).
-  const shots = useMemo(() => (resolved ? worldShotSet(scene, resolved, CLOUD_PASSAGE, spec) : null), [scene, resolved, spec]);
+  const shots = useMemo(() => (resolved ? worldShotSet(scene, resolved, CLOUD_PASSAGE, worldSpec) : null), [scene, resolved, worldSpec]);
   const aspect = width / Math.max(1, height);
 
   // The camera at video time t: a pure function of the spec, used for this
@@ -97,8 +139,45 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
     path.push(cameraAt(Math.max(scene.from, scene.to - 1e-3)).pose.pos);
     return path;
   }, [cameraAt, scene]);
+  // The lens at any video time and where it looks: the traffic keeps out of
+  // its way and drives wherever it can see. The traffic runs on the world's
+  // clock: in a bullet time it sees the lens at the real moment its time is.
+  const lensAt = useMemo(() => (bullet ? (tt: number) => cameraAt(bullet.worldToReal(tt)).pose.pos : (tt: number) => cameraAt(tt).pose.pos), [cameraAt, bullet]);
+  const aimAt = useMemo(() => (bullet ? (tt: number) => cameraAt(bullet.worldToReal(tt)).pose.target : (tt: number) => cameraAt(tt).pose.target), [cameraAt, bullet]);
+  // The featured actors' footprints: the cars stop for one in the road. In a
+  // bullet time the arc's lens path joins them from 2 s of world time before
+  // the window, so the lanes it sweeps over are clear before it comes.
+  const walkers = useMemo(() => {
+    const cast = shots ? castWalkers(shots.plans) : undefined;
+    const arc = bullet ? spec?.shots?.find((sh) => sh.move === "arc" && sh.from >= scene.from && sh.to <= scene.to) : undefined;
+    if (!bullet || !arc) return cast;
+    const pts: [number, number, number][] = [];
+    for (let tt = arc.from; tt < arc.to + 1e-6; tt += 0.2) {
+      const p = cameraAt(Math.min(tt, arc.to - 1e-3)).pose.pos;
+      pts.push([p[0], p[2], 1.2]);
+    }
+    const w0 = bullet.world(arc.from) - 2;
+    const w1 = bullet.world(arc.to) + 0.5;
+    return (tt: number) => [...(cast?.(tt) ?? []), ...(tt >= w0 && tt <= w1 ? pts : [])];
+  }, [shots, bullet, spec, scene, cameraAt]);
+  // The director's weather over this scene (null: none chosen), on the world's clock.
+  const weather = useMemo(() => worldWeather(scene, worldSpec?.worldEvents), [scene, worldSpec]);
+  // A bullet time's projectiles, planned on the same cast and walls the
+  // assembler checked (none without one, or with none listed).
+  const projectiles = useMemo(() => {
+    if (!bullet || !resolved || !shots?.layout || !scene.bulletTime?.projectiles?.length) return null;
+    const plan = sceneProjectiles(scene, resolved, { table: shots.table, walls: cityWalls(shots.layout, resolved.style.floorHeight) });
+    return plan ? plan.projectiles : null;
+  }, [bullet, resolved, shots, scene]);
+  // The director's effects over this scene on the place's clock (null: none listed).
+  const vfx = useMemo(() => {
+    const list = sceneVfx(scene);
+    return list.length ? specEffects(list, scene, bullet ? (tt) => bullet.world(tt) : undefined) : null;
+  }, [scene, bullet]);
   if (!world || !resolved) return null;
   const t = frame / (fps || 30);
+  // The place's own time (t itself without a bullet time).
+  const wt = bullet ? bullet.world(t) : t;
   const { pose, fov, solved: cameraPose } = cameraAt(t);
   const near = cameraPose ? lensNear(cameraPose) : 0.05;
 
@@ -115,7 +194,17 @@ export const WorldStage: React.FC<{ scene: SceneType; spec?: ShotSpec; fps?: num
         mood={spec?.story?.mood}
         // The counter's reaction and the world events (react/): the place
         // physically reacts to the story.
-        reaction={spec ? { spec, scene, t } : undefined}
+        reaction={worldSpec ? { spec: worldSpec, scene, t: wt } : undefined}
+        // The place's traffic over this scene (world/traffic.ts).
+        traffic={{ scene, t: wt, lens: lensAt, aim: aimAt, walkers }}
+        // A time lapse: the light follows the clock at t.
+        lapse={clock ? { clock, t } : undefined}
+        // Rain, a storm or snow, when the director chose one.
+        weather={weather ? { plan: weather, t: wt } : undefined}
+        // Bullet time: the place's own clocks, and the projectiles.
+        bullet={bullet ? { clock: bullet, projectiles: projectiles ?? [], seed: `${resolved.place.id}:${scene.from}` } : undefined}
+        // The director's effects, when the scene lists some.
+        vfx={vfx ? { effects: vfx, t: wt } : undefined}
       />
       {cameraPose && (
         // Overrides GroundWorld's own camera write afterwards each frame:

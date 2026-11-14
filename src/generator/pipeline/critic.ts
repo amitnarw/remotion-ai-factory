@@ -8,9 +8,11 @@
  * the director's and sound designer's choices (which refer to beat ids) stay valid.
  */
 import { z } from "zod";
+import { criticSystem, loadChannel, type ChannelProfile } from "../ai/channels";
 import { resolveWorldScene } from "../../world/director-context";
 import { asArray, beatRef, callRole, type RoleModel } from "./llm";
 import type { Direction } from "./director";
+import { directedLapse } from "./sound";
 import type { Timeline } from "./timeline";
 import type { WriterStory } from "./writer";
 
@@ -27,16 +29,33 @@ type DirectedScene = Direction["scenes"][number];
  * (a place choice that resolves) is its place and moment; its kit is only
  * advisory (a scene with "world" and no kit reads as the default
  * street-block), so the kit and the "time" mood word are not what is seen.
- * (The world stage draws no weather, so weather doesn't tell two world
- * scenes apart.) A kit scene, or a place choice the assembler drops, is its
- * kit, time and weather.
+ * Its weather is (the world stage draws rain, storms and snow since
+ * 2026-11-04, docs/factory/18-world-weather.md): the same place and moment
+ * in the rain is another picture. A kit scene, or a place choice the
+ * assembler drops, is its kit, time and weather.
+ *
+ * A time-lapse (Phase 6 step 4) shows a different moment at each end: `first`
+ * is what its first frame shows and `last` its last (its end time, a word
+ * already turned into one); its label names both times, so neither the code
+ * checks nor the critic read it as one moment. For any other scene the two
+ * are `key`.
  */
-export function sceneLook(s: DirectedScene): { key: string; label: string } {
+export function sceneLook(s: DirectedScene): { key: string; label: string; first: string; last: string } {
   const w = s.worldPlace;
   if (w && resolveWorldScene(w).ok) {
-    return { key: `world|${w.place}|${w.date}|${w.time}`, label: `${w.place}, ${w.date} ${w.time}` };
+    // Weather is part of the picture; none adds nothing (the keys stay as they were).
+    const wet = s.weather && s.weather !== "none" ? s.weather : null;
+    const key = `world|${w.place}|${w.date}|${w.time}${wet ? `|${wet}` : ""}`;
+    const label = (text: string) => (wet ? `${text}, ${wet}` : text);
+    const lapse = directedLapse(s);
+    if (lapse) {
+      const last = `world|${w.place}|${w.date}|${lapse.lapse.to}${wet ? `|${wet}` : ""}`;
+      return { key: `${key}-${lapse.lapse.to}`, label: label(`${w.place}, ${w.date} ${w.time} to ${lapse.lapse.to} (a time-lapse)`), first: key, last };
+    }
+    return { key, label: label(`${w.place}, ${w.date} ${w.time}`), first: key, last: key };
   }
-  return { key: `kit|${s.kit}|${s.time}|${s.weather}`, label: `${s.kit}, ${s.time}` };
+  const key = `kit|${s.kit}|${s.time}|${s.weather}`;
+  return { key, label: `${s.kit}, ${s.time}`, first: key, last: key };
 }
 
 /** Exact checks that need no model. They become warnings on the plan. */
@@ -49,9 +68,11 @@ export function codeChecks(story: WriterStory, timeline: Timeline, direction: Di
   for (let i = 1; i < scenes.length; i++) {
     const a = scenes[i - 1];
     const b = scenes[i];
+    // What the cut joins: the end of one scene and the start of the next (a
+    // lapse that ends at the next scene's moment and place is a cut to the same picture).
     const look = sceneLook(b);
-    if (sceneLook(a).key === look.key) {
-      out.push(`scenes at ${a.start} and ${b.start} look the same (${look.label}); a cut should change something`);
+    if (sceneLook(a).last === look.first) {
+      out.push(`scenes at ${a.start} and ${b.start} look the same at the cut (${look.label}); a cut should change something`);
     }
   }
   const silent = timeline.beats.filter((b) => b.lines.length === 0).length;
@@ -65,18 +86,19 @@ const CriticSchema = z.object({
   issues: z.array(z.object({ beat: z.string(), problem: z.string().min(3), fix: z.string().min(3) })).max(3),
 });
 
-const SYSTEM = `You are a ruthless editor of short "what if" videos for YouTube.
-You review a finished plan and name only the beats that would make viewers swipe away:
-a hook that does not grip, a beat that repeats the last one, a line that is vague, a missing payoff.
-Name at most 3 beats. If the plan is strong, return no issues. Refer to beats as "b1", "b2", ...
-Reply with JSON only: { "issues": [{ "beat": "b3", "problem": "...", "fix": "..." }] }`;
-
+/**
+ * The critic's system text comes from the channel (ai/channels.ts
+ * criticSystem): what it edits and what makes a beat weak there. For what-if
+ * it is the critic's prompt of before channels, word for word (prompts.test.ts).
+ */
 export async function critiquePlan(input: {
   premise: string;
   story: WriterStory;
   timeline: Timeline;
   direction: Direction;
   models: Record<string, RoleModel>;
+  /** The channel (default: what-if). */
+  profile?: ChannelProfile;
 }): Promise<Issue[]> {
   const len = new Map(input.timeline.beats.map((b) => [b.id, b.to - b.from]));
   const ids = input.story.beats.map((b) => b.id);
@@ -87,13 +109,15 @@ Hook: "${input.story.hook}"
 ${input.story.beats
   .map((b) => {
     const s = sceneOf(b.id);
-    return `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${s ? sceneLook(s).label : "?"}): "${b.say}" — shows: ${b.see}`;
+    // The bullet time's beat: a frozen world there is the device, not a fault (videos without one keep the prompt of before).
+    const frozen = input.direction.bulletTime?.beat === b.id ? " [bullet time here: the world slows almost to a stop on purpose; frozen people and cars and things hanging in the air are intended, not a fault]" : "";
+    return `${b.id} (${(len.get(b.id) ?? 0).toFixed(1)}s, ${s ? sceneLook(s).label : "?"}): "${b.say}" — shows: ${b.see}${frozen}`;
   })
   .join("\n")}`;
   const result = await callRole({
     role: "critic",
     label: "critic",
-    system: SYSTEM,
+    system: criticSystem(input.profile ?? loadChannel()),
     prompt,
     schema: CriticSchema,
     models: input.models,

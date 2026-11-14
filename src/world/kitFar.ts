@@ -31,8 +31,9 @@ import {
 } from "./kitLod";
 import type { Placement } from "./assembler";
 import type { KitTownBuilding } from "./kitTown";
+import { patchKitPaint } from "./kitPaint";
 import { WINDOW_GLOW_COLOR, windowGlowMaterialFor } from "./kitWindows";
-import { patchDarkEmissive } from "./react/darkShader";
+import { patchDarkEmissive, patchDuskEmissive } from "./react/darkShader";
 
 /** Seen through an open doorway or window of a wall card: the inner walls
  *  in shade, as the kit pieces show them through their openings. */
@@ -273,13 +274,23 @@ export function farCity(
   placements: readonly Placement[],
   buildings: readonly KitTownBuilding[],
   atlas: CardAtlas,
-  opts: { castShadow?: boolean; receiveShadow?: boolean } = {},
+  opts: {
+    castShadow?: boolean;
+    receiveShadow?: boolean;
+    /** A scene between day and night (atmosphere/dusk.ts): each building's
+     *  glow also waits for its dusk turn and fades in, as its near pieces' does. */
+    dusk?: boolean;
+    /** The houses' paints (kitTown.ts kitPaints), worn by their wall cards
+     *  as by their near pieces. */
+    paints?: Float32Array | null;
+  } = {},
 ): FarCity {
-  const cards = buildFarCards(placements, buildings, atlas.faces);
+  const cards = buildFarCards(placements, buildings, atlas.faces, opts.paints ?? null);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(cards.position, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(cards.normal, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(cards.uv, 2));
+  if (cards.color) geometry.setAttribute("color", new THREE.BufferAttribute(cards.color, 3));
   const index = new THREE.BufferAttribute(new Uint32Array(cards.index.length), 1);
   geometry.setIndex(index);
   geometry.computeBoundingSphere();
@@ -297,7 +308,10 @@ export function farCity(
     // at an angle; head-on pictures show more of each glowing texel, so the
     // cards glow at half that to read alike.
     emissiveIntensity: atlas.glow ? 1.2 : 1,
+    // The paints ride on the vertex colours, read by the paint patch only.
+    vertexColors: !!cards.color,
   });
+  if (cards.color) patchKitPaint(material, true);
   if (atlas.glow) {
     // Lights out (react/dark.ts): each building's cards carry its key (lot
     // centre and index, as its near pieces do), so its glow goes out with them.
@@ -311,7 +325,10 @@ export function farCity(
       }
     });
     geometry.setAttribute("aDark", new THREE.BufferAttribute(keys, 3));
-    patchDarkEmissive(material);
+    // A night scene keeps the lights-out patch alone (its own program, byte
+    // for byte); a dusk scene's carries the dusk turn as well.
+    if (opts.dusk) patchDuskEmissive(material);
+    else patchDarkEmissive(material);
   }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = "kit-far-cards";

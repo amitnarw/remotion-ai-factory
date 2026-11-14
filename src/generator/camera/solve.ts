@@ -17,6 +17,11 @@
  *   a lens that would stand in something or not see its subject (the stage's
  *   `blockers`) takes a detour: another bearing, height or distance, chosen
  *   once per shot in a fixed order (clearView).
+ * Bullet time's arc (docs/factory/14-bullet-time.md §3.4) sweeps the bearing
+ * round the subject by `opts.arc.sweep` degrees on smootherstep, dipping to a
+ * slight low angle mid-sweep; its view is judged at nine poses along the
+ * sweep, and a blocked one is turned, lifted, shrunk (180, 135, 90 degrees)
+ * or flipped, in that order.
  */
 import * as THREE from "three";
 import { ENERGY_SCALE, SIDE_DEG, SIZE_DEFAULTS, STYLE_SHAKE, hash01, type Shot } from "./shot";
@@ -65,6 +70,15 @@ export interface Subject {
   own?: number[];
   /** Places the lens must not stand in but may look across (the lanes the traffic drives in). */
   keepOut?: Occluder[];
+  /**
+   * The subject is a stretch of ground (a plaza spot: its radius is its
+   * reach, not a body): a lens may stand within its radius, and one its
+   * bounds pull in (a plaza's edge stops a wide shot backing away) frames
+   * it as before. The detour search counts neither against a view
+   * (viewCost), so only a blocker moves the lens. Default: a body, which a
+   * lens inside its radius would be in.
+   */
+  area?: boolean;
 }
 
 export interface SolveOptions {
@@ -86,6 +100,8 @@ export interface SolveOptions {
   rest?: Subject;
   /** A moving subject at the shot's start and end: its lens is checked there too (a car's lens sweeping into a traffic lane). */
   ends?: [Subject, Subject];
+  /** The arc's sweep (degrees) and its way, for a shot whose move is "arc" (a bullet time's window). */
+  arc?: { sweep: number; dir: "left" | "right" };
 }
 
 export interface CameraPose {
@@ -109,6 +125,12 @@ export function lensToVFov(mm: number, aspect: number): number {
 }
 
 const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+/** Smootherstep: zero speed and acceleration at both ends (the arc). */
+const smootherstep = (x: number) => x * x * x * (x * (6 * x - 15) + 10);
+/** The arc's sweeps, tried in turn when the asked one is blocked. */
+const ARC_SWEEPS = [180, 135, 90];
+/** How far the arc's lens looks up mid-sweep (a slight low angle). */
+const ARC_DIP = 6;
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3);
 
 /** Smooth deterministic noise in about [-1, 1]: three sines with seeded phases. */
@@ -171,6 +193,9 @@ interface Detour {
   turn: number;
   lift: number;
   reach: number;
+  /** An arc's sweep (degrees) and whether its way is flipped, when the asked one is blocked. */
+  sweep?: number;
+  flip?: boolean;
 }
 
 const STRAIGHT: Detour = { turn: 0, lift: 0, reach: 1 };
@@ -206,7 +231,7 @@ function place(shot: Shot, subject: Subject, opts: SolveOptions, detour: Detour,
   const size = SIZE_DEFAULTS[shot.size];
   const energy = ENERGY_SCALE[shot.energy];
   const u = Math.min(1, Math.max(0, opts.u));
-  const eased = shot.move === "push_in" || shot.move === "pull_out" || shot.move === "dolly_zoom" ? easeOutCubic(u) : easeInOutCubic(u);
+  const eased = shot.move === "push_in" || shot.move === "pull_out" || shot.move === "dolly_zoom" ? easeOutCubic(u) : shot.move === "arc" ? smootherstep(u) : easeInOutCubic(u);
 
   // Lens and fields of view.
   const lens = opts.aspect < 1 ? size.lens.portrait : size.lens.landscape;
@@ -245,7 +270,8 @@ function place(shot: Shot, subject: Subject, opts: SolveOptions, detour: Detour,
       dist *= 1 + size.push * energy * half * 2 * 0.5;
       break;
     case "static":
-      if (!still) dist *= 1 - 0.02 * half; // never quite frozen: a slow drift in
+      // Truly still: a drift of a few mm a frame made fine geometry, shadow
+      // edges and windows shimmer in wide shots (13-light-and-time.md).
       break;
     case "orbit_left":
       bearingOffset = size.orbit * energy * half * DEG;
@@ -253,6 +279,15 @@ function place(shot: Shot, subject: Subject, opts: SolveOptions, detour: Detour,
     case "orbit_right":
       bearingOffset = -size.orbit * energy * half * DEG;
       break;
+    case "arc": {
+      // Round the subject by the whole sweep, fastest mid-shot, the lens
+      // dipping to a slight low angle as it passes the middle.
+      const sweep = detour.sweep ?? opts.arc?.sweep ?? ARC_SWEEPS[0];
+      const way = (opts.arc?.dir === "right" ? -1 : 1) * (detour.flip ? -1 : 1);
+      bearingOffset = way * sweep * half * DEG;
+      pitchOffset = ARC_DIP * Math.sin(Math.PI * u) ** 2 * DEG;
+      break;
+    }
     case "crane_up":
       pitchOffset = -14 * energy * half * DEG; // rises and looks down more
       break;
@@ -444,19 +479,31 @@ function clearView(shot: Shot, subject: Subject, opts: SolveOptions): Detour {
   const keep = ready(subject.keepOut);
   const key = JSON.stringify([
     shot.size, shot.angle, shot.side, shot.move, shot.place, shot.energy, shot.style, opts.aspect, opts.seed, opts.seconds,
-    subject.center, subject.radius, subject.height, subject.facing, subject.ground, subject.focus, subject.bounds, subject.own, keep.list.length,
+    subject.center, subject.radius, subject.height, subject.facing, subject.ground, subject.focus, subject.bounds, subject.own, subject.area, keep.list.length,
     opts.ends?.map((e) => [e.center, e.facing, e.bounds]),
+    opts.arc,
   ]);
   const known = solids.chosen.get(key);
   if (known && keep.chosen.get(key) === known) return known;
   const toward = SIDE_DEG[sideOf(shot, opts.seed)] > 0 ? -1 : 1; // turn toward the front first
   const view: View = { subject, solids, keep, own: new Set(subject.own ?? []) };
   let best = { detour: STRAIGHT, cost: Number.POSITIVE_INFINITY };
-  for (const [turn, lift, reach] of DETOURS) {
-    const detour: Detour = { turn: toward * turn * DEG, lift: lift * DEG, reach };
-    const cost = viewCost(shot, view, opts, detour, best.cost);
-    if (cost < best.cost) best = { detour, cost };
-    if (cost === 0) break;
+  // An arc tries every turn and lift at its own sweep first, then smaller
+  // sweeps, then the other way round.
+  const arcs: { sweep?: number; flip?: boolean }[] =
+    shot.move === "arc"
+      ? [false, true].flatMap((flip) => {
+          const asked = opts.arc?.sweep ?? ARC_SWEEPS[0];
+          return [asked, ...ARC_SWEEPS.filter((w) => w < asked - 1e-9)].map((sweep) => ({ sweep, flip }));
+        })
+      : [{}];
+  search: for (const arc of arcs) {
+    for (const [turn, lift, reach] of DETOURS) {
+      const detour: Detour = { turn: toward * turn * DEG, lift: lift * DEG, reach, ...arc };
+      const cost = viewCost(shot, view, opts, detour, best.cost);
+      if (cost < best.cost) best = { detour, cost };
+      if (cost === 0) break search;
+    }
   }
   if (solids.chosen.size > 2000) solids.chosen.clear();
   if (keep.chosen.size > 2000) keep.chosen.clear();
@@ -476,8 +523,9 @@ interface View {
 /**
  * What is wrong with a detour's view, in points (0: clear). At rest: a lens
  * in something (+100), a lens the bounds pulled into the subject itself or so
- * close that the framed region overflows the frame (+50: a forest wide shot
- * behind the subject's own rock, a crowded tree seen as all crown), blocked
+ * close that the framed region overflows the frame (+50, not for an `area`:
+ * a forest wide shot behind the subject's own rock, a crowded tree seen as
+ * all crown), blocked
  * sight lines (+10 the centre, +4 each the top and bottom of the framed
  * region). At the move's two ends (and a moving subject's, `ends`): a lens
  * in something (+3), the centre line blocked (+2). Stops counting once past
@@ -490,14 +538,15 @@ function viewCost(shot: Shot, view: View, opts: SolveOptions, detour: Detour, bo
   let cost = 0;
   if (standsIn(view, p)) cost += 100;
   const fill = SIZE_DEFAULTS[shot.size].fill;
-  if (p.distanceTo(at.live) < subject.radius || fill / at.pulled > 1.5) cost += 50;
+  if (!subject.area && (p.distanceTo(at.live) < subject.radius || fill / at.pulled > 1.5)) cost += 50;
   if (cost >= bound) return cost;
   const up = 0.35 * at.regionH;
   if (sightBlocked(view, p, at.live, 0)) cost += 10;
   if (cost < bound && sightBlocked(view, p, at.live, up)) cost += 4;
   if (cost < bound && sightBlocked(view, p, at.live, -up)) cost += 4;
   if (cost >= bound || ((shot.move === "static" || shot.move === "follow") && !opts.ends)) return cost;
-  for (const u of [0, 1]) {
+  // An arc sweeps far: judged at nine poses along it, not two ends.
+  for (const u of shot.move === "arc" ? [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1] : [0, 1]) {
     const end = place(shot, opts.ends?.[u] ?? subject, { ...opts, u, lagged: undefined }, detour, false);
     if (standsIn(view, end.position)) cost += 3;
     if (sightBlocked(view, end.position, end.live, 0)) cost += 2;

@@ -1,37 +1,34 @@
 /**
  * scripts/audio-audit.ts
  *
- * Audio QA without ears:
+ * Audio QA without ears (the files are measured, never played):
  *   1. Verifies the audio stream is present in the MP4.
- *   2. Verifies the overall mix isn't silent (ffmpeg astats peak level).
- *   3. For each spec one-shot SFX event, measures audio loudness in a short
- *      window around the event frame and asserts a sound spike is present
- *      (verifying sound is actually placed at the event time).
+ *   2. Verifies the overall mix isn't silent (its RMS, from the decoded PCM).
+ *   3. For each one-shot SFX cue in the spec (its time: the cue's `at`, else
+ *      its event's `t`, in seconds, as CompositionAudio reads it), measures
+ *      the peak and mean level in a short window from the cue and in the
+ *      window before it, and asserts the window is not silent; the rise over
+ *      the window before is reported (beds and music play under every cue,
+ *      so a cue's presence, not its loudness, is what can be checked).
  *
  * Sync itself is guaranteed by construction (Remotion <Audio startFrom = t*fps>);
  * this audit confirms the audio track is present and sounding at the right
  * moments.
  *
  * Usage:
- *   npm run audit <id-or-premise> <mp4-file>
+ *   npm run audit <id-or-premise> [mp4-file]
  *   npm run audit gravity output/whatif-...-17.mp4
  *
- * Output: updates output/<id>-report.json with an audioAudit block.
+ * Finds runs in either layout (scripts/runs.ts). Output: the run's report
+ * (output/<id>/report.json, or output/<id>-report.json) gets an audioAudit block.
  */
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from "fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
+import { tmpdir } from "os";
 import { join } from "path";
-import { execFileSync, spawnSync } from "child_process";
-import { validateSpec, type ShotSpec } from "../src/generator/spec.schema";
 import { secToFrame } from "../src/generator/timing";
+import { findRun } from "./runs";
 
-const OUTPUT_DIR = join(process.cwd(), "output");
 const FFMPEG = join(
   process.cwd(),
   "node_modules",
@@ -40,72 +37,53 @@ const FFMPEG = join(
   "ffmpeg.exe",
 );
 
-function slug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "video";
-}
+/** A cue counts as sounding when its window peaks above this (dBFS). */
+const SOUNDING_DB = -40;
+/** The window measured from each cue, and the one before it (seconds). */
+const CUE_WINDOW = 0.3;
 
-function findSpec(idOrPremise: string): { id: string; spec: ShotSpec } | null {
-  if (!existsSync(OUTPUT_DIR)) return null;
-  const files = readdirSync(OUTPUT_DIR).filter((f) => f.endsWith("-spec.json"));
-  const q = slug(idOrPremise);
-  const qWords = q.split("-").filter((w) => w.length > 3);
-  for (const f of files) {
-    const id = f.replace("-spec.json", "");
-    if (id === idOrPremise || id === q || qWords.some((w) => id.includes(w))) {
-      const spec = JSON.parse(readFileSync(join(OUTPUT_DIR, f), "utf8"));
-      return { id, spec: validateSpec(spec) };
-    }
-  }
-  return null;
-}
-
-/**
- * Measure peak loudness (dB) of an audio clip via ffmpeg astats.
- * Returns the "Overall Peak Level" in dB, or null if not found.
- */
-const TMP_DIR = join(process.cwd(), "node_modules", ".cache", "audio-audit");
-mkdirSync(TMP_DIR, { recursive: true });
-
-let tmpCounter = 0;
-
-/**
- * Extract a short audio clip to a temp WAV file and return its byte size.
- * Silent audio produces a much smaller file than real audio.
- */
-function extractClipSize(mp4: string, startSec: number, durSec: number): number | null {
+/** The MP4's audio, decoded once to mono 16-bit PCM at RATE (the bundled
+ *  ffmpeg has no level filters: verify-video.ts measures the same way). */
+const RATE = 48000;
+const decoded = new Map<string, Int16Array | null>();
+function pcmOf(mp4: string): Int16Array | null {
+  if (decoded.has(mp4)) return decoded.get(mp4)!;
+  const tmp = join(tmpdir(), `audio-audit-${process.pid}.wav`);
+  let pcm: Int16Array | null = null;
   try {
-    const outFile = join(TMP_DIR, `clip-${++tmpCounter}.wav`);
-    spawnSync(
-      FFMPEG,
-      [
-        "-y",
-        "-ss",
-        String(Math.max(0, startSec)),
-        "-t",
-        String(durSec),
-        "-i",
-        mp4,
-        "-vn",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "44100",
-        "-ac",
-        "1",
-        outFile,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (!existsSync(outFile)) return null;
-    const { size } = statSync(outFile);
-    return size;
+    execFileSync(FFMPEG, ["-y", "-v", "error", "-i", mp4, "-map", "0:a:0", "-f", "wav", "-ac", "1", "-ar", String(RATE), tmp], { maxBuffer: 1024 * 1024 * 512, timeout: 120000 });
+    const wav = readFileSync(tmp);
+    const data = wav.indexOf(Buffer.from("data"), 12);
+    const body = wav.subarray(data + 8);
+    pcm = new Int16Array(body.buffer.slice(body.byteOffset, body.byteOffset + (body.length & ~1)));
   } catch {
-    return null;
+    pcm = null;
+  } finally {
+    rmSync(tmp, { force: true });
   }
+  decoded.set(mp4, pcm);
+  return pcm;
+}
+
+/**
+ * Peak and mean (RMS) level, dBFS, of the audio from `startSec` for `durSec`
+ * (the whole file without them). Null when there is no audio there.
+ */
+function levels(mp4: string, startSec?: number, durSec?: number): { max: number; mean: number } | null {
+  const pcm = pcmOf(mp4);
+  if (!pcm) return null;
+  const a = startSec == null ? 0 : Math.max(0, Math.round(startSec * RATE));
+  const b = startSec == null ? pcm.length : Math.min(pcm.length, a + Math.round((durSec ?? 0) * RATE));
+  if (b <= a) return null;
+  let peak = 0;
+  let sum = 0;
+  for (let i = a; i < b; i++) {
+    const v = Math.abs(pcm[i]);
+    if (v > peak) peak = v;
+    sum += pcm[i] * pcm[i];
+  }
+  const db = (x: number) => (x > 0 ? Math.round(20 * Math.log10(x / 32768) * 10) / 10 : -Infinity);
+  return { max: db(peak), mean: db(Math.sqrt(sum / (b - a))) };
 }
 
 /**
@@ -145,15 +123,17 @@ function inspectAudioStream(mp4: string): { codec: string | null; channels: numb
 }
 
 function main() {
-  const idOrPremise = process.argv.slice(2).join(" ").trim();
-  const mp4Arg = process.argv.slice(3).join(" ").trim();
+  const args = process.argv.slice(2);
+  // A last argument that names an .mp4 is the file; the rest is the id or premise.
+  const mp4Arg = args.length > 1 && /\.mp4$/i.test(args[args.length - 1]) ? args.pop()! : "";
+  const idOrPremise = args.join(" ").trim();
   if (!idOrPremise) {
     console.error('Usage: npm run audit <id-or-premise> [mp4-file]');
     console.error('Example: npm run audit gravity output/whatif-...-17.mp4');
     process.exit(1);
   }
 
-  const found = findSpec(idOrPremise);
+  const found = findRun(idOrPremise);
   if (!found) {
     console.error(`No spec found for "${idOrPremise}"`);
     process.exit(1);
@@ -162,20 +142,9 @@ function main() {
   const { id, spec } = found;
   const fps = spec.fps ?? 30;
 
-  let mp4 = mp4Arg;
+  const mp4 = mp4Arg || found.mp4 || "";
   if (!mp4 || !existsSync(mp4)) {
-    const candidates = readdirSync(OUTPUT_DIR).filter(
-      (f) => f.startsWith(`whatif-${id}-`) && f.endsWith(".mp4"),
-    );
-    if (candidates.length === 0) {
-      console.error(`No MP4 found for "${id}" in ${OUTPUT_DIR}`);
-      process.exit(1);
-    }
-    mp4 = join(OUTPUT_DIR, candidates.sort().reverse()[0]);
-  }
-
-  if (!existsSync(mp4)) {
-    console.error(`MP4 not found: ${mp4}`);
+    console.error(mp4 ? `MP4 not found: ${mp4}` : `No MP4 found for "${id}"`);
     process.exit(1);
   }
 
@@ -188,31 +157,26 @@ function main() {
     `Audio stream: ${audioPresent ? stream.codec + " (" + stream.channels + "ch)" : "MISSING"}`,
   );
 
-  // 2. Overall audio size (entire file) - real audio is much larger than silence
-  const overallSize = extractClipSize(mp4, 0, 0.5);
-  const overallHasAudio = overallSize != null && overallSize > 1000;
-  console.log(
-    `Overall audio size: ${overallSize == null ? "n/a" : overallSize} bytes (${
-      overallHasAudio ? "OK" : "SILENT"
-    })`,
-  );
+  // 2. The whole mix: not silent.
+  const overall = levels(mp4);
+  const overallHasAudio = overall != null && overall.mean > -60;
+  console.log(`Overall level: ${overall ? `peak ${overall.max} dB, mean ${overall.mean} dB` : "n/a"} (${overallHasAudio ? "OK" : "SILENT"})`);
 
-  // 3. Per-event loudness spike check
-  const specEvents = (spec.events ?? []).flatMap((e) =>
-    (e.sfx ?? []).filter((s) => s.at != null).map((s) => ({ t: s.at!, name: e.name })),
-  );
+  // 3. Each one-shot cue: sounding in its window.
+  const specEvents = (spec.events ?? []).flatMap((e) => (e.sfx ?? []).map((s) => ({ t: (s.at ?? e.t) as number, name: e.name, tag: s.tag })));
 
   const checks = specEvents.map((se) => {
-    const expectedSec = se.t / fps;
-    const frame = secToFrame(se.t, fps);
-    // Measure audio bytes in a 0.2s window centered on the event
-    const clipSize = extractClipSize(mp4, Math.max(0, expectedSec - 0.1), 0.2);
-    const hasSound = clipSize != null && clipSize > 2000;
+    const here = levels(mp4, se.t, CUE_WINDOW);
+    const before = levels(mp4, se.t - CUE_WINDOW, CUE_WINDOW);
+    const hasSound = here != null && here.max > SOUNDING_DB;
     return {
       event: se.name,
-      expectedFrame: frame,
-      expectedSec,
-      clipSizeBytes: clipSize,
+      tag: se.tag,
+      expectedFrame: secToFrame(se.t, fps),
+      expectedSec: se.t,
+      peakDb: here?.max ?? null,
+      meanDb: here?.mean ?? null,
+      riseDb: here && before && Number.isFinite(before.mean) ? Math.round((here.mean - before.mean) * 10) / 10 : null,
       hasSound,
       withinTolerance: hasSound,
     };
@@ -224,11 +188,13 @@ function main() {
     mp4,
     specId: id,
     fps,
-    toleranceSec: 0.05,
+    windowSec: CUE_WINDOW,
+    soundingDb: SOUNDING_DB,
     audioPresent,
     audioCodec: stream.codec,
     audioChannels: stream.channels,
-    overallSizeBytes: overallSize,
+    overallPeakDb: overall?.max ?? null,
+    overallMeanDb: overall?.mean ?? null,
     overallHasAudio,
     soundEventsDetected: checks.filter((c) => c.withinTolerance).length,
     specOneShotEvents: specEvents.length,
@@ -237,30 +203,25 @@ function main() {
     auditedAt: new Date().toISOString(),
   };
 
-  const reportPath = join(OUTPUT_DIR, `${id}-report.json`);
+  const reportPath = found.reportPath;
   let report: Record<string, unknown> = {};
   if (existsSync(reportPath)) {
     report = JSON.parse(readFileSync(reportPath, "utf8")) as Record<string, unknown>;
   }
   report.audioAudit = audit;
-  mkdirSync(OUTPUT_DIR, { recursive: true });
   writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
-  console.log(
-    `Overall audio size: ${overallSize == null ? "n/a" : overallSize} bytes (${
-      overallHasAudio ? "OK" : "SILENT"
-    })`,
-  );
   console.log(
     `Sound events confirmed at event frames: ${audit.soundEventsDetected}/${specEvents.length}`,
   );
   console.log(`All events have sound at their frame: ${allPass}`);
+  if (!overallHasAudio || !audioPresent) process.exitCode = 1;
   for (const c of checks) {
     console.log(
       `  ${c.event}: frame ${c.expectedFrame} (${c.expectedSec}s) -> ${
         c.withinTolerance
-          ? `OK (${c.clipSizeBytes} bytes)`
-          : `NO SOUND (${c.clipSizeBytes} bytes)`
+          ? `OK (peak ${c.peakDb} dB, ${c.riseDb ?? "?"} dB over the window before)`
+          : `NO SOUND (peak ${c.peakDb ?? "n/a"} dB)`
       }`,
     );
   }

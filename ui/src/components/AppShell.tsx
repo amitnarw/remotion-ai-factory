@@ -1,13 +1,13 @@
 /**
  * AppShell: the frame around every screen except the editor.
  *
- * Wide screens: a sidebar with the four sections (the current one
+ * Wide screens: a sidebar with the five sections (the current one
  * highlighted) and a status area for the jobs that are running. Narrow
  * screens: one top bar with the same sections, and a slim status line under
  * it while something runs.
  */
 import * as React from "react";
-import { CircleCheck, CircleHelp, Clapperboard, Film, Loader2, Settings, Sparkles, type LucideIcon } from "lucide-react";
+import { Boxes, CircleCheck, CircleHelp, Clapperboard, Film, Loader2, Settings, Sparkles, type LucideIcon } from "lucide-react";
 import { useJobs, jobScreen, type ActiveJob } from "../lib/jobs";
 import { navigate } from "../lib/navigation";
 import type { Section } from "../lib/routes";
@@ -17,6 +17,8 @@ import { ProgressBar } from "./shared";
 const NAV: Array<{ key: Exclude<Section, "editor">; label: string; icon: LucideIcon }> = [
   { key: "create", label: "Create", icon: Sparkles },
   { key: "library", label: "Library", icon: Film },
+  // Models, sounds and music: the sources, the build requests, what was acquired.
+  { key: "assets", label: "Assets", icon: Boxes },
   { key: "settings", label: "Settings", icon: Settings },
   { key: "help", label: "Help", icon: CircleHelp },
 ];
@@ -152,7 +154,7 @@ export function AppShell({
         <div className="flex h-16 items-center gap-2 px-4 sm:px-6">
           <Brand compact />
           <nav aria-label="Main" className="ml-auto flex-1 sm:flex-none">
-            <ul className="grid grid-cols-4 gap-1 sm:flex sm:gap-2">
+            <ul className="grid grid-cols-5 gap-1 sm:flex sm:gap-2">
               {NAV.map((n) => {
                 const activeItem = section === n.key;
                 const Icon = n.icon;

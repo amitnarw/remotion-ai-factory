@@ -7,7 +7,7 @@
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import "./fonts";
-import { CaptionLook, FONT_STACKS, hexToRgba, resolveCaptionStyle } from "../../generator/caption-style";
+import { CaptionLook, FONT_STACKS, hexToRgba, resolveCaptionStyle, type CAPTION_FONTS } from "../../generator/caption-style";
 import { captionCentrePct, captionScale, centredTextMargin, textOutline, veilGlow } from "../../generator/layout";
 
 interface CaptionItem {
@@ -27,6 +27,8 @@ interface CaptionsProps {
   style?: CaptionLook;
   /** 0..1: a dark glow behind the words, for a frame that turns white (a flight's cloud veil). */
   glow?: number;
+  /** The narration plate's font: a channel brand's caption font, else the serif. */
+  plateFont?: (typeof CAPTION_FONTS)[number];
 }
 
 /** Ease-out with a small overshoot: a caption "pops" into place. */
@@ -45,7 +47,7 @@ function markKeywords(text: string, keywords: string[] | undefined): Array<{ wor
   }));
 }
 
-export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style, glow = 0 }) => {
+export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style, glow = 0, plateFont = "serif" }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   const seconds = frame / fps;
@@ -55,7 +57,7 @@ export const Captions: React.FC<CaptionsProps> = ({ captions, fps = 30, style, g
   // Narration plates keep their own look; everything else uses the chosen style.
   const look: CaptionLook =
     active.style === "serif-italic"
-      ? { ...resolveCaptionStyle(style), font: "serif", italic: true, uppercase: false, weight: 400 }
+      ? { ...resolveCaptionStyle(style), font: plateFont, italic: true, uppercase: false, weight: 400 }
       : resolveCaptionStyle(style);
 
   // Larger on phones (9:16), placed clear of the platform UI (src/generator/layout.ts).

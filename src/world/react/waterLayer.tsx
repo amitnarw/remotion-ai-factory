@@ -38,9 +38,10 @@ export interface WaterLayerProps {
   half?: number;
   /** The ponds the place draws (atmosphere/water.ts pondsFor), for their beds. */
   ponds?: readonly Pond[];
-  /** Extra patches (height fog, mood palette) for the flood and the beds. */
+  /** Extra patches (height fog, mood palette) for the flood and the beds; a
+   *  new patch rebuilds them, so pass a memoized one. */
   patch?: (m: THREE.Material) => void;
-  /** Names `patch` in the program cache keys (a change rebuilds). */
+  /** Names `patch` in the program cache keys (the shaders' code). */
   patchKey?: string;
 }
 
@@ -48,19 +49,18 @@ const NO_PONDS: readonly Pond[] = Object.freeze([]);
 
 export function WaterLayer({ plan, t, look, lookKey, half, ponds = NO_PONDS, patch, patchKey }: WaterLayerProps) {
   const key = lookKey ?? JSON.stringify({ ...look, light: undefined });
-  // The look and the patch are read once per build; their keys say when they changed.
+  // The look is read once per build, its key says when it changed; a new
+  // patch (the next scene's fog) is a new build.
   const lookRef = useRef(look);
   lookRef.current = look;
-  const patchRef = useRef(patch);
-  patchRef.current = patch;
   const flood = useMemo(
-    () => buildFlood(lookRef.current, { half, patch: patchRef.current, patchKey }),
-    // key and patchKey stand for look and patch.
+    () => buildFlood(lookRef.current, { half, patch, patchKey }),
+    // key stands for look.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key, half, patchKey],
+    [key, half, patch, patchKey],
   );
   useEffect(() => () => flood.dispose(), [flood]);
-  const beds = useMemo(() => buildPondBeds(ponds, { patch: patchRef.current, patchKey }), [ponds, patchKey]);
+  const beds = useMemo(() => buildPondBeds(ponds, { patch, patchKey }), [ponds, patch, patchKey]);
   useEffect(() => () => beds.dispose(), [beds]);
   // The shared uniforms go back to rest with the layer (the next scene may have no water).
   useLayoutEffect(() => () => setWaterUniforms(null), []);

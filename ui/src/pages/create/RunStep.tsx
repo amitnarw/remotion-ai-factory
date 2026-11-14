@@ -24,7 +24,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { cancelJob, getJob, renderSpec, type Job } from "../../api";
+import { cancelJob, getJob, makeVariants, renderSpec, type Job } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
@@ -41,6 +41,8 @@ import {
 } from "../../components/ui/alert-dialog";
 import { EmptyState, ErrorBanner, LoadingState, ProgressBar } from "../../components/shared";
 import { InfoTip } from "../../components/InfoTip";
+import { VariantsPanel } from "../../components/VariantsPanel";
+import { PublishPanel } from "../../components/PublishPanel";
 import { formatSeconds } from "../../lib/format";
 import { navigate } from "../../lib/navigation";
 import { refreshJobs } from "../../lib/jobs";
@@ -272,7 +274,8 @@ function RenderingView({
     setRetrying(true);
     setRetryError(null);
     try {
-      const { jobId } = await renderSpec(job.specId);
+      // A variants job asks again for the same versions; any other job renders the plan again.
+      const { jobId } = job.kind === "variants" ? await makeVariants(job.specId, job.variants ?? {}) : await renderSpec(job.specId);
       refreshJobs();
       navigate({ tab: "create", step: "rendering", job: jobId });
     } catch (e) {
@@ -303,7 +306,11 @@ function RenderingView({
             {stopped ? <Square className="h-6 w-6" /> : failed ? <Film className="h-6 w-6" /> : <Loader2 className="h-6 w-6 animate-spin" />}
           </span>
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold tracking-tight">{stopped ? "You stopped this video" : failed ? "The video was not made" : "Making your video"}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {job?.kind === "variants"
+                ? stopped ? "You stopped the variants" : failed ? "The variants were not made" : "Making the variants"
+                : stopped ? "You stopped this video" : failed ? "The video was not made" : "Making your video"}
+            </h1>
             {job?.premise ? <p className="mt-1 break-words text-[15px] text-muted-foreground">{job.premise}</p> : null}
           </div>
           <InfoTip helpId="job-stages" />
@@ -438,7 +445,7 @@ function DoneView({ job, onMakeAnother }: { job: Job; onMakeAnother: () => void 
           <CircleCheck className="h-6 w-6" />
         </span>
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">Your video is ready</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{job.kind === "variants" ? "Your variants are ready" : "Your video is ready"}</h1>
           <p className="break-words text-[15px] text-muted-foreground">{job.premise}</p>
         </div>
       </div>
@@ -472,6 +479,9 @@ function DoneView({ job, onMakeAnother }: { job: Job; onMakeAnother: () => void 
           </p>
         </div>
       </div>
+
+      {job.specId ? <VariantsPanel runId={job.specId} /> : null}
+      {job.specId ? <PublishPanel videoId={job.specId} /> : null}
     </div>
   );
 }

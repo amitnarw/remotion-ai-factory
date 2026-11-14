@@ -22,10 +22,10 @@
  * reactions (src/world/react/, docs/factory/11-world-reactions.md §7): out
  * of the space of every building that lifts in the scene, and above a flood.
  */
-import { generateCity, type CityLayout } from "../../world/city";
-import { ANCHOR_VOCAB, GROUND, cityAnchors, openBlocks, type CityAnchors } from "../../world/cityAnchors";
+import { generateCity, type Belfry, type CityLayout } from "../../world/city";
+import { ANCHOR_VOCAB, GROUND, blockCentre, cityAnchors, openBlocks, type CityAnchors } from "../../world/cityAnchors";
 import { assetById } from "../../world/catalog";
-import { cityMarket, MARKET_AISLE_HALF, MARKET_CLEAR_RING, MARKET_TOP } from "../../world/atmosphere/market";
+import { cityMarket, MARKET_AISLE_HALF, MARKET_CLEAR_RING, MARKET_TOP, type MarketBlocker } from "../../world/atmosphere/market";
 import { landmarksFor } from "../../world/landmarks";
 import { terrainFor } from "../../world/terrain";
 import { kitTown } from "../../world/kitTown";
@@ -38,15 +38,18 @@ import { castActors } from "../../world/actors/cast";
 import {
   actorSubject,
   planActor,
+  poseAt,
   type ActorAction,
   type ActorPlan,
   type ActorScriptInput,
   type StageAnchors,
 } from "../../world/actors/script";
 import { resolvePlace, type RegionStyle, type ResolvedPlace } from "../../world/places";
+import { planBulletCast } from "../../world/projectiles";
+import { actorTime, bulletScripts, sceneClock, type BulletClock } from "../../world/warp";
 import type { SceneType } from "../spec.schema";
 import type { BoxBlocker, Occluder } from "./occlusion";
-import type { Shot, ShotSize } from "./shot";
+import { SIZE_DEFAULTS, type Shot, type ShotSize } from "./shot";
 import { solveShot, type CameraPose, type SolveOptions, type Subject, type Vec3 } from "./solve";
 
 /** What an anchor may know of the shot filming it (a wide park shot rises
@@ -77,6 +80,7 @@ export function worldCast(scene: SceneType): ActorScriptInput[] {
               ...(st.to ? { to: st.to } : {}),
               ...(st.target ? { target: st.target } : {}),
               ...(st.for != null ? { for: st.for } : {}),
+              ...(st.prop ? { prop: st.prop } : {}),
             }))
             .sort((x, y) => x.at - y.at),
         }
@@ -96,6 +100,15 @@ function actorAliasKeys(id: string, role: string, index: number): string[] {
  * the renderer plans the same way at draw time and would crash the frame.
  */
 export function planWorldCast(scene: SceneType, table: StageAnchors): { plans: Map<string, ActorPlan>; castScripts: ActorScriptInput[] } {
+  // A bullet time's cast: every step on its actor's clock and an actor named
+  // as a target by its cast id (warp.ts bulletScripts), planned as the
+  // assembler checked it (projectiles.ts planBulletCast).
+  if (scene.bulletTime) {
+    const clock = sceneClock(scene);
+    const plans = planBulletCast(scene, clock, table);
+    const castScripts = (bulletScripts(scene, clock) as ActorScriptInput[]).filter((s) => plans.has(s.id));
+    return { plans, castScripts };
+  }
   const scripts = worldCast(scene);
   const ids = scripts.map((s) => s.id);
   const drafts = new Map<string, ActorPlan>();
@@ -128,6 +141,24 @@ export function planWorldCast(scene: SceneType, table: StageAnchors): { plans: M
   return { plans, castScripts };
 }
 
+/**
+ * The featured actors' footprints at video time t, [x, z, radius] on the
+ * ground, for the traffic (traffic.ts opts.walkers: cars stop for one in
+ * their lane): standing 0.3 m round the feet, sitting 0.45 m, lying down
+ * its own height round where it fell. Undefined without a cast, so a scene
+ * without one plans its traffic as before.
+ */
+export function castWalkers(plans: ReadonlyMap<string, ActorPlan>): ((t: number) => [number, number, number][]) | undefined {
+  const list = [...plans.values()];
+  if (!list.length) return undefined;
+  return (t) =>
+    list.map((plan): [number, number, number] => {
+      const p = poseAt(plan, t);
+      const clip = p.layers[p.layers.length - 1].clip;
+      return [p.pos[0], p.pos[2], clip === "fall" ? plan.height : clip === "sit" ? 0.45 : 0.3];
+    });
+}
+
 export interface WorldShotSet {
   /** The city's stand/ground table (groundAt for plans). */
   table: CityAnchors;
@@ -144,6 +175,12 @@ export interface WorldShotSet {
   /** The scene's lifting buildings as GroundWorld plans them (worldLiftPlan),
    *  when the spec lifts any: every subject keeps its lens out of them. */
   lift?: BuildingPlan;
+  /** The city as drawn (for what needs its walls: a bullet time's projectiles). */
+  layout?: CityLayout;
+  /** A bullet time's clocks: each actor is a subject on its own time, and its
+   *  window's arc sweeps as the scene asks. */
+  clock?: BulletClock | null;
+  arc?: { sweep: number; dir: "left" | "right" };
 }
 
 /** A spot of the city as a camera subject. */
@@ -274,6 +311,114 @@ export function marketBearing(centre: XZ, poles: readonly { x: number; z: number
     }
   }
   return best;
+}
+
+/**
+ * The market's stalls and parasols (market.ts `blockers`: a footprint round
+ * and a height) as the solver's sight blockers: columns from below the
+ * plaza's paving to the top of the piece, the canopy roofs included.
+ */
+export function marketBlockers(list: readonly MarketBlocker[]): Occluder[] {
+  return list.map((b): Occluder => ({ kind: "column", x: b.x, z: b.z, r: b.r, top: GROUND.plaza + b.h, owner: -1 }));
+}
+
+/** How far round the bell tower its sight blockers are gathered (m): past a
+ *  landscape extreme wide's lens (about 400 m out for Paris's 51 m tower). */
+export const BELFRY_REACH = 450;
+/** Room over a box building's top for its roof and what stands on it
+ *  (a mansard rises 4 m; rooftop rooms, tanks and chimneys). */
+const ROOF_ROOM = 4;
+
+/** A turned footprint's axis-aligned box (a little larger: the safe side). */
+function footBox(x: number, z: number, w: number, d: number, rotY: number, top: number): BoxBlocker {
+  const c = Math.abs(Math.cos(rotY));
+  const s = Math.abs(Math.sin(rotY));
+  const hx = (w * c + d * s) / 2;
+  const hz = (w * s + d * c) / 2;
+  return { kind: "box", minX: x - hx, maxX: x + hx, minY: -5, maxY: top, minZ: z - hz, maxZ: z + hz, owner: -1 };
+}
+
+/**
+ * The main plaza's bell tower (city.ts `belfry`) as a camera subject: the
+ * whole tower, its cross included, filmed from the plaza's side of it (its
+ * `facing` points at the plaza's centre, so a front shot looks at the tower
+ * across the market, or in Paris across the avenue too). Close shots (ECU,
+ * CU, MS: `close`) frame the belfry stage, the clock to the cornice.
+ *
+ * The lens keeps clear of the city: the buildings round it (box buildings
+ * with room for their roofs, kit houses to their tallest piece) and the
+ * market's stalls are sight blockers, so a shot that would stand in one or
+ * see the tower through one takes the solver's detour (a turn, a higher
+ * lens, closer); the trees and the plaza's flag poles are keep-outs (the
+ * lens never stands in a crown, but may look past one). The tower's own
+ * base is not a blocker. Pure: the same layout gives the same subject.
+ */
+export function belfrySubject(layout: CityLayout, tower: Belfry, market: { centre: XZ; poles: readonly { x: number; z: number }[] } | null, stalls: Occluder[]): { whole: Subject; close: Subject } {
+  const plazas = openBlocks(layout, GROUND.plaza);
+  const [px, pz] = market ? market.centre : plazas.length ? blockCentre(plazas[0].polygon) : [tower.x - Math.sin(tower.rotY) * 40, tower.z - Math.cos(tower.rotY) * 40];
+  const near = (x: number, z: number, r: number) => Math.hypot(x - tower.x, z - tower.z) < BELFRY_REACH + r;
+  const blockers: Occluder[] = [...stalls];
+  for (const b of layout.buildings) {
+    if (Math.hypot(b.x - tower.x, b.z - tower.z) < 0.5) continue; // the tower's own base
+    if (near(b.x, b.z, Math.hypot(b.w, b.d) / 2)) blockers.push(footBox(b.x, b.z, b.w, b.d, b.rotY, b.h + ROOF_ROOM));
+  }
+  for (const k of layout.kitBuildings) {
+    if (!near(k.lot.x, k.lot.z, Math.hypot(k.lot.w, k.lot.d) / 2)) continue;
+    // Its tallest piece, as the town builds it (a lot nothing stands on is open).
+    const built = kitTown([k]).buildings[0];
+    if (built) blockers.push(footBox(k.lot.x, k.lot.z, k.lot.w, k.lot.d, k.lot.rotY, built.top));
+  }
+  const keepOut: Occluder[] = [];
+  for (const tr of layout.trees) {
+    if (!near(tr.x, tr.z, tr.height)) continue;
+    keepOut.push({ kind: "column", x: tr.x, z: tr.z, r: 0.6, top: tr.height, owner: -1 });
+    keepOut.push({ kind: "column", x: tr.x, z: tr.z, r: tr.height * 0.56, bottom: tr.height * (tr.kind === "palm" ? 0.65 : 0.33), top: tr.height + 0.3, owner: -1 });
+  }
+  for (const p of market?.poles ?? []) keepOut.push({ kind: "column", x: p.x, z: p.z, r: 0.3, top: 10, owner: -1 });
+  const whole: Subject = {
+    center: [tower.x, tower.top / 2, tower.z],
+    radius: tower.w / 2 + 0.6,
+    height: tower.top,
+    facing: Math.atan2(px - tower.x, pz - tower.z),
+    ground: GROUND.plaza,
+    blockers,
+    keepOut,
+  };
+  // A close shot frames the belfry stage, the clock to the cornice (a CU
+  // shows all of it, an MS some shaft and spire round it, an ECU the
+  // openings over the clock), not the spire's tip.
+  const [lo, hi] = tower.stage;
+  const close: Subject = { ...whole, center: [tower.x, (lo + hi) / 2, tower.z], height: (hi - lo) / SIZE_DEFAULTS.CU.region, focus: "centre" };
+  return { whole, close };
+}
+
+/**
+ * A famous landmark that stands inside the built city (Rome's Colosseum,
+ * London's clock tower; landmarks.ts clears the ground round it): the city's
+ * buildings within `reach` of it as sight blockers (box buildings with room
+ * for their roofs, kit houses to their tallest piece) and its trees as
+ * keep-outs, as for the bell tower, so a lens over the roofs round it never
+ * stands in a house or sees it through one. Null for a landmark beyond the
+ * built area (the Eiffel Tower, the pyramids, a bridge over the water), whose
+ * subject is as it always was.
+ */
+export function landmarkCityBlockers(layout: CityLayout, star: { x: number; z: number }, radius: number, reach: number): { blockers: Occluder[]; keepOut: Occluder[] } | null {
+  if (Math.max(Math.abs(star.x), Math.abs(star.z)) - radius > layout.outerHalf) return null;
+  const near = (x: number, z: number, r: number) => Math.hypot(x - star.x, z - star.z) < reach + r;
+  const blockers: Occluder[] = [];
+  for (const b of layout.buildings) if (near(b.x, b.z, Math.hypot(b.w, b.d) / 2)) blockers.push(footBox(b.x, b.z, b.w, b.d, b.rotY, b.h + ROOF_ROOM));
+  for (const k of layout.kitBuildings) {
+    if (!near(k.lot.x, k.lot.z, Math.hypot(k.lot.w, k.lot.d) / 2)) continue;
+    const built = kitTown([k]).buildings[0];
+    if (built) blockers.push(footBox(k.lot.x, k.lot.z, k.lot.w, k.lot.d, k.lot.rotY, built.top));
+  }
+  const keepOut: Occluder[] = [];
+  for (const tr of layout.trees) {
+    if (!near(tr.x, tr.z, tr.height)) continue;
+    keepOut.push({ kind: "column", x: tr.x, z: tr.z, r: 0.6, top: tr.height, owner: -1 });
+    keepOut.push({ kind: "column", x: tr.x, z: tr.z, r: tr.height * 0.56, bottom: tr.height * (tr.kind === "palm" ? 0.65 : 0.33), top: tr.height + 0.3, owner: -1 });
+  }
+  return { blockers, keepOut };
 }
 
 /**
@@ -453,8 +598,11 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
   });
   const table = cityAnchors(layout, style);
   const { plans, castScripts } = planWorldCast(scene, table);
-  // The main plaza's market, exactly as GroundWorld draws it.
+  // The main plaza's market, exactly as GroundWorld draws it, and its stalls
+  // and parasols as sight blockers (one list, so the solver's detours are
+  // kept with it across the plaza's subjects).
   const market = cityMarket(layout, style, resolved.place.id);
+  const stalls = market ? marketBlockers(market.blockers) : [];
 
   // The avenue canyon's camera corridor: buildings stand beyond
   // +/- (avenue half + walk).
@@ -489,7 +637,14 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
     facing: 0,
     ground: roofTop,
   };
-  subjects.scene = () => sceneSubject;
+  // A wide or extreme wide shot of the whole place frames 80 m of the core,
+  // 40 m high, so its lens stands 300-400 m out over the roofs. Framed on
+  // the third of the core, a 9:16 EWS fitted the core's width into the
+  // narrow frame and stood 1.6-1.8 km out and 400 m up (16:9: 1.2 km), where
+  // the height fog (fog.ts, about 1 - exp(-density x distance), 0.85 at most)
+  // hid the city: the bullet test's hook over Cairo and its b9 over Paris.
+  const sceneWide: Subject = { ...sceneSubject, radius: 40, height: 40 };
+  subjects.scene = (_t, shot) => (shot && WIDE.has(shot.size) ? sceneWide : sceneSubject);
 
   // The named spots the crowd and the actors live on.
   for (const name of ANCHOR_VOCAB) {
@@ -540,7 +695,9 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
       if (inMarket && bounds) {
         // The main plaza's market (atmosphere/market.ts): a close shot keeps
         // to the clear ring round the fountain or to its compass aisle; any
-        // other shot looks over the stalls.
+        // other shot looks over the stalls. A sight line a stall's roof still
+        // crosses takes a detour round it; the spot is ground, not a body, so
+        // a lens within its reach is no fault (solve.ts `area`).
         const [mx, mz] = market.centre;
         const ring = MARKET_CLEAR_RING * 0.7;
         const aisle = MARKET_AISLE_HALF - 0.5;
@@ -552,15 +709,16 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
             : Math.abs(dx) < Math.abs(dz)
               ? { ...bounds, minX: mx - aisle, maxX: mx + aisle }
               : { ...bounds, minZ: mz - aisle, maxZ: mz + aisle };
-        const close: Subject = { ...base, bounds: lane };
-        const over: Subject = { ...base, ground: MARKET_TOP + 1.5 };
+        const among = { ...base, area: true, blockers: stalls };
+        const close: Subject = { ...among, bounds: lane };
+        const over: Subject = { ...among, ground: MARKET_TOP + 1.5 };
         // A wide shot frames the market round the fountain from above it,
         // as the reference opens on its market: the plaza's edge stops the
         // lens backing away, so it rises instead (to about 9 m). It looks
         // across a quarter of the stalls (down an aisle a portrait frame
         // shows only the open paving), on the bearing that keeps the flag
         // poles furthest from its line of sight.
-        const market20: Subject = { ...spotSubject(spot.pos, 20), ...(bounds ? { bounds } : {}), ground: 8.5, facing: marketBearing(market.centre, market.poles) };
+        const market20: Subject = { ...spotSubject(spot.pos, 20), ...(bounds ? { bounds } : {}), ground: 8.5, facing: marketBearing(market.centre, market.poles), area: true, blockers: stalls };
         subjects[name] = (_t, shot) => (shot && CLOSE.has(shot.size) ? close : shot && WIDE.has(shot.size) ? market20 : over);
         continue;
       }
@@ -577,7 +735,8 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
   const star = famous[0];
   const starAsset = star ? assetById(star.assetId) : undefined;
   if (star && starAsset) {
-    const [w, h, d] = starAsset.size;
+    // As drawn (landmarks.ts: a bridge's height over its own sea level).
+    const [w, h, d] = star.size;
     // Its front looks back at the city, so the lens stands between them.
     const facing = Math.atan2(-star.x, -star.z);
     let solved: Subject | null = null;
@@ -594,7 +753,7 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
         half: 9000,
         flatHalf: layout.outerHalf,
       });
-      const base = terrain.heightAt(star.x, star.z);
+      const base = star.base ?? terrain.heightAt(star.x, star.z);
       const radius = Math.max(w, d) / 2;
       const out = Math.min(3000, 8 * Math.max(radius, h / 2));
       let ground = base;
@@ -606,7 +765,21 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
         }
       }
       solved = { center: [star.x, base + h / 2, star.z], radius, height: h, facing, ground: ground + 15 };
+      // Inside the city: its houses round it block the view (a lens over
+      // the roofs within the framing distance).
+      const city = landmarkCityBlockers(layout, star, radius, out);
+      if (city) solved = { ...solved, ...city };
       return solved;
+    };
+  }
+  // The main plaza's bell tower (city.ts belfry), filmed from the plaza's
+  // side; built at its first use, so a scene that never films it pays nothing.
+  const tower = layout.belfry;
+  if (tower) {
+    let solved: { whole: Subject; close: Subject } | null = null;
+    subjects.belfry = (_t, shot) => {
+      solved ??= belfrySubject(layout, tower, market, stalls);
+      return shot && CLOSE.has(shot.size) ? solved.close : solved.whole;
     };
   }
   const mark = layout.landmarks[0];
@@ -624,22 +797,26 @@ export function worldShotSet(scene: SceneType, resolved: ResolvedPlace, cloudPas
     if (!subjects.landmark) subjects.landmark = () => minaret;
   }
 
-  // The featured actors, as moving subjects (frame-accurate pose per t).
+  // The featured actors, as moving subjects (frame-accurate pose per t; in a
+  // bullet time each on its own clock: the hero on the hero's, the rest on
+  // the world's).
+  const clock = scene.bulletTime ? sceneClock(scene) : null;
   (scene.actors ?? []).forEach((a, i) => {
     const id = `${a.role.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}-${i}`;
     const plan = plans.get(id);
     if (!plan) return;
-    const subject = (t: number): Subject => actorSubject(plan, t);
+    const subject = clock ? (t: number): Subject => actorSubject(plan, actorTime(clock, id, t)) : (t: number): Subject => actorSubject(plan, t);
     if (!subjects.person) subjects.person = subject; // generic name, first actor
     for (const key of actorAliasKeys(id, a.role, i)) if (!subjects[key]) subjects[key] = subject;
   });
 
-  if (!spec) return { table, plans, castScripts, subjects, alongAxis };
+  const bullet = clock ? { layout, clock, arc: scene.bulletTime!.arc ?? { sweep: 180, dir: "left" as const } } : {};
+  if (!spec) return { table, plans, castScripts, subjects, alongAxis, ...bullet };
   // The story's reactions: the lens keeps out of the lifting buildings (as
   // GroundWorld plans them, so the camera and the picture agree) and above a flood.
   const lift = worldLiftPlan(spec, scene, layout, style, resolved.place.id);
   const guarded = guardReactions(subjects, spec, scene, lift ? liftKeepOut(lift) : []);
-  return { table, plans, castScripts, subjects: guarded, alongAxis, ...(lift ? { lift } : {}) };
+  return { table, plans, castScripts, subjects: guarded, alongAxis, ...(lift ? { lift } : {}), ...bullet };
 }
 
 /**
@@ -707,7 +884,14 @@ export function solveWorldShot(set: WorldShotSet, found: WorldSpecShot, t: numbe
     seconds,
     seed,
     lagged: shot.move === "follow" ? anchor(at - 0.35, shot) : undefined,
+    ...(shot.move === "arc" && set.arc ? { arc: set.arc } : {}),
   });
+  // A bullet time's arc may cross a traffic lane (the traffic keeps its lanes
+  // clear round the arc): its subject drops the lanes' keep-out.
+  if (shot.move === "arc") {
+    const s = anchor(t, shot);
+    return solveShot(shot, { ...s, keepOut: undefined }, opts(t));
+  }
   if (!set.lift) return solveShot(shot, anchor(t, shot), opts(t));
   const guard = liftGuard(set, set.lift, shot, anchor, aspect, opts);
   return solveGuarded(guard, shot, anchor, opts(t), t);
@@ -773,14 +957,14 @@ function liftGuard(set: WorldShotSet, lift: BuildingPlan, shot: WorldSpecShot, a
 
 /**
  * The canonical subject names a director (or a QA sweep) can shoot for this
- * scene: "scene", the spots that this place has, the landmark, and one name
- * per featured actor.
+ * scene: "scene", the spots that this place has, the landmark, the bell
+ * tower where there is one, and one name per featured actor.
  */
 export function worldAnchorNames(scene: SceneType, resolved: ResolvedPlace): string[] {
   const set = worldShotSet(scene, resolved);
   if (!set) return ["scene"];
   const out = ["scene"];
-  for (const n of ["avenue", "sidewalk-north", "plaza", "park", "landmark", "landmark-front"]) {
+  for (const n of ["avenue", "sidewalk-north", "plaza", "park", "landmark", "landmark-front", "belfry"]) {
     if (set.subjects[n]) out.push(n);
   }
   (scene.actors ?? []).forEach((a, i) => {

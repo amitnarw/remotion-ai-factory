@@ -34,7 +34,9 @@ import {
   placementMatrix,
   liftSet,
   moneySet,
+  RIGID_DRAW_ORDER,
   RIGID_MATRICES_MAX,
+  rigidDrawOrder,
   rigidMatrix,
   rigidPlan,
   rigidPose,
@@ -244,6 +246,28 @@ test("rigid: a multi-part model moves as one piece (its parts keep their places)
   const w = rigidMatrix(plan, 0, 6, eye);
   const rest = placementMatrix(stall);
   assert.ok(w.elements[13] - rest.elements[13] > 1, "lifted");
+});
+
+test("rigid: the set draws in build order whatever order its materials were made in (every render tab alike)", () => {
+  const s = site("paris");
+  const pieces = liftPieces(debrisScatter(s, "paris").slice(0, 6), s.epicentre, "paris", "debris");
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  // Materials made in the reverse order of the meshes (a tab whose model files loaded the other way round).
+  const mats = [new THREE.MeshStandardMaterial(), new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 }), new THREE.MeshStandardMaterial(), new THREE.MeshStandardMaterial()].reverse();
+  const slots = mats.map((m, k) => ({ mesh: new THREE.InstancedMesh(box, m, 3), part: new THREE.Matrix4().makeTranslation(0, k * 0.1, 0), pieces: [k % pieces.length, (k + 1) % pieces.length, (k + 2) % pieces.length] }));
+  rigidDrawOrder(pieces, slots);
+  const order = slots.map((x) => x.mesh.renderOrder);
+  const opaque = slots.filter((x) => !(x.mesh.material as THREE.Material).transparent);
+  assert.equal(slots.find((x) => (x.mesh.material as THREE.Material).transparent)!.mesh.renderOrder, 0, "a transparent part still sorts by depth");
+  for (let k = 1; k < opaque.length; k++) assert.ok(opaque[k].mesh.renderOrder > opaque[k - 1].mesh.renderOrder, `build order (${order})`);
+  for (const x of opaque) assert.ok(x.mesh.renderOrder >= RIGID_DRAW_ORDER && x.mesh.renderOrder < RIGID_DRAW_ORDER + 1);
+  // three's opaque sort (WebGLRenderLists painterSortStable): renderOrder, then material id, then depth, then id.
+  const sorted = [...opaque].sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || a.mesh.material.id - b.mesh.material.id || a.mesh.id - b.mesh.id);
+  assert.deepEqual(sorted, opaque, "the material ids no longer decide");
+  // One fixed sphere for all (never computed from a tab's first frame), holding every piece at rest.
+  const sphere = slots[0].mesh.boundingSphere!;
+  for (const x of slots.slice(1)) assert.ok(x.mesh.boundingSphere!.equals(sphere) && x.mesh.boundingSphere !== sphere, "the same sphere, each its own copy");
+  for (const p of pieces) assert.ok(sphere.containsPoint(new THREE.Vector3(p.placement.x, p.placement.y, p.placement.z)));
 });
 
 test("money: coins fall at their bursts, bounce, and stay on their spots; none without bursts", () => {

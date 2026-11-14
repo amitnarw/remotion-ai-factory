@@ -11,7 +11,9 @@
  */
 import { SettingsSchema, validateSpec, type ShotSpec, type VideoSettings } from "../spec.schema";
 import { runPlan, type PlanReport } from "../pipeline/run";
+import { newRunId } from "../pipeline/manifest";
 import type { AudioConfig } from "../pipeline/voice";
+import { DEFAULT_CHANNEL, loadChannel } from "./channels";
 import { loadAiConfig, resolveModel } from "./provider-registry";
 import { pickRoleModel } from "./roles";
 
@@ -29,21 +31,28 @@ export async function generateSpec(
   modelId: string | undefined,
   settingsInput: Partial<VideoSettings> = {},
   audio: AudioConfig = {},
-  id: string = slug(premise),
+  /** A new run id unless the caller names one (the CLI, the milestone, the tests). */
+  id: string = newRunId(premise),
+  /** The run's gates, a story to reuse, the channel, and how the story is made (pipeline/run.ts runPlan). */
+  run: Pick<Parameters<typeof runPlan>[0], "storyGate" | "storyFrom" | "channel" | "mode" | "script" | "shopGate" | "shopSources" | "shop"> = {},
 ): Promise<GenerateSpecResult> {
-  const settings = SettingsSchema.parse(settingsInput);
+  // The channel's format and caption style, where the caller chose none.
+  const profile = loadChannel(run.channel ?? DEFAULT_CHANNEL);
+  const settings = SettingsSchema.parse({
+    ...(profile.formats.default && settingsInput.format === undefined ? { format: profile.formats.default } : {}),
+    ...(profile.captions && settingsInput.captions === undefined ? { captions: profile.captions } : {}),
+    ...settingsInput,
+  });
 
   // A bare CLI call passes no voice settings (the dashboard and the milestone
-  // script pick theirs explicitly). Narration is the product's default — the
-  // dashboard's switch starts on. Without this, a plain `npm run generate`
-  // planned a video whose beats all had "no spoken line".
-  const audioConfig: AudioConfig =
-    !audio.narration && !audio.dialogs
-      ? { ...audio, narration: { enabled: true, engine: "kitten2", voice: "Bruno" } }
-      : audio;
+  // script pick theirs explicitly): the channel's voices. For what-if that is
+  // narration with Kitten 2's Bruno, the product's default (the dashboard's
+  // switch starts on). Without it a plain `npm run generate` planned a video
+  // whose beats all had "no spoken line".
+  const audioConfig: AudioConfig = !audio.narration && !audio.dialogs ? { ...audio, ...profile.voices } : audio;
 
   const plan = async (): Promise<GenerateSpecResult> => {
-    const { spec, report } = await runPlan({ id, premise, settings, audio: audioConfig, cli: { provider: providerName, model: modelId } });
+    const { spec, report } = await runPlan({ id, premise, settings, audio: audioConfig, cli: { provider: providerName, model: modelId }, ...run });
     return { spec, provider: report.models.writer.provider, model: report.models.writer.model, source: "pipeline", report };
   };
 
@@ -81,10 +90,3 @@ export async function generateSpec(
   );
 }
 
-function slug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "video";
-}

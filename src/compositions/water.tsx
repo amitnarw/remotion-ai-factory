@@ -13,7 +13,7 @@
  * (rise/vanish/return) animate the `level` prop.
  */
 import { useMemo, useRef } from "react";
-import { useCurrentFrame } from "remotion";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -77,6 +77,7 @@ export function WaterSurface({
   shore?: null | { z: number };
 }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const look = WATER_TOD[tod] ?? WATER_TOD.noon;
   const matRef = useRef<THREE.MeshStandardMaterial>(null);
   // Built in code (not JSX) so the vertex-COLOUR attribute exists from the
@@ -90,7 +91,7 @@ export function WaterSurface({
   }, [width, depth, segments]);
 
   useFrame(() => {
-    const t = frame / 30;
+    const t = frame / fps;
     const pos = geo.attributes.position as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
     const colorAttr = geo.getAttribute("color") as THREE.BufferAttribute;
@@ -135,8 +136,9 @@ export function WaterSurface({
  *  swell, dressed with a second thinner ribbon for texture. */
 export function ShoreFoam({ pos, tod = "noon", width = 90 }: { pos: [number, number, number]; tod?: string; width?: number }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const look = WATER_TOD[tod] ?? WATER_TOD.noon;
-  const t = frame / 30;
+  const t = frame / fps;
   const breathe = Math.sin(t * 0.55);
   const breathe2 = Math.sin(t * 0.55 - 0.9);
   return (

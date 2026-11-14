@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ShaderLib } from "three";
-import type { Vec3 } from "./lift";
+import { DROP_LAND_MAX, DROP_SPEED_MAX, heldLand, type Vec3 } from "./lift";
 import {
   chipReleases,
   NEVER,
@@ -252,4 +252,53 @@ test("shader: one GLSL text for every kind; every uniform declared once", () => 
   assert.equal(new Set(keys).size, 1);
   // No randomness or clock in the shader.
   assert.ok(!/random|uRpFrame|time\(/i.test(PARTICLE_HEADER.replace(/uRpTime/g, "")));
+});
+
+test("chips: gravity on drops them from where they are, under gravity or held to DROP_LAND_MAX, with no jump", () => {
+  const look = PARTICLE_KINDS.chips;
+  const seeds = particleSeeds("paris", "chips", look.count);
+  // Six seconds weightless, then gravity back.
+  const lift = levelTrack(syntheticLevel([{ t: 1, level: 1 }, { t: 7, level: 0 }]), 0, 16);
+  const rel = chipReleases(seeds, look.count, lift, look.chipRadius);
+  const at = (i: number, t: number) =>
+    particleAt(particleUniformValues(look, { time: t, epi: EPI }), seedsOf(seeds, i), [rel[i * 4], rel[i * 4 + 1], rel[i * 4 + 2], rel[i * 4 + 3]], [0, 1000, 0]);
+  let checked = 0;
+  let low = 0;
+  for (let i = 0; i < look.count; i += 7) {
+    const [r0, drop, weight] = [rel[i * 4], rel[i * 4 + 1], rel[i * 4 + 2]];
+    if (!(r0 < 7 && drop < NEVER && weight > 0)) continue;
+    checked += 1;
+    const e = 1e-4;
+    const a = at(i, drop - e);
+    const b = at(i, drop + e);
+    assert.ok(Math.abs(a.pos[1] - b.pos[1]) < 2e-3, "no jump at the drop");
+    // Its rising speed carries on at the drop (no stop in mid-air).
+    const va = (a.pos[1] - at(i, drop - 2 * e).pos[1]) / e;
+    const vb = (at(i, drop + 2 * e).pos[1] - b.pos[1]) / e;
+    assert.ok(Math.abs(va - vb) < 0.05, `speed ${va.toFixed(2)} -> ${vb.toFixed(2)} m/s at the drop`);
+    // Down within its held time, frame by frame no faster than DROP_SPEED_MAX.
+    const h = a.pos[1] - (EPI[1] + look.restLift);
+    let prev = a.pos[1];
+    let down = NaN;
+    for (let f = 1; f <= 30 * 4; f++) {
+      const s = at(i, drop + f / 30);
+      assert.ok(prev - s.pos[1] <= DROP_SPEED_MAX / 30 + 0.02, `a chip falls ${(prev - s.pos[1]).toFixed(2)} m in a frame`);
+      prev = s.pos[1];
+      if (s.landed) {
+        down = f / 30;
+        break;
+      }
+    }
+    assert.ok(down <= heldLand(Math.max(0, h), Math.max(0, va), DROP_LAND_MAX, DROP_SPEED_MAX) + 1 / 30 + 1e-6, `from ${h.toFixed(1)} m: down in ${down} s`);
+    // Landed, it lies still: no tumbling or sliding on the ground.
+    const l1 = at(i, drop + down + 0.5);
+    const l2 = at(i, drop + down + 3);
+    assert.deepEqual([l1.pos, l1.rot], [l2.pos, l2.rot], "still on the ground");
+    assert.ok(drop - 7 <= 0.65, `lets go ${(drop - 7).toFixed(2)} s after gravity-on`);
+    if (h <= 12) {
+      assert.ok(drop + down - 7 <= 1.5 + 1 / 30, `from ${h.toFixed(1)} m: down ${(drop + down - 7).toFixed(2)} s after gravity-on`);
+      low += 1;
+    }
+  }
+  assert.ok(checked > 100 && low > 20, `${checked} chips checked, ${low} from up to 12 m`);
 });

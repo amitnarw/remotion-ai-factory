@@ -1,5 +1,5 @@
 /**
- * App: the shell (sidebar or top bar), the four sections, and the editor
+ * App: the shell (sidebar or top bar), the five sections, and the editor
  * full width. The screen lives in the URL (lib/routes.ts); old links are
  * mapped onto the new screens before anything renders.
  * Dark-first: index.html sets class="dark"; tokens live in index.css.
@@ -14,6 +14,7 @@ import { normalizeQuery, sectionOf, type Section } from "./lib/routes";
 import { startJobsPolling } from "./lib/jobs";
 import Create from "./pages/create/Create";
 import Library from "./pages/library/Library";
+import Assets from "./pages/assets/Assets";
 import Settings from "./pages/settings/Settings";
 import Help from "./pages/Help";
 
@@ -48,6 +49,7 @@ export default function App() {
   if (!fix) {
     if (section === "create") page = <Create />;
     else if (section === "library") page = <Library />;
+    else if (section === "assets") page = <Assets />;
     else if (section === "settings") page = <Settings />;
     else if (section === "help") page = <Help />;
   }
@@ -56,6 +58,7 @@ export default function App() {
     const titles: Record<Section, string> = {
       create: "Create",
       library: "Library",
+      assets: "Assets",
       settings: "Settings",
       help: "Help",
       editor: "Editor",

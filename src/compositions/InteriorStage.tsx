@@ -12,8 +12,8 @@
  *   scene.cast entries from asset catalog (characters, furniture props)
  *   worldEvents: lights-out
  */
-import { useMemo, useRef, useEffect } from "react";
-import { useCurrentFrame } from "remotion";
+import { useMemo, useRef } from "react";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType, CastEntry } from "../generator/spec.schema";
@@ -23,7 +23,8 @@ import { turnedBox } from "../generator/camera/shapes";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
-import { restoreRigLens } from "./ForestStage";
+import { restoreRigLens, useStageFog } from "./ForestStage";
+import { useSceneDrawOrder } from "./glb";
 
 /** Per-TOD look for interior. */
 const INTERIOR_TOD: Record<
@@ -420,8 +421,9 @@ function Character({ x, z, rot, scale, shirtCol, action }: {
  */
 function InteriorCameraRig() {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const { camera } = useThree();
-  const t = frame / 30;
+  const t = frame / fps;
   useFrame(() => {
     restoreRigLens(camera);
     const angle = t * 0.03;
@@ -562,18 +564,17 @@ export function interiorAnchors(cast: CastEntry[]): Anchors {
 }
 
 export function InteriorStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const active = scene ?? spec.scenes[0];
-  const t = frame / 30;
+  const t = frame / fps;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = INTERIOR_TOD[tod] ?? INTERIOR_TOD.afternoon;
   const night = tod === "night";
 
-  const { scene: threeScene } = useThree();
-  useEffect(() => {
-    threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
-  }, [look.fog, look.fogDensity, threeScene]);
+  useStageFog({ color: look.fog, density: look.fogDensity });
 
   // Cast from spec
   const cast = active?.cast ?? NO_CAST;

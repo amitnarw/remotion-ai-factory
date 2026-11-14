@@ -7,7 +7,9 @@
  *                               adopted (re-voiced from cache, re-timed), caption
  *                               wording is kept on its timing window
  *   POST /api/film/:id/edit     { edits, source?, summary? } -> new version, re-prepared
- *   POST /api/film/:id/ask      { target, request } -> proposal (not saved)
+ *   POST /api/film/:id/ask      { target, request } -> proposal (not saved); in an
+ *                               as-written run the script's words are locked: Ask AI
+ *                               may change them only to words the request typed
  *   POST /api/film/:id/undo     previous version
  *   POST /api/film/:id/redo     next version
  *
@@ -33,6 +35,7 @@ import { prepareFilm, type PreparedFilm } from "../src/generator/film/prepare";
 import { openFilm, peekFilm, redoFilm, saveFilm, undoFilm, type FilmHead } from "../src/generator/film/store";
 import { askEditor, type EditTarget } from "../src/generator/pipeline/editor";
 import { resolveRoleModels } from "../src/generator/pipeline/llm";
+import { readBrief } from "../src/generator/pipeline/manifest";
 import { canReassemble } from "../src/generator/pipeline/run";
 import type { ShotSpec } from "../src/generator/spec.schema";
 
@@ -92,6 +95,11 @@ function earlyEditError(id: string, editsFor: (film: Film) => Edit[]): EditError
 function fail(res: Response, e: unknown) {
   const message = e instanceof Error ? e.message : String(e);
   res.status(e instanceof EditError ? 400 : 500).json({ error: message });
+}
+
+/** An as-written run: the script's words are the user's own, so Ask AI may not change them (editor.ts wordLockProblem). */
+function wordsLocked(id: string): boolean {
+  return readBrief(id)?.mode === "as-written";
 }
 
 function checkId(id: string, res: Response): boolean {
@@ -213,6 +221,7 @@ function whileMeasuring(id: string) {
     warnings: [...last.warnings, "the voice is still being measured in the background; the timing shown is estimated"],
     fields: editorFields(),
     measuring: true,
+    wordsLocked: wordsLocked(id),
   };
 }
 
@@ -229,7 +238,7 @@ export function registerFilmRoutes(app: Express) {
         // estimates now and the background measurement (worker) below.
         const prepared = await prepare(id, "estimate");
         const measuring = prepared.measured ? false : startMeasure(id);
-        return { id, film, head, ...prepared, fields: editorFields(), measuring };
+        return { id, film, head, ...prepared, fields: editorFields(), measuring, wordsLocked: wordsLocked(id) };
       });
       res.json(out);
     } catch (e) {
@@ -359,7 +368,7 @@ export function registerFilmRoutes(app: Express) {
       // Ask only reads the film: it queues only behind a pending change (to
       // propose on top of it), never behind the background measurement.
       const ask = async (film: Film) => {
-        const reply = await askEditor({ film, target, request: body.request!, models });
+        const reply = await askEditor({ film, target, request: body.request!, models, lockWords: wordsLocked(id) });
         return { summary: reply.summary, edits: reply.edits, redo: reply.result.redo, changes: reply.result.summary };
       };
       const now = filmNow(id);

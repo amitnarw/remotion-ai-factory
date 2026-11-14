@@ -16,7 +16,8 @@ import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { findBones, findFeet, findThighs, mapClips } from "./rigs";
-import { type ActorPose, type Aim, type ClipKey, type V3, GETUP_SECONDS, STANDUP_SECONDS, angleDelta, hash01, turnStepCount } from "./script";
+import { type ActorPose, type Aim, type CarryKind, type ClipKey, type V3, GETUP_SECONDS, STANDUP_SECONDS, angleDelta, hash01, turnStepCount } from "./script";
+import type { Dodge } from "../warp";
 
 export interface ActorColors {
   shirt?: string;
@@ -221,9 +222,14 @@ export interface ActorRig {
   neck?: AimBone;
   armR: AimBone[];
   armL: AimBone[];
+  /** The spine from the hips up (abdomen, torso, chest): what a dodge bends.
+   *  Reset to rest before each pose, as the head and arms are. */
+  spine: { bone: THREE.Object3D; rest: THREE.Quaternion }[];
   height: number;
   /** A carried background prop (see carry in the script), placed per pose. */
   carry?: CarryProp;
+  /** A pistol in the right hand, for an actor whose plan aims or shoots. */
+  pistol?: THREE.Mesh;
 }
 
 // Reused scratch objects (single-threaded, no state kept between calls).
@@ -585,7 +591,7 @@ function standUpTime(s: SitInfo, time: number): number {
  * Builds an actor from a loaded model. `height` in metres (default: the
  * model's own size in metres via `modelScale`, the catalog's scale factor).
  */
-export type CarryKind = "bag" | "box" | "briefcase";
+export type { CarryKind };
 
 /** A low-poly background prop a crowd actor carries in the right hand,
  *  sized to the actor's height. The mesh hangs from the rig root; each
@@ -598,6 +604,8 @@ export interface CarryProp {
   /** Which hand: the last bone of the arm's chain (the hand, if found). */
   hand?: THREE.Object3D;
   side: -1 | 1;
+  /** Half the prop's height, metres: a prop put down rests its bottom on the ground. */
+  half: number;
 }
 
 /** Box size (thin side across the body, so it hangs beside the leg, not
@@ -609,6 +617,38 @@ const CARRY_SPEC: Record<CarryKind, { geo: () => THREE.BufferGeometry; color: st
   briefcase: { geo: () => new THREE.BoxGeometry(0.13, 0.32, 0.44), color: "#2c3038", y: -0.21 },
 };
 
+/**
+ * A low-poly pistol (three dark boxes: the slide, the grip and the trigger
+ * guard, about 0.19 m long for a 1.75 m adult) as one mesh hanging from the
+ * rig root. applyPose lays it along the posed forearm under the hand, the
+ * barrel pointing the way the forearm points; it shows only while the actor
+ * aims or shoots. Built only for an actor whose plan has aim or shoot.
+ */
+function makePistol(height: number): THREE.Mesh {
+  const k = height / 1.75;
+  // Model space: the barrel along +z, the grip down -y, the hand's grip at the origin.
+  const parts = [
+    new THREE.BoxGeometry(0.032, 0.034, 0.19).translate(0, 0.045, 0.06),
+    new THREE.BoxGeometry(0.03, 0.1, 0.038).rotateX(-0.25).translate(0, -0.005, -0.012),
+    new THREE.BoxGeometry(0.012, 0.03, 0.05).translate(0, 0.004, 0.035),
+  ];
+  const pos: number[] = [];
+  const nor: number[] = [];
+  for (const g of parts) {
+    const ng = g.toNonIndexed();
+    pos.push(...(ng.attributes.position.array as Float32Array));
+    nor.push(...(ng.attributes.normal.array as Float32Array));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: "#2a2c31", roughness: 0.45, metalness: 0.6 }));
+  mesh.castShadow = true;
+  mesh.scale.setScalar(k);
+  mesh.visible = false;
+  return mesh;
+}
+
 function attachCarry(model: THREE.Object3D, armR: AimBone[], kind: CarryKind, height: number): CarryProp | undefined {
   const hand = armR.length ? armR[armR.length - 1].bone : undefined;
   const k = height / 1.75;
@@ -618,7 +658,10 @@ function attachCarry(model: THREE.Object3D, armR: AimBone[], kind: CarryKind, he
   node.scale.setScalar(k);
   node.visible = false;
   model.parent!.add(node); // the rig root
-  return { kind, node, ...(hand ? { hand } : {}), side: 1 };
+  const geo = node.geometry;
+  geo.computeBoundingBox();
+  const half = ((geo.boundingBox!.max.y - geo.boundingBox!.min.y) / 2) * k;
+  return { kind, node, ...(hand ? { hand } : {}), side: 1, half };
 }
 
 /** Thigh, shin and foot per leg, when the bones chain that way. */
@@ -642,7 +685,17 @@ function findLegs(model: THREE.Object3D, names: string[]): Leg[] {
 
 export function buildRig(
   gltf: GLTF,
-  opts: { seed: string; height?: number; modelScale?: number; colors?: ActorColors; carry?: CarryKind },
+  opts: {
+    seed: string;
+    height?: number;
+    modelScale?: number;
+    colors?: ActorColors;
+    carry?: CarryKind;
+    /** The clip keys the actor's plan uses: the device's clips (aim, shoot,
+     *  roll) are mapped only when it uses them, and a pistol is built only for
+     *  a plan that aims or shoots. */
+    keys?: readonly ClipKey[];
+  },
 ): ActorRig {
   const model = skeletonClone(gltf.scene);
   model.updateMatrixWorld(true);
@@ -680,8 +733,13 @@ export function buildRig(
   const neck = aimBone(model, bones.neck, "head");
   const armR = bones.armR.map((n) => aimBone(model, n, "limb")).filter((b): b is AimBone => !!b);
   const armL = bones.armL.map((n) => aimBone(model, n, "limb")).filter((b): b is AimBone => !!b);
+  const spine = bones.spine
+    .map((n) => model.getObjectByName(n))
+    .filter((b): b is THREE.Object3D => !!b)
+    .map((bone) => ({ bone, rest: bone.quaternion.clone() }));
 
-  const map = mapClips(gltf.animations.map((c) => c.name));
+  const keys = opts.keys ?? [];
+  const map = mapClips(gltf.animations.map((c) => c.name), keys);
   const used = [...new Set(Object.values(map.clips))].map((name) => gltf.animations.find((c) => c.name === name)!);
   const animator = makeAnimator(model, used);
   const tracks = new Map<ClipKey, Track>();
@@ -718,6 +776,8 @@ export function buildRig(
   model.updateMatrixWorld(true);
 
   const carry = opts.carry ? attachCarry(model, armR, opts.carry, height) : undefined;
+  const pistol = keys.includes("aim") || keys.includes("shoot") ? makePistol(height) : undefined;
+  if (pistol) root.add(pistol);
   return {
     root,
     model,
@@ -736,8 +796,10 @@ export function buildRig(
     neck,
     armR,
     armL,
+    spine,
     height,
     ...(carry ? { carry } : {}),
+    ...(pistol ? { pistol } : {}),
   };
 }
 
@@ -759,10 +821,10 @@ function bodyDir(rig: ActorRig, x: number, y: number, z: number): THREE.Vector3 
  * keeping its angle: the feet stay planted as the actor sits down, sits and
  * stands up (only lifting them back down slid them 17 cm as Maria sat).
  */
-function plantFeet(rig: ActorRig, shift: THREE.Vector3) {
+function plantFeet(rig: ActorRig, shift: THREE.Vector3, kneeForward = 0) {
   if (shift.lengthSq() < 1e-12) return;
   const back = shift.clone().negate();
-  for (const leg of rig.legs) moveFoot(rig, leg, 0, back);
+  for (const leg of rig.legs) moveFoot(rig, leg, 0, back, kneeForward);
 }
 
 const _up = new THREE.Vector3(0, 1, 0);
@@ -775,7 +837,7 @@ const _up = new THREE.Vector3(0, 1, 0);
  * keeps its angle, turned by `spin`. A foot bone outside the leg chain
  * (IK-style rigs) moves the same way.
  */
-function moveFoot(rig: ActorRig, leg: Leg, spin: number, shift: THREE.Vector3) {
+function moveFoot(rig: ActorRig, leg: Leg, spin: number, shift: THREE.Vector3, kneeForward = 0) {
   const turn = new THREE.Quaternion().setFromAxisAngle(_up, spin);
   const target = (p: THREE.Vector3) => rig.root.localToWorld(rig.root.worldToLocal(p.clone()).applyAxisAngle(_up, spin).add(shift));
   const A = leg.thigh.getWorldPosition(new THREE.Vector3());
@@ -791,6 +853,9 @@ function moveFoot(rig: ActorRig, leg: Leg, spin: number, shift: THREE.Vector3) {
   const dh = d.normalize();
   // The knee stays on its side of the hip-ankle line, turned with the foot.
   const n = B.clone().sub(A).applyAxisAngle(_up, spin);
+  // A dodge bends straight legs: the knees go forward, not whichever way a
+  // nearly straight leg happens to lean.
+  if (kneeForward > 0) n.addScaledVector(bodyDir(rig, 0, 0, 1), kneeForward);
   n.addScaledVector(dh, -n.dot(dh));
   if (n.lengthSq() < 1e-10) n.copy(bodyDir(rig, 0, 0, 1));
   n.normalize();
@@ -862,16 +927,62 @@ function stepTurn(rig: ActorRig, pivot: NonNullable<ActorPose["pivot"]>, weight:
 }
 
 /**
- * Sets the rig to a pose. `resolveAim` resolves overlay aims to world points.
- * Everything is derived from the pose: no state carries between frames.
+ * A dodge's body at full weight, for a 1.75 m adult (docs/factory/14-bullet-
+ * time.md §3.3): the hips forward and down (metres, the legs bending through
+ * the leg IK so the feet stay planted), the spine's pitch back, bottom up
+ * (degrees; a two-bone spine takes the chest's share on its top bone), and
+ * where the arms swing (body directions: x the actor's left, z forward).
+ * A duck crouches and folds forward instead.
  */
-export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) => V3 | undefined) {
+const DODGE_BODY: Record<"lean" | "duck", { forward: number; down: number; pitch: number[]; arms: [number, number, number] }> = {
+  lean: { forward: 0.18, down: 0.22, pitch: [15, 20, 20], arms: [0.85, -0.15, -0.55] },
+  duck: { forward: 0.04, down: 0.36, pitch: [-12, -14, -8], arms: [0.5, 0.6, 0.6] },
+};
+
+/** A procedural crouch (the duck, held, the arms forward) and a pickup's bend
+ *  (down further and folded forward, the arms reaching to the ground in
+ *  front), for rigs without those clips. Same units as DODGE_BODY. */
+const BEND_BODY: Record<"crouch" | "pickup", { forward: number; down: number; pitch: number[]; arms: [number, number, number] }> = {
+  crouch: { forward: 0.04, down: 0.4, pitch: [-10, -12, -6], arms: [0.25, -0.6, 0.75] },
+  pickup: { forward: 0.06, down: 0.36, pitch: [-20, -22, -12], arms: [0.18, -0.75, 0.65] },
+};
+/** A pickup's bend over its 1.2 s: down by 0.45 s (the hands at the ground
+ *  at 0.55 s, GRAB_AT in script.ts), up from 0.7 s. */
+const pickupBend = (time: number) => smooth01(time / 0.45) * (1 - smooth01((time - 0.7) / 0.45));
+
+/** The dodge a rig can draw for the one asked: a lean needs a spine chain and
+ *  legs to bend (blocky rigs duck), a roll without its clip ducks. */
+function dodgeShape(rig: ActorRig, how: Dodge | undefined): "lean" | "duck" | null {
+  if (how === "roll") return rig.tracks.has("roll") ? null : "duck";
+  if (how === "duck") return "duck";
+  return rig.spine.length >= 2 && rig.legs.length === 2 ? "lean" : "duck";
+}
+
+/** Turns a bone about a world axis by `angle` radians (on top of its pose). */
+function pitchBone(bone: THREE.Object3D, axis: THREE.Vector3, angle: number) {
+  if (Math.abs(angle) < 1e-9) return;
+  bone.updateWorldMatrix(true, false);
+  const worldQ = bone.getWorldQuaternion(new THREE.Quaternion());
+  const target = new THREE.Quaternion().setFromAxisAngle(axis, angle).multiply(worldQ);
+  const parentQ = bone.parent ? bone.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+  bone.quaternion.copy(parentQ.invert().multiply(target));
+  bone.updateMatrixWorld(true);
+}
+
+/**
+ * Sets the rig to a pose. `resolveAim` resolves overlay aims to world points;
+ * `watch` is where a dodging actor looks (the nearest projectile), when the
+ * scene has one. Everything is derived from the pose: no state carries
+ * between frames.
+ */
+export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) => V3 | undefined, extra: { watch?: V3 } = {}) {
   rig.root.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
   rig.root.rotation.set(0, pose.yaw, 0);
 
   // Bones the overlays and the leg IK move go back to rest first, so a
   // change to a bone no clip animates can't carry into the next pose.
   for (const b of [rig.head, rig.neck, ...rig.armR, ...rig.armL]) b?.bone.quaternion.copy(b.rest);
+  for (const b of rig.spine) b.bone.quaternion.copy(b.rest);
   for (const leg of rig.legs) {
     leg.thigh.quaternion.copy(leg.rest.thigh);
     leg.shin.quaternion.copy(leg.rest.shin);
@@ -948,12 +1059,47 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
     if (layer.clip === "fall" && rig.fall) ground += weight * fallLift(rig.fall, time, d);
     layers.push({ clip: track.clip, time, weight });
   }
+  // A dodge: the hips forward and down with the whole model, the feet put
+  // back by the leg IK below (as on a seat), the spine bent after the clips.
+  const dodge = pose.overlays.find((o) => o.kind === "dodge");
+  const shape = dodge ? dodgeShape(rig, dodge.how) : null;
+  let body = shape ? DODGE_BODY[shape] : undefined;
+  let dw = dodge && body ? dodge.weight : 0;
+  // A crouch or a pickup with no clip bends the same way (a dodge is a
+  // bullet time's and never meets them).
+  let bend: "crouch" | "pickup" | undefined;
+  if (!body) {
+    for (const p of procedural) {
+      if (p.key !== "crouch" && p.key !== "pickup") continue;
+      const w = p.weight * (p.key === "pickup" ? pickupBend(p.time) : 1);
+      if (w > dw) {
+        bend = p.key;
+        dw = w;
+      }
+    }
+    if (bend) body = BEND_BODY[bend];
+  }
+  const k = rig.height / 1.75;
+  if (body && dw > 0 && rig.legs.length === 2) {
+    sz += body.forward * k * dw;
+    lift -= body.down * k * dw;
+  }
   rig.model.position.set(sx, rig.baseY + lift + ground, sz);
   evaluate(rig.animator, layers);
   rig.root.updateMatrixWorld(true);
   // Feet back where the clip has them, under a seat of another height and
   // in front of it.
-  plantFeet(rig, new THREE.Vector3(sx, lift, sz));
+  plantFeet(rig, new THREE.Vector3(sx, lift, sz), dw > 0 ? 0.08 : 0);
+  if (body && dw > 0 && rig.spine.length) {
+    // Pitch about the actor's left (+x): negative leans back.
+    const axis = bodyDir(rig, 1, 0, 0);
+    const n = rig.spine.length;
+    rig.spine.forEach((b, i) => {
+      // A short spine's top bone takes the rest of the pitch.
+      const deg = i === n - 1 ? body.pitch.slice(i).reduce((x, y) => x + y, 0) : body.pitch[i];
+      pitchBone(b.bone, axis, -THREE.MathUtils.degToRad(deg) * dw);
+    });
+  }
   // Walking off from a stand: a foot that is down when the first step starts
   // stays where the posture before stood it until the gait first lifts it,
   // then swings into the walk (cross-fading the wider idle stance into the
@@ -973,7 +1119,19 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
 
   // The carried prop rides under the posed hand bone, in the root's own
   // space (or at the hip when the rig has no arm bones). Pure per pose.
-  if (rig.carry) {
+  if (rig.carry && pose.prop && !pose.prop.held) {
+    // Put down (or not picked up yet): on the ground where the plan has it,
+    // in the parent's space like the actor (the root is at pose.pos, turned
+    // by pose.yaw).
+    const cp = rig.carry;
+    const dx = pose.prop.at[0] - pose.pos[0];
+    const dz = pose.prop.at[2] - pose.pos[2];
+    const c = Math.cos(pose.yaw);
+    const s = Math.sin(pose.yaw);
+    cp.node.visible = true;
+    cp.node.position.set(dx * c - dz * s, pose.prop.at[1] - pose.pos[1] + cp.half, dx * s + dz * c);
+    cp.node.rotation.set(0, pose.prop.yaw - pose.yaw, 0);
+  } else if (rig.carry) {
     const cp = rig.carry;
     const arm = cp.hand ? rig.armR : rig.armR.length ? rig.armR : rig.armL;
     const bone = arm.length ? arm[arm.length - 1].bone : undefined;
@@ -1033,6 +1191,27 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
     }
   }
 
+  // A crouch's arms forward, a pickup's reaching to the ground in front.
+  if (bend && body && dw > 0) {
+    for (const [arm, s] of [[rig.armR, side.r], [rig.armL, side.l]] as const) {
+      if (!arm.length) continue;
+      aimAt(arm[0], bodyDir(rig, s * body.arms[0], body.arms[1], body.arms[2]), dw);
+      if (arm[1]) aimAt(arm[1], bodyDir(rig, -s * 0.05, bend === "pickup" ? -0.85 : -0.3, bend === "pickup" ? 0.5 : 0.95), dw);
+    }
+  }
+
+  // A dodge's arms swing out and back (a duck's come up to cover the head),
+  // and the head looks at what it dodges.
+  if (dodge && body && dw > 0) {
+    for (const [arm, s] of [[rig.armR, side.r], [rig.armL, side.l]] as const) {
+      if (!arm.length) continue;
+      aimAt(arm[0], bodyDir(rig, s * body.arms[0], body.arms[1], body.arms[2]), dw);
+      if (arm[1]) aimAt(arm[1], bodyDir(rig, shape === "duck" ? -s * 0.4 : s * 0.5, shape === "duck" ? 0.8 : -0.2, shape === "duck" ? 0.2 : -0.6), dw);
+    }
+    const look = extra.watch ?? (dodge.aim ? resolveAim(dodge.aim) : undefined);
+    if (look && rig.head) lookAt(rig, look, dw, 0);
+  }
+
   for (const o of pose.overlays) {
     const target = o.aim ? resolveAim(o.aim) : undefined;
     const w = o.weight;
@@ -1050,8 +1229,50 @@ export function applyPose(rig: ActorRig, pose: ActorPose, resolveAim: (a: Aim) =
       aimAt(rig.armR[0], bodyDir(rig, side.r * 0.25, -0.75, 0.45), w * 0.7);
       aimAt(rig.armR[1], bodyDir(rig, side.r * 0.15, 0.2 + beat, 1), w * 0.7);
     }
-    if ((o.kind === "look" || o.kind === "talk" || o.kind === "point" || o.kind === "wave") && target && rig.head) {
-      lookAt(rig, target, o.kind === "look" ? w : w * 0.85, o.kind === "talk" ? Math.sin(o.time * 4.1) * 0.06 : 0);
+    if (o.kind === "aim" && target && rig.armR.length && rig.missing.has("aim")) {
+      // No aim clip: the right arm points at the target (the gun hand).
+      const shoulder = rig.armR[0].bone.getWorldPosition(new THREE.Vector3());
+      const dir = new THREE.Vector3(...target).sub(shoulder).normalize();
+      for (const b of rig.armR.slice(0, 2)) aimAt(b, dir, w);
+    }
+    if ((o.kind === "look" || o.kind === "talk" || o.kind === "point" || o.kind === "wave" || o.kind === "aim") && target && rig.head) {
+      lookAt(rig, target, o.kind === "look" || o.kind === "aim" ? w : w * 0.85, o.kind === "talk" ? Math.sin(o.time * 4.1) * 0.06 : 0);
+    }
+  }
+
+  // A shot without a shoot clip: a 0.12 s recoil kicks the gun arm up.
+  const shot = procedural.find((p) => p.key === "shoot");
+  if (shot && rig.armR.length) {
+    const kick = shot.weight * Math.sin(Math.PI * Math.min(1, Math.max(0, shot.time / 0.12))) * (shot.time < 0.12 ? 1 : 0);
+    if (kick > 0) for (const b of rig.armR.slice(0, 2)) pitchBone(b.bone, bodyDir(rig, 1, 0, 0), -0.35 * kick);
+  }
+
+  // The pistol, while the actor aims or shoots: along the forearm, under the hand.
+  if (rig.pistol) {
+    const armed = pose.layers.some((l) => (l.clip === "aim" || l.clip === "shoot") && l.weight > 0.3) || pose.overlays.some((o) => o.kind === "aim" && o.weight > 0.3);
+    const hand = rig.armR[rig.armR.length - 1]?.bone;
+    const elbow = rig.armR.length >= 2 ? rig.armR[rig.armR.length - 2].bone : undefined;
+    rig.pistol.visible = armed && !!hand;
+    if (armed && hand) {
+      const h = hand.getWorldPosition(new THREE.Vector3());
+      const e = elbow ? elbow.getWorldPosition(new THREE.Vector3()) : rig.armR[0].bone.getWorldPosition(new THREE.Vector3());
+      const along = h.clone().sub(e);
+      if (along.lengthSq() < 1e-10) along.copy(bodyDir(rig, 0, 0, 1));
+      along.normalize();
+      // Grip a little past the wrist; the barrel along the forearm, upright.
+      const grip = h.clone().addScaledVector(along, 0.05 * (rig.height / 1.75));
+      const local = rig.root.worldToLocal(grip);
+      rig.pistol.position.copy(local);
+      const dirLocal = along.clone().applyQuaternion(rig.root.quaternion.clone().invert());
+      rig.pistol.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dirLocal);
+      // Keep the grip down: roll about the barrel so the model's up stays up.
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(rig.pistol.quaternion);
+      const wantUp = new THREE.Vector3(0, 1, 0).addScaledVector(dirLocal, -dirLocal.y);
+      if (wantUp.lengthSq() > 1e-8) {
+        wantUp.normalize();
+        const angle = Math.atan2(new THREE.Vector3().crossVectors(up, wantUp).dot(dirLocal), up.dot(wantUp));
+        rig.pistol.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(dirLocal, angle));
+      }
     }
   }
 }

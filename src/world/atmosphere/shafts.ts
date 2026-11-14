@@ -34,6 +34,12 @@ export interface SunShafts {
   /** Where the camera stands (and how it is rolled) - the near-camera
    *  fade and the halo's screen alignment. */
   setCamera(pos: { x: number; y: number; z: number }, quat?: THREE.Quaternion): void;
+  /** A time lapse (docs/factory/13-light-and-time.md): the sun of this
+   *  frame. The blades turn from the ray they were built on to `sunDir`,
+   *  the halo moves onto it, both take `color`, and the halo's strength
+   *  becomes `strength` (shaftStrength). Never called, the fan stays as
+   *  built. */
+  setSun(sunDir: [number, number, number], color: string, strength: number): void;
 }
 
 let HALO_WHITE: THREE.DataTexture | null = null;
@@ -89,6 +95,7 @@ export function sunShafts(opts: {
   if (n0.lengthSq() < 1e-6) n0.set(1, 0, 0); // sun overhead: any horizontal
   n0.normalize();
   const group = new THREE.Group();
+  const blades: THREE.Mesh[] = [];
   let mat: THREE.MeshBasicMaterial | null = null;
   let cam: THREE.Vector3 | null = null;
   for (let i = 0; i < count; i++) {
@@ -125,6 +132,7 @@ export function sunShafts(opts: {
     blade.renderOrder = 6;
     blade.frustumCulled = false;
     group.add(blade);
+    blades.push(blade);
   }
   // The sun's screen halo: one big additive screen-aligned quad on the sun
   // ray, with the soft radial glow and ray streaks baked into its shader
@@ -159,6 +167,10 @@ export function sunShafts(opts: {
   group.position.set(opts.at[0], 0, opts.at[2]);
   const camVec = cam!;
   const cameraQuat = new THREE.Quaternion();
+  // The halo's strength (the daylight gate it was built for, or a lapse's of this frame).
+  let haloStrength = opts.strength;
+  const turn = new THREE.Quaternion();
+  const toSun = new THREE.Vector3();
   return {
     group,
     setStrength(a: number) {
@@ -166,7 +178,7 @@ export function sunShafts(opts: {
       mat!.visible = a > 0.001;
     },
     setFade(k: number) {
-      haloMat.opacity = 0.55 * opts.strength * k;
+      haloMat.opacity = 0.55 * haloStrength * k;
       haloMat.visible = k > 0.001;
     },
     setCamera(pos, quat) {
@@ -174,6 +186,19 @@ export function sunShafts(opts: {
       if (quat) cameraQuat.copy(quat);
       // The halo quad stays screen-aligned: same rotation as the camera.
       haloRef.mesh.quaternion.copy(cameraQuat);
+    },
+    setSun(sunDir, color, strength) {
+      // Each blade turns about the fan's centre (the group's origin), the
+      // shortest way from the built ray to this one: a pure function of the
+      // frame's sun, nothing kept from the frame before.
+      toSun.set(...sunDir).normalize();
+      turn.setFromUnitVectors(d, toSun);
+      for (const b of blades) b.quaternion.copy(turn);
+      haloRef.dir.copy(toSun);
+      halo.position.copy(toSun).multiplyScalar(HALO_DIST);
+      mat!.color.set(color);
+      haloMat.color.set(color);
+      haloStrength = strength;
     },
   };
 }

@@ -155,7 +155,7 @@ export function planLines(story: WriterStory, audio: AudioConfig): PlannedLine[]
   const cast = castVoices(story, audio);
   const out: PlannedLine[] = [];
   const base = (v: CastVoice) => ({ engine: v.engine, voice: v.voice, voiceDesc: v.voiceDesc, referenceWav: v.referenceWav, referenceText: v.referenceText, voiceStyle: v.voiceStyle, voiceTransform: v.voiceTransform, dur: 0, estimated: true });
-  if (narrationOn && story.hook) {
+  if (narrationOn && story.hook && story.hookVoiced !== false) {
     out.push({ id: "hook", beatId: "hook", who: "narrator", kind: "narration", text: story.hook, ...base(cast.narrator) });
   }
   for (const b of story.beats) {

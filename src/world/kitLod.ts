@@ -515,18 +515,23 @@ export interface FarCards {
   index: Uint32Array;
   /** Per building: its triangles' range [start, end) in `index`. */
   ranges: Uint32Array;
+  /** Each vertex's paint (kitPaint.ts; its placement's), when painted. */
+  color?: Float32Array;
 }
 
 /**
  * Every building's card faces in world space, merged: each placement's file
  * faces moved by the placement (translate, turn about Y, scale), with
- * texture coordinates into the atlas. A building's triangles are contiguous
- * so fillFarIndex can leave the near ones out.
+ * texture coordinates into the atlas, and with `paints` (kitTown.ts
+ * kitPaints, 3 per placement) each vertex its placement's paint. A
+ * building's triangles are contiguous so fillFarIndex can leave the near
+ * ones out.
  */
 export function buildFarCards(
   placements: readonly Placement[],
   buildings: readonly Pick<KitTownBuilding, "start" | "end">[],
   faces: ReadonlyMap<string, readonly PlacedFace[]>,
+  paints: Float32Array | null = null,
 ): FarCards {
   let verts = 0;
   let tris = 0;
@@ -543,6 +548,7 @@ export function buildFarCards(
   const uv = new Float32Array(verts * 2);
   const index = new Uint32Array(tris * 3);
   const ranges = new Uint32Array(buildings.length * 2);
+  const color = paints ? new Float32Array(verts * 3) : undefined;
   let v = 0;
   let t = 0;
   buildings.forEach((b, bi) => {
@@ -566,6 +572,7 @@ export function buildFarCards(
           const [fs, ft] = f.frame.st[k];
           uv[v * 2] = u0 + (u1 - u0) * fs;
           uv[v * 2 + 1] = v0 + (v1 - v0) * ft;
+          if (color) color.set(paints!.subarray(i * 3, i * 3 + 3), v * 3);
           v++;
         });
         // A fan over the convex face.
@@ -578,7 +585,7 @@ export function buildFarCards(
     }
     ranges[bi * 2 + 1] = t;
   });
-  return { position, normal, uv, index, ranges };
+  return { position, normal, uv, index, ranges, ...(color ? { color } : {}) };
 }
 
 /** Writes the triangles of the far buildings (mask 0) into `out`, building

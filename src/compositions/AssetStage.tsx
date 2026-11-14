@@ -13,13 +13,14 @@
  * warning with the exact fix. Real GLBs light up automatically once present.
  */
 import { useMemo, useRef } from "react";
-import { useCurrentFrame, staticFile, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, staticFile, random } from "remotion";
 import { useGLTF } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { ShotSpec, SceneType, CastEntry } from "../generator/spec.schema";
-import { GlbSuspense, useGltfPaint } from "./glb";
+import { GlbSuspense, useGltfPaint, useSceneDrawOrder } from "./glb";
+import { restoreRigLens } from "./ForestStage";
 import { WaterSurface } from "./water";
 import { WeatherLayer, lightsOutAt, type Weather } from "./weather";
 
@@ -170,6 +171,9 @@ function CharacterInstance({
   mixer: THREE.AnimationMixer;
   maxX?: number;
 }) {
+  const { fps } = useVideoConfig();
+  // The frame count the motion below was tuned on (30 fps): the same motion at any rate.
+  const tick = frame * (30 / fps);
   const area: Record<string, [number, number, number, number]> = {
     foreground: [-4, 4, -4.5, -2],
     midground: [-9, 9, -8.5, -4],
@@ -187,7 +191,7 @@ function CharacterInstance({
   const pz = z0 + random(`${specId}-pz-${index}-${count}`) * (z1 - z0);
 
   // Per-character animation timing: progress through the walk/idle cycle.
-  const t = frame / 30;
+  const t = frame / fps;
 
   // --- Physics arc: gravity-off float, fall, squash -------------------------
   let gravityY = 0;
@@ -216,12 +220,12 @@ function CharacterInstance({
   }
 
   // Facial/body micro-acting on top of the walk cycle.
-  let bob = Math.sin(frame * 0.08 + phase) * 0.02;
+  let bob = Math.sin(tick * 0.08 + phase) * 0.02;
   let tilt = 0;
   if (action === "kneel") { bob = -0.28; tilt = 0.35; }
-  else if (action === "panic") { bob = Math.abs(Math.sin(frame * 0.35 + phase)) * 0.12; gravitySpin = Math.sin(frame * 0.1 + phase) * 0.25; }
-  else if (action === "cheer") { bob = Math.abs(Math.sin(frame * 0.25 + phase)) * 0.15; }
-  else if (action === "look-up") { tilt = -0.25 + Math.sin(frame * 0.05 + phase) * 0.03; }
+  else if (action === "panic") { bob = Math.abs(Math.sin(tick * 0.35 + phase)) * 0.12; gravitySpin = Math.sin(tick * 0.1 + phase) * 0.25; }
+  else if (action === "cheer") { bob = Math.abs(Math.sin(tick * 0.25 + phase)) * 0.15; }
+  else if (action === "look-up") { tilt = -0.25 + Math.sin(tick * 0.05 + phase) * 0.03; }
 
   if (shirt && shirtColor) {
     (shirt.material as THREE.MeshStandardMaterial).color.set(shirtColor);
@@ -240,7 +244,7 @@ function CharacterInstance({
 
   // Absolute clip time from the frame number. mixer.update() here would
   // advance the animation once per React render instead of once per frame.
-  mixer.setTime(frame / 30 + phase);
+  mixer.setTime(frame / fps + phase);
 
   // Feet on ground: lift by the model's bounding-box bottom, scaled by the
   // instance scale; the squash compresses toward the feet so contact holds.
@@ -564,6 +568,8 @@ function BuildingCluster({ entry, specId, castIndex }: { entry: CastEntry; specI
 
 function BuildingClusterInner({ gltfFile, count, specId, castIndex }: { gltfFile: string; count: number; specId: string; castIndex: number }) {
   const gltf = useGltfPaint(gltfFile);
+  // One clone per placement, made once (they used to be cloned again on every
+  // render, a new set of objects each frame).
   const items = useMemo(() => {
     // normalise the kit's native scale: whatever the author modelled,
     // buildings read as a believable skyline (≈17 m standard height)
@@ -594,12 +600,12 @@ function BuildingClusterInner({ gltfFile, count, specId, castIndex }: { gltfFile
       const side = i % 2 === 0 ? 1 : -1;
       out.push({ pos: [side * (6 + halfW + a2 * 26), liftY * s, -34 - a1 * 12], rot: a2 * Math.PI / 2, s });
     }
-    return out;
+    return out.map((it) => ({ ...it, node: skeletonClone(gltf.scene) }));
   }, [gltf, count, specId, castIndex]);
   return (
     <group>
       {items.map((it, i) => (
-        <primitive key={i} object={skeletonClone(gltf.scene)} position={it.pos} rotation={[0, it.rot, 0]} scale={[it.s, it.s, it.s]} castShadow receiveShadow />
+        <primitive key={i} object={it.node} position={it.pos} rotation={[0, it.rot, 0]} scale={[it.s, it.s, it.s]} castShadow receiveShadow />
       ))}
     </group>
   );
@@ -705,12 +711,12 @@ function TreeRingInner({ gltfFile, count, specId, castIndex }: { gltfFile: strin
         out.push({ pos: [side * (5.5 + a1 * 2.5), liftY * s, -5 - a1 * 4], rot: a1 * 6.28, s });
       }
     }
-    return out;
+    return out.map((it) => ({ ...it, node: skeletonClone(gltf.scene) }));
   }, [gltf, gltfFile, count, specId, castIndex]);
   return (
     <group>
       {items.map((it, i) => (
-        <primitive key={i} object={skeletonClone(gltf.scene)} position={it.pos} rotation={[0, it.rot, 0]} scale={[it.s, it.s, it.s]} castShadow receiveShadow />
+        <primitive key={i} object={it.node} position={it.pos} rotation={[0, it.rot, 0]} scale={[it.s, it.s, it.s]} castShadow receiveShadow />
       ))}
     </group>
   );
@@ -814,14 +820,14 @@ function PropRowInner({ gltfFile, entry, specId, castIndex }: { gltfFile: string
     const longest = Math.max(psize.x, psize.y, psize.z) || 1;
     const s = propTargetSize(entry.asset) / longest;
     const liftY = -bbox.min.y * s; // bottom exactly on the ground
-    return propLayout(entry, specId, castIndex).map((it) => ({ ...it, s, y: liftY }));
+    return propLayout(entry, specId, castIndex).map((it) => ({ ...it, s, y: liftY, node: skeletonClone(gltf.scene) }));
   }, [gltf, entry, specId, castIndex]);
   return (
     <group>
       {items.map((it, i) => (
         <primitive
           key={i}
-          object={skeletonClone(gltf.scene)}
+          object={it.node}
           position={[it.x, it.y, it.z]}
           rotation={[0, it.rot, 0]}
           scale={[it.s, it.s, it.s]}
@@ -862,7 +868,13 @@ function SkyDome({ kit, tod, lightsOut }: { kit: string; tod?: string; lightsOut
   // "lights out": key light dies, lamps carry the scene.
   const key = lightsOut ? 0.04 : 1;
   const fill = lightsOut ? 0.3 : 1;
+  const { scene } = useThree();
   useFrame(() => {
+    // These kits draw without scene fog (a <fog attach="fog"> here was
+    // attached to its group and never applied). A stage before them in the
+    // same tab can leave its own (the world's, the forest's), so it is
+    // cleared every frame: the picture is the one a fresh tab draws.
+    if (scene.fog !== null) scene.fog = null;
     if (dirRef.current) dirRef.current.intensity = t.dirI * key;
     if (hemiRef.current) hemiRef.current.intensity = t.hemi * fill;
     if (ambRef.current) ambRef.current.intensity = t.amb * fill;
@@ -909,7 +921,6 @@ function SkyDome({ kit, tod, lightsOut }: { kit: string; tod?: string; lightsOut
           </mesh>
         </>
       )}
-      <fog attach="fog" args={[bottom, 22, 90]} />
       <hemisphereLight ref={hemiRef} intensity={t.hemi} color={top} groundColor={bottom} />
       <directionalLight
         ref={dirRef}
@@ -933,9 +944,10 @@ function SkyDome({ kit, tod, lightsOut }: { kit: string; tod?: string; lightsOut
 /** Water-return event: the dry harbor basin floods back under the pier. */
 function PierWater({ tod, events }: { tod?: string; events: Array<{ t: number; name: string }> }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const ret = events.find((e) => e.name === "water-return");
   if (!ret) return null;
-  const t = frame / 30;
+  const t = frame / fps;
   if (t < ret.t) return null;
   const f = Math.min(1, (t - ret.t) / 2.0);
   const level = -1.5 + f * f * (3 - 2 * f) * 1.25; // ends just under the deck
@@ -946,9 +958,14 @@ function PierWater({ tod, events }: { tod?: string; events: Array<{ t: number; n
 function CameraRig({ gravityOff, gravityOn }: { gravityOff: number | null; gravityOn: number | null }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   useFrame(() => {
-    const t = frame / 30;
-    let y = 1.75 + Math.sin(frame * 0.01) * 0.08;
+    // The default lens: a stage before this one in the same tab may have left
+    // its own (the street's zoom, a director's shot).
+    restoreRigLens(camera);
+    const t = frame / fps;
+    // A sway tuned per frame at 30 fps: the same at any rate.
+    let y = 1.75 + Math.sin(frame * (30 / fps) * 0.01) * 0.08;
     let z = 15 - Math.min(t * 0.3, 4);
     let tilt = -0.03;
     if (gravityOff != null && gravityOn != null) {
@@ -975,8 +992,10 @@ export function AssetStage({ scenes, spec }: { scenes: SceneType[]; spec: ShotSp
   const gravityOff = (spec.events ?? []).find((e) => e.name === "gravity_off")?.t ?? null;
   const gravityOn = (spec.events ?? []).find((e) => e.name === "gravity_on")?.t ?? null;
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const lightsOut = lightsOutAt(spec, t);
+  useSceneDrawOrder();
   return (
     <>
       <SkyDome kit={(first.kit ?? "city-street") as string} tod={first.look?.timeOfDay} lightsOut={lightsOut} />

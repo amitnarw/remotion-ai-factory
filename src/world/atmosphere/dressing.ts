@@ -13,12 +13,16 @@ import type { CityLayout } from "../city";
 import type { RegionStyle } from "../places";
 import { makeRng } from "../rng";
 import { blockCentre, openBlocks, GROUND } from "../cityAnchors";
+import { isDusk } from "./dusk";
 import { lampSpots } from "./night";
 import { markWaterGeometry } from "./water";
-import { darkKeyAttribute, patchDarkBasic, patchDarkEmissive } from "../react/darkShader";
+import { darkKeyAttribute, patchDarkBasic, patchDarkEmissive, patchDuskBasic, patchDuskEmissive } from "../react/darkShader";
 
 /** First id of the lamps' lights-out keys (clear of the buildings' indices). */
 const LAMP_KEY_ID = 1_000_000;
+/** The lamp heads' glow by day (a faint warm tint) and lit. */
+const LAMP_HEAD_DAY = 0.02;
+const LAMP_HEAD_NIGHT = 1.6;
 
 /** Point in a polygon ([x, z], even winding). */
 function pointInPolygon(x: number, z: number, poly: readonly [number, number][]): boolean {
@@ -180,8 +184,15 @@ export function plazaDressing(
 /** Street lamps: one instanced pole per spot and one glowing head; at night
  *  the heads emit and a pool of warm light lies on the ground under each.
  *  The pole leans an arm toward the carriage. Lights out (react/dark.ts):
- *  each lamp's head and pool go out as the blackout wave reaches its spot. */
-export function lampGroup(style: RegionStyle, night: boolean): THREE.Group {
+ *  each lamp's head and pool go out as the blackout wave reaches its spot.
+ *  `dusk` is how far the city has lit up (atmosphere/dusk.ts; true is 1,
+ *  false 0): by day and at night the lamps are drawn exactly as before;
+ *  in between they take their night look, and each stretch of the avenue
+ *  warms up to it (a few frames of a lapse) once the shared uDusk reaches
+ *  its turn. */
+export function lampGroup(style: RegionStyle, dusk: boolean | number): THREE.Group {
+  const amount = typeof dusk === "number" ? dusk : dusk ? 1 : 0;
+  const night = amount > 0;
   const group = new THREE.Group();
   const spots = lampSpots(style);
   const keys = new Float32Array(spots.length * 3);
@@ -206,7 +217,7 @@ export function lampGroup(style: RegionStyle, night: boolean): THREE.Group {
   const poles = new THREE.InstancedMesh(poleGeo, iron, spots.length);
   const arms = new THREE.InstancedMesh(armGeo, iron, spots.length);
   const headMat = lampHead.clone();
-  headMat.emissiveIntensity = night ? 1.6 : 0.02;
+  headMat.emissiveIntensity = night ? LAMP_HEAD_NIGHT : LAMP_HEAD_DAY;
   const heads = new THREE.InstancedMesh(headGeo, headMat, spots.length);
   const d = new THREE.Object3D();
   spots.forEach((s, i) => {
@@ -230,8 +241,14 @@ export function lampGroup(style: RegionStyle, night: boolean): THREE.Group {
     m.receiveShadow = true;
   }
   for (const m of [heads, pools]) m.geometry.setAttribute("aDark", darkKeyAttribute(keys, true));
-  patchDarkEmissive(headMat);
-  patchDarkBasic(pools.material as THREE.Material);
+  if (isDusk(amount)) {
+    // A head not yet switched on keeps its day glow (DAY of its NIGHT).
+    patchDuskEmissive(headMat, "lamps", LAMP_HEAD_DAY / LAMP_HEAD_NIGHT);
+    patchDuskBasic(pools.material as THREE.Material, "lamps");
+  } else {
+    patchDarkEmissive(headMat);
+    patchDarkBasic(pools.material as THREE.Material);
+  }
   group.add(poles, arms, heads);
   if (night) group.add(pools);
   return group;

@@ -14,7 +14,25 @@ import {
   words,
   type GltfJson,
 } from "../../scripts/build-world-catalog";
-import { allAssets, catalogSummary, CATEGORIES, createCatalog, REGIONS, type CatalogFile, type CatalogRecord } from "./catalog";
+import {
+  acquiredAssets,
+  acquiredCatalogOf,
+  allAssets,
+  assetById,
+  catalogSummary,
+  CATEGORIES,
+  createCatalog,
+  creditsFor,
+  findAssets,
+  REGIONS,
+  scoreAssets,
+  setAcquiredModels,
+  type AcquiredModels,
+  type CatalogFile,
+  type CatalogRecord,
+} from "./catalog";
+import worldCatalogData from "./data/world-catalog.json";
+import committedAcquired from "../../acquired.catalog.json";
 
 const FIX = join(__dirname, "test-fixtures");
 const PUB = join(FIX, "public");
@@ -336,4 +354,117 @@ test("built-in catalog: the director summary stays under ~1,500 tokens", () => {
   assert.ok(s.length / 3.5 < 1500);
   assert.match(s, /^WORLD ASSETS: \d+/);
   assert.equal(catalogSummary(), s, "deterministic");
+});
+
+// ---------------------------------------------------------------------------
+// Acquired models (acquired.catalog.json): reachable by id only
+// ---------------------------------------------------------------------------
+
+const ACQ_PACK = "acquired/kaykit/prototype-bits";
+const acquiredFile = (assets: CatalogRecord[], items: AcquiredModels["items"] = []): AcquiredModels => ({
+  models: {
+    v: 1,
+    keys: "",
+    packs: {
+      [ACQ_PACK]: { name: "Prototype Bits", src: "kaykit", l: "CC0-1.0", by: "Kay Lousberg", u: "https://kaylousberg.itch.io/prototype-bits" },
+      "acquired/sketchfab/x": { name: "Sketchfab", src: "sketchfab", l: "CC-BY-4.0", by: "Ann Author", u: "https://sketchfab.com/3d-models/x" },
+    },
+    assets,
+  },
+  items,
+});
+const acq = (id: string, more: Partial<CatalogRecord> = {}) =>
+  r(id, "prop", "wall target", [1, 1.2, 0.2], { pk: ACQ_PACK, f: `assets/acquired/models/kaykit/${id}/${id}.gltf`, t: ["zzacquiredtag"], ...more });
+
+test("acquiredCatalogOf: held-back items and ids the built-in catalog has are left out; nothing left is null", () => {
+  const file = acquiredFile(
+    [acq("tree-oak"), acq("acq-held"), acq("acq-target"), acq("acq-ship", { pk: "acquired/sketchfab/x", n: "ship old", c: "boat" })],
+    [{ id: "acq-held", held: "its licence changed on re-download" }, { id: "acq-target" }],
+  );
+  const got = acquiredCatalogOf(file, cat);
+  assert.ok(got);
+  assert.deepEqual(got.assets.map((a) => a.id), ["acq-target", "acq-ship"]);
+  // The clash keeps the built-in record; the acquired one is not reachable.
+  assert.equal(got.assetById("tree-oak"), undefined);
+  assert.equal(got.assetById("acq-target")?.pack, "Prototype Bits");
+  assert.equal(got.assetById("acq-target")?.license, "CC0-1.0");
+  // Nothing (left) to merge: null, so every answer is the built-in one.
+  assert.equal(acquiredCatalogOf(acquiredFile([acq("tree-oak"), acq("acq-held")], [{ id: "acq-held", held: "file differs" }]), cat), null);
+  assert.equal(acquiredCatalogOf(acquiredFile([]), cat), null);
+  assert.equal(acquiredCatalogOf({}, cat), null);
+  assert.equal(acquiredCatalogOf(null, cat), null);
+  assert.equal(acquiredCatalogOf(undefined, cat), null);
+});
+
+test("acquired models, as committed: every answer is the built-in one", () => {
+  const built = createCatalog(worldCatalogData as unknown as CatalogFile);
+  const committed = committedAcquired as unknown as AcquiredModels;
+  const merged = acquiredCatalogOf(committed, built);
+  // What the process sees is exactly what the committed file adds (today: nothing).
+  assert.deepEqual(acquiredAssets().map((a) => a.id), (merged?.assets ?? []).map((a) => a.id));
+  if (!(committed.models?.assets ?? []).length) assert.deepEqual(acquiredAssets(), []);
+  for (const a of acquiredAssets()) assert.equal(built.assetById(a.id), undefined, `${a.id} shadows a built-in id`);
+  // The pools and the director's summary are the built-in catalog's.
+  assert.deepEqual(allAssets(), built.assets);
+  assert.equal(catalogSummary(), built.catalogSummary());
+  assert.equal(catalogSummary({ categories: ["tree", "landmark"], maxChars: 800 }), built.catalogSummary({ categories: ["tree", "landmark"], maxChars: 800 }));
+  for (const q of [{ category: "tree" as const, tags: ["oak"] }, { tags: ["house"], region: "european" as const }, { category: "vehicle" as const, limit: 0 }, { tags: ["tower"], limit: 0 }]) {
+    assert.deepEqual(findAssets(q), built.findAssets(q));
+    assert.deepEqual(scoreAssets(q), built.scoreAssets(q));
+  }
+  // Every built-in id answers its own record, and the credits are the built-in ones.
+  for (const a of built.assets) assert.deepEqual(assetById(a.id), built.assetById(a.id));
+  const ids = built.assets.map((a) => a.id);
+  assert.deepEqual(creditsFor(ids), built.creditsFor(ids));
+  assert.equal(assetById("no-such-asset"), undefined);
+  assert.throws(() => creditsFor(["no-such-asset"]), /unknown asset id/);
+});
+
+test("acquired models: assetById and creditsFor find them; allAssets, findAssets and catalogSummary don't", () => {
+  const before = { all: allAssets(), summary: catalogSummary(), small: catalogSummary({ maxChars: 600 }) };
+  const ccby = before.all.find((a) => a.license.startsWith("CC-BY"));
+  assert.ok(ccby, "the built-in catalog has a CC-BY model");
+  const builtInId = before.all[0].id;
+  setAcquiredModels(
+    acquiredFile(
+      [
+        acq("acq-target"),
+        acq("acq-ship", { pk: "acquired/sketchfab/x", n: "ship old", c: "boat", t: ["zzacquiredtag"], cr: '"Old ship" by Ann Author (https://sketchfab.com/3d-models/x), CC-BY 4.0' }),
+        acq(builtInId, { n: "impostor" }),
+        acq("acq-held"),
+      ],
+      [{ id: "acq-held", held: "its licence changed" }],
+    ),
+  );
+  try {
+    assert.deepEqual(acquiredAssets().map((a) => a.id), ["acq-target", "acq-ship"]);
+    // By id: the director's named model can be placed and credited.
+    const target = assetById("acq-target");
+    assert.ok(target);
+    assert.equal(target.file, "assets/acquired/models/kaykit/acq-target/acq-target.gltf");
+    assert.equal(target.source, "kaykit");
+    assert.equal(assetById("acq-held"), undefined);
+    // A built-in id wins a clash.
+    assert.notEqual(assetById(builtInId)?.name, "impostor");
+    assert.deepEqual(creditsFor(["acq-target"]), []);
+    assert.deepEqual(creditsFor(["acq-ship", "acq-target", "acq-ship"]), ['"Old ship" by Ann Author (https://sketchfab.com/3d-models/x), CC-BY 4.0']);
+    assert.deepEqual(creditsFor([ccby.id, "acq-ship"]), [...creditsFor([ccby.id]), '"Old ship" by Ann Author (https://sketchfab.com/3d-models/x), CC-BY 4.0'].sort());
+    assert.throws(() => creditsFor(["acq-held"]), /unknown asset id/);
+    assert.throws(() => creditsFor(["acq-ship", "no-such-asset"]), /unknown asset id.*no-such-asset/);
+    // Not in the pools the world casts and dresses from, nor in the director's summary.
+    assert.deepEqual(allAssets(), before.all);
+    assert.ok(!allAssets().some((a) => a.id.startsWith("acq-")));
+    assert.deepEqual(findAssets({ tags: ["zzacquiredtag"], limit: 0 }).filter((a) => a.id.startsWith("acq-")), []);
+    assert.ok(!findAssets({ category: "boat", limit: 0 }).some((a) => a.id.startsWith("acq-")));
+    assert.ok(!scoreAssets({ tags: ["wall", "target"], limit: 0 }).some((m) => m.asset.id.startsWith("acq-")));
+    assert.equal(catalogSummary(), before.summary);
+    assert.equal(catalogSummary({ maxChars: 600 }), before.small);
+    // None: back to the built-in answers.
+    setAcquiredModels(null);
+    assert.deepEqual(acquiredAssets(), []);
+    assert.equal(assetById("acq-target"), undefined);
+    assert.throws(() => creditsFor(["acq-ship"]), /unknown asset id/);
+  } finally {
+    setAcquiredModels(committedAcquired as unknown as AcquiredModels);
+  }
 });

@@ -16,6 +16,7 @@ import { z } from "zod";
 import { KIT_SUBJECTS } from "../camera/subjects";
 import { callRole, type RoleModel } from "../pipeline/llm";
 import type { ShotSpec, SpecShot } from "../spec.schema";
+import { warpEdges } from "../../world/warp";
 
 export interface VisionQuestion {
   id: string;
@@ -34,9 +35,8 @@ function stateAt(spec: ShotSpec, t: number) {
   return { scene, waterGone: last("water-vanish") > last("water-return"), lightsOut: happened("lights-out").length > 0 };
 }
 
-/** Neutral questions about one shot's middle frame. */
-export function visionQuestions(spec: ShotSpec, shot: SpecShot): VisionQuestion[] {
-  const t = (shot.from + shot.to) / 2;
+/** Neutral questions about one shot's still (at video time t; the shot's middle by default). */
+export function visionQuestions(spec: ShotSpec, shot: SpecShot, t = (shot.from + shot.to) / 2): VisionQuestion[] {
   const { scene, waterGone, lightsOut } = stateAt(spec, t);
   const kit = scene?.kit ?? "";
   const qs: VisionQuestion[] = [];
@@ -48,6 +48,13 @@ export function visionQuestions(spec: ShotSpec, shot: SpecShot): VisionQuestion[
   if (kit === "ocean" && !waterGone) qs.push({ id: "water", question: "Is there sea water visible?", want: true });
   if (lightsOut && kit !== "space") qs.push({ id: "lights", question: "Are there lit windows or lit street lamps?", want: false });
   if (scene?.look?.weather === "rain" || scene?.look?.weather === "storm") qs.push({ id: "rain", question: "Is it raining?", want: true });
+  // A bullet time's hold: its projectiles crawl through the air with pale
+  // trails, drawn larger than life so they read (14-bullet-time.md risk 6).
+  const bt = scene?.bulletTime;
+  if (bt?.projectiles?.length) {
+    const { b, c } = warpEdges(bt);
+    if (t >= b && t < c) qs.push({ id: "trails", question: "Are thin bright streaks or trails visible in the air?", want: true });
+  }
   return qs;
 }
 

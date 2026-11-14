@@ -5,6 +5,10 @@
  * through its "frameupdate" event and is moved by writing its transform
  * directly, so playback never re-renders React. Click an item to select it
  * and jump there; click empty space to jump to that moment.
+ *
+ * The tracks are in spec time. A channel brand's intro plays before the story
+ * (`introFrames`), so the Player's frame is `introFrames` ahead of spec time:
+ * the playhead takes it off and a seek adds it.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PlayerRef } from "@remotion/player";
@@ -51,13 +55,17 @@ export function Timeline({
   tracks,
   duration,
   fps,
+  introFrames = 0,
   player,
   selectedId,
   onSelect,
 }: {
   tracks: Track[];
+  /** The story's length in seconds (no bumpers). */
   duration: number;
   fps: number;
+  /** A channel brand's intro in frames: the Player shows spec time 0 at this frame. */
+  introFrames?: number;
   player: PlayerRef | null;
   selectedId: string | null;
   onSelect: (item: TrackItem) => void;
@@ -89,12 +97,14 @@ export function Timeline({
 
   const placePlayhead = useCallback(
     (frame: number) => {
-      const x = (frame / fps) * pxRef.current;
+      // Held at the story's start during the intro and at its end during the outro.
+      const t = Math.min(Math.max(0, (frame - introFrames) / fps), duration);
+      const x = t * pxRef.current;
       if (playheadRef.current) playheadRef.current.style.transform = `translateX(${x}px)`;
-      if (timeRef.current) timeRef.current.textContent = formatTime(frame / fps);
+      if (timeRef.current) timeRef.current.textContent = formatTime(t);
       return x;
     },
-    [fps],
+    [fps, introFrames, duration],
   );
 
   // Follow the Player without React state per frame.
@@ -153,7 +163,7 @@ export function Timeline({
   const seek = (sec: number) => {
     if (!player) return;
     const frame = Math.round(Math.min(Math.max(0, sec), duration) * fps);
-    player.seekTo(Math.min(frame, Math.max(0, Math.round(duration * fps) - 1)));
+    player.seekTo(introFrames + Math.min(frame, Math.max(0, Math.round(duration * fps) - 1)));
   };
 
   const width = Math.ceil(duration * px) + 24;

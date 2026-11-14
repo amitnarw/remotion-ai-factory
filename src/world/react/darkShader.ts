@@ -13,6 +13,12 @@
  *  - `patchDarkSky`: the gradient dome mixes toward its DARK_SKY colours.
  *  - The kit window glow (kitWindows.ts) carries the same code itself, keyed
  *    by the glow copies' instanceColor.
+ *  - `patchDuskEmissive` and `patchDuskBasic`: the same two, in a scene
+ *    between day and night only (atmosphere/dusk.ts), where each light also
+ *    waits for the dusk to reach its turn and then fades in over a short
+ *    ramp (dkDusk for a building's windows, dkLampDusk for a stretch of
+ *    lamps) against the shared uDusk. A material takes one of the patches,
+ *    never both.
  *
  * Every patch is applied once per material (a WeakSet: the kit materials
  * are shared across files) and names itself in the program cache key. The
@@ -22,6 +28,7 @@
  * mix is exactly 0.
  */
 import * as THREE from "three";
+import { DUSK_GLSL } from "../atmosphere/dusk";
 import { patchMaterial } from "../atmosphere/patch";
 import { DARK_GLSL, DARK_REST, DARK_SKY, discFade, type DarkState } from "./dark";
 
@@ -99,6 +106,65 @@ export function patchDarkBasic(mat: THREE.Material): void {
   });
 }
 
+/** The dusk's shared uniform (atmosphere/dusk.ts duskFor): how far the city
+ *  has lit up. Bound only by the dusk patches, so a day or night scene's
+ *  programs never see it. */
+export const DUSK_UNIFORMS = {
+  uDusk: { value: 0 },
+};
+
+/** Writes the scene's dusk amount (GroundWorld, every frame). */
+export function setDuskUniform(amount: number): void {
+  DUSK_UNIFORMS.uDusk.value = amount;
+}
+
+/** Which lights a dusk patch wakes: a building's windows by its own turn,
+ *  street lamps by their stretch's (atmosphere/dusk.ts). */
+export type DuskLights = "windows" | "lamps";
+const DUSK_TURN: Record<DuskLights, string> = { windows: "dkDusk( aDark.z )", lamps: "dkLampDusk( aDark.z )" };
+
+/** Vertex side of a dusk patch: the wave's dkLit times the light's dusk
+ *  turn, which fades from uDuskOff (the light's day level against its night
+ *  one) to 1 over the light's ramp once the dusk reaches it (dusk.ts
+ *  DUSK_RAMP, LAMP_RAMP; one value per light, so the flat varying holds it). */
+function duskVertex(shader: THREE.WebGLProgramParametersWithUniforms, lights: DuskLights, off: number): void {
+  bindDarkWave(shader.uniforms);
+  shader.uniforms.uDusk = DUSK_UNIFORMS.uDusk;
+  shader.uniforms.uDuskOff = { value: off };
+  shader.vertexShader =
+    "attribute vec3 aDark;\nflat varying float vDarkLit;\nuniform float uDuskOff;\n" +
+    DARK_GLSL +
+    DUSK_GLSL +
+    shader.vertexShader.replace("#include <begin_vertex>", `#include <begin_vertex>\n  vDarkLit = dkLit( aDark ) * mix( uDuskOff, 1.0, ${DUSK_TURN[lights]} );`);
+}
+
+/**
+ * patchDarkEmissive for a scene between day and night: the emissive (set to
+ * its night look) also waits for the light's dusk turn; until then it shows
+ * `off` of itself (the lamp heads' faint day glow; 0 for windows), then fades
+ * up to all of it. Lights out still puts it out. Only a dusk scene's
+ * materials take it: a day or night scene keeps its own program.
+ */
+export function patchDuskEmissive(mat: THREE.Material, lights: DuskLights = "windows", off = 0): void {
+  patchOnce(mat, `dusk-emissive-${lights}`, (shader) => {
+    duskVertex(shader, lights, off);
+    shader.fragmentShader =
+      "flat varying float vDarkLit;\n" +
+      shader.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vDarkLit;");
+  });
+}
+
+/** patchDarkBasic for a scene between day and night: the additive light
+ *  (the lamps' pools) waits for its dusk turn and fades in too. */
+export function patchDuskBasic(mat: THREE.Material, lights: DuskLights = "lamps"): void {
+  patchOnce(mat, `dusk-basic-${lights}`, (shader) => {
+    duskVertex(shader, lights, 0);
+    shader.fragmentShader =
+      "flat varying float vDarkLit;\n" +
+      shader.fragmentShader.replace("#include <opaque_fragment>", "#include <opaque_fragment>\n  gl_FragColor.rgb *= vDarkLit;");
+  });
+}
+
 /**
  * A self-lit kit material ignores the lights, so it dims with the key light
  * by hand (the whole piece, no wave: it stands for daylight, not a powered
@@ -168,11 +234,27 @@ export function patchDarkSky(mesh: THREE.Mesh): void {
 export const DARK_HORIZON = new THREE.Color(DARK_SKY.horizon);
 
 /** Each dimmed object's lit value, recorded the first time a rig sees it
- *  (before anything dimmed it), so a rebuilt rig never takes a dimmed value. */
+ *  (before anything dimmed it), so a rebuilt rig never takes a dimmed value.
+ *  A time lapse passes its lit values every frame instead (DarkLit): first
+ *  seen would depend on which frame a render tab drew first. */
 const LIT = new WeakMap<object, number | THREE.Color>();
 function litValue<T extends number | THREE.Color>(owner: object, now: T): T {
   if (!LIT.has(owner)) LIT.set(owner, typeof now === "number" ? now : now.clone());
   return LIT.get(owner) as T;
+}
+
+/** The lit values of one frame of a time lapse (docs/factory/13-light-and-time.md):
+ *  what the rig dims from, in place of the values it recorded. */
+export interface DarkLit {
+  /** The key's intensity (sun or moon), the sky fill's, the clouds' glow. */
+  sun: number;
+  hemi: number;
+  cloud: number;
+  /** The moon disc's opacity (0 without a moon). */
+  moon: number;
+  /** The sun disc's colour, and the fog and background's (the sky's horizon). */
+  disk: THREE.Color;
+  horizon: THREE.Color;
 }
 
 /**
@@ -187,6 +269,9 @@ function litValue<T extends number | THREE.Color>(owner: object, now: T): T {
  * dimmed. The clouds' glow (the sky's and the city's light on them) falls
  * with the darker of the sky and the key, so a blackout under a night sky
  * (whose gain stays 1) still takes it down.
+ *
+ * In a time lapse the light itself moves: each call passes that frame's lit
+ * values (`lit`), and the rig dims from them; without, from the recorded ones.
  */
 export function darkRig(o: {
   sun: THREE.DirectionalLight;
@@ -197,7 +282,7 @@ export function darkRig(o: {
   moon?: THREE.Sprite | null;
   /** The lit fog and background colour (the sky's horizon). */
   horizon: string;
-}): (s: DarkState | null, scene: THREE.Scene) => void {
+}): (s: DarkState | null, scene: THREE.Scene, lit?: DarkLit) => void {
   const disk = o.disk.material as THREE.MeshBasicMaterial;
   const clouds = o.clouds.material as THREE.MeshStandardMaterial;
   const moon = o.moon ? (o.moon.material as THREE.SpriteMaterial) : null;
@@ -208,21 +293,23 @@ export function darkRig(o: {
     cloud: litValue(clouds, clouds.emissiveIntensity),
     moon: moon ? litValue(moon, moon.opacity) : 0,
   };
-  const horizon = new THREE.Color(o.horizon);
-  return (s, scene) => {
+  const lit0 = { ...base, horizon: new THREE.Color(o.horizon) };
+  return (s, scene, lit) => {
     const v = s ?? DARK_REST;
+    const b = lit ?? lit0;
+    const horizon = b.horizon;
     setDarkUniforms(s);
-    o.sun.intensity = base.sun * v.key;
-    o.hemi.intensity = base.hemi * v.fill;
-    disk.color.copy(base.disk);
+    o.sun.intensity = b.sun * v.key;
+    o.hemi.intensity = b.hemi * v.fill;
+    disk.color.copy(b.disk);
     const shown = discFade(v.key);
     if (disk.transparent !== shown < 1) {
       disk.transparent = shown < 1;
       disk.needsUpdate = true;
     }
     disk.opacity = shown;
-    if (moon) moon.opacity = base.moon * shown;
-    clouds.emissiveIntensity = base.cloud * Math.min(v.skyGain, v.key);
+    if (moon) moon.opacity = b.moon * shown;
+    clouds.emissiveIntensity = b.cloud * Math.min(v.skyGain, v.key);
     if (scene.fog instanceof THREE.Fog) scene.fog.color.copy(horizon).lerp(DARK_HORIZON, v.sky);
     if (scene.background instanceof THREE.Color) scene.background.copy(horizon).lerp(DARK_HORIZON, v.sky);
   };

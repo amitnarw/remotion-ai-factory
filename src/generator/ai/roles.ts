@@ -5,15 +5,36 @@
  * picks a provider and model per role in Settings → AI models; the choice is
  * stored in ai.config.json under "roles".
  *
- * Only the writer is wired today. The other roles are declared now so the
- * configuration is stable when the phases that use them land.
+ * Every role is wired: the plan uses writer, director, sound and critic
+ * (pipeline/run.ts), the photographer script uses vision, and Ask AI in the
+ * editor uses editor. A role with no model of its own uses the writer's.
  */
 
 export const ROLE_DEFS = [
   {
+    name: "producer",
+    label: "Producer",
+    description:
+      "The one you talk to about a run: it reads each note (\"scene 2 at night\", \"no music in the intro\") and sends it to the role that does the work. It changes nothing until you confirm.",
+    usedFrom: "now",
+  },
+  {
     name: "writer",
     label: "Writer",
     description: "Writes the story: hook, beats, narration and dialogue.",
+    usedFrom: "now",
+  },
+  {
+    name: "reader",
+    label: "Script reader",
+    description: "For a script you wrote yourself: fills in what each beat shows and who the characters are. It never changes your words.",
+    usedFrom: "now",
+  },
+  {
+    name: "checker",
+    label: "Story checker",
+    description:
+      "Reads the story before you do: notes on what would lose the viewer, the facts it claims, and for a story rewritten from yours, any part of your plot it lost. It never changes a word.",
     usedFrom: "now",
   },
   {
@@ -31,7 +52,20 @@ export const ROLE_DEFS = [
   {
     name: "critic",
     label: "Critic",
-    description: "Optional review pass: flags weak beats and the writer rewrites them (turn on 'AI review pass').",
+    description:
+      "Optional review pass: flags weak beats and the writer rewrites them (turn on 'AI review pass'). A story you approved is kept; its notes are listed instead. It also checks the story's facts before the story gate: each number, date, record or named person is known, speculative, or needs a source.",
+    usedFrom: "now",
+  },
+  {
+    name: "breakdown",
+    label: "Breakdown",
+    description: "Lists everything the story needs: places, characters, props, actions, effects, sounds and music.",
+    usedFrom: "now",
+  },
+  {
+    name: "matcher",
+    label: "Matcher",
+    description: "Judges whether the library's closest items are what each need asks for. Many small calls: a small model is enough.",
     usedFrom: "now",
   },
   {

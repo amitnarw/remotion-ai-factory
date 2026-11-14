@@ -16,8 +16,10 @@ import { makeRng } from "./city";
 import { CLOUD_PASSAGES, flightAt, groundPath, TIMING, travelCourse } from "./flight";
 import { GlobeWorld } from "./Globe";
 import type { ReactionSpec } from "./react/reaction";
+import type { Vec3 } from "./geo";
 import { GroundWorld } from "./Ground";
 import { resolvePlace, type Moment, type ResolvedPlace } from "./places";
+import { worldWeather } from "./weather/weather";
 
 /** The colour grade inside the flight's canvases: the same CinematicLook the
  *  main composition grades its stage with, per end of the flight, so the
@@ -28,6 +30,13 @@ export type FlightLook = {
   /** Preset of the scene flown to (ground B); the switch from `a` happens at
    *  the second cloud seam, where the veil is closed. */
   b: LookPresetId;
+  /** A time-lapse scene at either end: the look its grade blends from and
+   *  how far it has gone (CinematicLook blendFrom, blend), so the flight
+   *  grades exactly as the stage beside it. */
+  aFrom?: LookPresetId;
+  aBlend?: number;
+  bFrom?: LookPresetId;
+  bBlend?: number;
   quality?: LookQuality;
   grain?: number;
   /** The enclosing Sequence's start frame, so the grain never repeats. */
@@ -61,6 +70,10 @@ export type WorldFlightProps = {
    *  side belongs to, and the video time the flight starts at, so a place
    *  blacked out or broken before the flight is still so from the air. */
   reaction?: { spec: ReactionSpec; a: { from: number; to: number }; b: { from: number; to: number }; start: number };
+  /** Each side's weather (weather/weather.ts worldWeather of its scene and
+   *  the spec's world events): its ground draws the rain, storm or snow its
+   *  stage does. Pass the spec's own scene objects (stable), not copies. */
+  weather?: { a: Parameters<typeof worldWeather>[0]; b: Parameters<typeof worldWeather>[0]; events?: Parameters<typeof worldWeather>[1] };
 };
 
 const GL ={ logarithmicDepthBuffer: true, antialias: true };
@@ -153,12 +166,23 @@ function usePlace(id: string, moment: Moment): ResolvedPlace {
 }
 
 /** The grade, as the LAST child of a flight canvas. */
-function FlightGrade({ look, preset }: { look?: FlightLook; preset: LookPresetId | undefined }) {
+function FlightGrade({ look, side }: { look?: FlightLook; side: "a" | "b" }) {
+  const preset = look?.[side];
   if (!look || !preset) return null;
-  return <CinematicLook preset={preset} quality={look.quality ?? "final"} grain={look.grain ?? 1} grainSeed={look.grainSeed ?? 0} />;
+  const blendFrom = side === "a" ? look.aFrom : look.bFrom;
+  const blend = side === "a" ? look.aBlend : look.bBlend;
+  return (
+    <CinematicLook
+      preset={preset}
+      {...(blendFrom ? { blendFrom, blend } : {})}
+      quality={look.quality ?? "final"}
+      grain={look.grain ?? 1}
+      grainSeed={look.grainSeed ?? 0}
+    />
+  );
 }
 
-export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur, mood, look, labels = true, kitLod, market, reaction }) => {
+export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur, mood, look, labels = true, kitLod, market, reaction, weather }) => {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
   const t = (frame / fps) * (TIMING.end / (dur ?? TIMING.end));
@@ -171,6 +195,26 @@ export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur, mood, l
   const f = flightAt(t, a, b);
   // Video seconds (the Sequence starts the frame count at the flight).
   const videoT = (reaction?.start ?? 0) + frame / fps;
+  // Each side's weather, planned once (null: none chosen).
+  const sceneA = weather?.a;
+  const sceneB = weather?.b;
+  const events = weather?.events;
+  const weatherA = useMemo(() => (sceneA ? worldWeather(sceneA, events) : null), [sceneA, events]);
+  const weatherB = useMemo(() => (sceneB ? worldWeather(sceneB, events) : null), [sceneB, events]);
+  // In a video, each place's traffic while its ground shows (traffic.ts),
+  // over the flight's window in video seconds, out of the flight's lens.
+  const span = dur ?? TIMING.end;
+  const start = reaction?.start;
+  const traffic = useMemo(() => {
+    if (start === undefined) return null;
+    const scene = { from: start, to: start + span };
+    // Off its own side, the lens waits where that side's ground path meets the clouds.
+    const lens = (side: "a" | "b", rest: Vec3) => (tt: number): Vec3 => {
+      const g = flightAt(Math.max(0, ((tt - start) * TIMING.end) / span), a, b).ground;
+      return g?.side === side ? g.pose.pos : rest;
+    };
+    return { a: { scene, lens: lens("a", pathA[pathA.length - 1]) }, b: { scene, lens: lens("b", pathB[0]) } };
+  }, [start, span, a, b, pathA, pathB]);
   const fov = width < height ? 62 : 42;
   const layer = { position: "absolute" as const, inset: 0 };
 
@@ -183,13 +227,13 @@ export const WorldFlight: React.FC<WorldFlightProps> = ({ from, to, dur, mood, l
           no shadow-casting light, so the shadow map draws nothing there.) */}
       <ThreeCanvas width={width} height={height} style={layer} shadows gl={GL}>
         {f.ground?.side === "a" && (
-          <GroundWorld key="a" place={a} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.a} mood={mood} lodPath={pathA} kitLod={kitLod} market={market} reaction={reaction && { spec: reaction.spec, scene: reaction.a, t: videoT }} />
+          <GroundWorld key="a" place={a} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.a} mood={mood} lodPath={pathA} kitLod={kitLod} market={market} reaction={reaction && { spec: reaction.spec, scene: reaction.a, t: videoT }} traffic={traffic ? { ...traffic.a, t: videoT } : undefined} weather={weatherA ? { plan: weatherA, t: videoT } : undefined} />
         )}
         {f.ground?.side === "b" && (
-          <GroundWorld key="b" place={b} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.b} mood={mood} lodPath={pathB} kitLod={kitLod} market={market} reaction={reaction && { spec: reaction.spec, scene: reaction.b, t: videoT }} />
+          <GroundWorld key="b" place={b} pose={f.ground.pose} fov={fov} cloudPassage={CLOUD_PASSAGES.b} mood={mood} lodPath={pathB} kitLod={kitLod} market={market} reaction={reaction && { spec: reaction.spec, scene: reaction.b, t: videoT }} traffic={traffic ? { ...traffic.b, t: videoT } : undefined} weather={weatherB ? { plan: weatherB, t: videoT } : undefined} />
         )}
         {f.globe && <GlobeWorld pose={f.globe} utcMs={f.utcMs} month={a.month} fov={fov} />}
-        <FlightGrade look={look} preset={f.ground?.side === "b" ? look?.b : look?.a} />
+        <FlightGrade look={look} side={f.ground?.side === "b" ? "b" : "a"} />
       </ThreeCanvas>
       <CloudVeil amount={f.veil} />
       {labels && (

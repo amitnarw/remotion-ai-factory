@@ -8,9 +8,11 @@
  *
  * Usage:
  *   npx tsx scripts/phase3-lane-stills.ts --kit ocean --tod night --base output/milestone-oceans-vanish-16x9-props.json
+ *   (--base also takes a run id: output/<id>/props.json, scripts/runs.ts)
  *   (no --kit): the lane check set - every subject anchor per stage + the night / look spots + world scenes
  */
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "fs";
+import { resolveProps } from "./runs";
 import { join } from "path";
 import type { SceneType, ShotSpec, SpecShot } from "../src/generator/spec.schema";
 import { subjectsFor } from "../src/generator/camera/subjects";
@@ -182,8 +184,9 @@ export async function runKit(input: { spec: ShotSpec; name: string; bundle: stri
   return checks;
 }
 
+/** A base props file: a path, the old flat output/<id>-props.json, or a run id (its folder's props.json). */
 function loadBase(rel: string): ShotSpec {
-  const abs = join(process.cwd(), rel);
+  const abs = resolveProps(rel);
   if (!existsSync(abs)) throw new Error("missing props: " + rel);
   const raw = JSON.parse(readFileSync(abs, "utf8"));
   return (raw.spec ?? raw) as ShotSpec;

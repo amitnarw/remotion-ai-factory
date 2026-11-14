@@ -88,6 +88,8 @@ export async function renderChunks(opts: {
   log: (line: string) => void;
   /** Frames finished so far out of the frames this call has to render. */
   onFrames?: (done: number, total: number) => void;
+  /** Renders a key may go unused before it is deleted (default KEEP_RUNS); a batch of variants keeps the run's own chunks. */
+  keepRuns?: number;
 }): Promise<ChunkResult[]> {
   const { dir, chunks, encoder, log } = opts;
   mkdirSync(dir, { recursive: true });
@@ -163,8 +165,9 @@ export async function renderChunks(opts: {
   }
 
   // Forget (and delete) chunks no render has used for KEEP_RUNS runs.
+  const keep = Math.max(KEEP_RUNS, opts.keepRuns ?? KEEP_RUNS);
   for (const [key, e] of Object.entries(index.entries)) {
-    if (e.lastRun <= run - KEEP_RUNS) {
+    if (e.lastRun <= run - keep) {
       rmSync(join(dir, `${key}.ts`), { force: true });
       delete index.entries[key];
     }

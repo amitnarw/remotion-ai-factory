@@ -17,6 +17,7 @@ import { insideOccluder } from "./occlusion";
 import {
   avenueLane,
   blockBox,
+  castWalkers,
   liftKeepOut,
   marketBearing,
   solveWorldShot,
@@ -33,6 +34,7 @@ import { reactionPlan, type ReactionSpec } from "../../world/react/reaction";
 import { LENS_HIDE } from "../../world/react/rigid";
 import { levelTrack } from "../../world/react/track";
 import { LENS_CLEAR, lensFloorPlan } from "../../world/react/water";
+import { actorSubject } from "../../world/actors/script";
 
 const PORTRAIT = 9 / 16;
 
@@ -137,7 +139,7 @@ test("avenue shots look down the avenue with the light behind the lens", () => {
 });
 
 test("landmark FS low: the famous landmark, whole in frame, from below its middle", () => {
-  for (const place of ["paris", "cairo"]) {
+  for (const place of ["paris", "cairo", "rome", "london", "san-francisco"]) {
     const { scene, resolved } = placeScene(place, "12:00");
     const set = worldShotSet(scene, resolved)!;
     const star = landmarksFor(resolved.place)[0];
@@ -163,9 +165,61 @@ test("landmark FS low: the famous landmark, whole in frame, from below its middl
       const fill = Math.max((top.y - base.y) / 2, Math.abs(r.x - l.x) / 2);
       assert.ok(fill > 0.45 && fill <= 1.05, `${place} u=${u}: a full shot fills the frame (${fill.toFixed(2)})`);
       const dist = Math.hypot(pose.position[0] - star.x, pose.position[2] - star.z);
-      assert.ok(dist < 2000, `${place} u=${u}: near the landmark (${dist.toFixed(0)} m), not over the city`);
+      // Near it, not over the city (a 1.4 km bridge's full shot stands about 2 km off).
+      assert.ok(dist < Math.max(2000, 4 * subject.radius), `${place} u=${u}: near the landmark (${dist.toFixed(0)} m), not over the city`);
       if (u === 0) assert.ok(pose.position[1] < subject.center[1], `${place}: the low angle starts below the landmark's middle`);
     }
+  }
+});
+
+test("a landmark inside the city (Rome's Colosseum, London's clock tower): no lens in a house or a tree at any size, angle or move", () => {
+  for (const place of ["rome", "london"]) {
+    const { scene, resolved } = placeScene(place, "12:00");
+    const set = worldShotSet(scene, resolved)!;
+    const layout = layoutOf(resolved);
+    const subject = set.subjects.landmark(0);
+    assert.ok((subject.blockers?.length ?? 0) > 100, `${place}: the houses round it block the view (${subject.blockers?.length})`);
+    const bad: string[] = [];
+    for (const size of SHOT_SIZES) {
+      for (const angle of SHOT_ANGLES) {
+        for (const move of SHOT_MOVES) {
+          for (const u of [0, 0.5, 1]) {
+            const { pose } = solve(set, shotOf({ subject: "landmark", size, angle, move }), u);
+            if (inBuilding(layout, pose.position) || inTree(layout, pose.position)) bad.push(`${size} ${angle} ${move} u=${u} @ ${pose.position.map((v) => v.toFixed(1))}`);
+          }
+        }
+      }
+    }
+    assert.equal(bad.length, 0, `${place}: ${bad.length} lenses in a house or a tree, e.g.\n${bad.slice(0, 6).join("\n")}`);
+  }
+  // A landmark beyond the city keeps its subject as it was: no blockers.
+  for (const place of ["paris", "cairo", "new-york", "san-francisco"]) {
+    const { scene, resolved } = placeScene(place, "12:00");
+    assert.equal(worldShotSet(scene, resolved)!.subjects.landmark(0).blockers, undefined, place);
+  }
+});
+
+test("a scene WS or EWS stands within 500 m of the core's centre in 9:16 and 16:9, not 1.6 km out in the height fog", () => {
+  for (const place of ["paris", "cairo", "rome", "london", "san-francisco"]) {
+    const { scene, resolved } = placeScene(place, "16:10");
+    const set = worldShotSet(scene, resolved)!;
+    for (const aspect of [PORTRAIT, 16 / 9]) {
+      for (const size of ["WS", "EWS"] as const) {
+        for (const angle of ["eye", "high"] as const) {
+          for (const move of ["static", "crane_down"] as const) {
+            const shot = worldShot(set, shotOf({ subject: "scene", size, angle, move }));
+            for (const u of [0, 1]) {
+              const pose = solveShot(shot, set.subjects.scene(u * 3, shot), { aspect, u, seconds: 3, seed: "b1" });
+              const out = Math.hypot(pose.position[0], pose.position[2]);
+              assert.ok(out < 500, `${place} ${aspect.toFixed(2)} ${size} ${angle} ${move} u=${u}: the lens ${out.toFixed(0)} m out`);
+            }
+          }
+        }
+      }
+    }
+    // A closer shot of the place keeps the third of the core.
+    const ms = worldShot(set, shotOf({ subject: "scene", size: "MS", angle: "eye" }));
+    assert.ok(set.subjects.scene(0, ms).radius > 100, `${place}: an MS of the scene frames the core`);
   }
 });
 
@@ -228,6 +282,116 @@ test("wide market shots look across the stalls, clear of the flag poles", () => 
   assert.ok(Math.cos(a) < 0, "away from both poles (the lens on -z)");
   // No poles: the first diagonal.
   assert.equal(marketBearing([0, 0], []), Math.PI / 4);
+});
+
+test("the featured actors' footprints for the traffic: where each stands, and how far its body reaches", () => {
+  const { scene, resolved } = placeScene("paris", "12:00");
+  const actors = [
+    { role: "courier", where: "avenue", do: [{ at: 1, action: "walk", to: "avenue-east" }] },
+    { role: "fallen man", where: "avenue-west", do: [{ at: 0.5, action: "fall" }] },
+  ];
+  const set = worldShotSet({ ...scene, actors } as unknown as SceneType, resolved)!;
+  assert.equal(set.plans.size, 2);
+  const walkers = castWalkers(set.plans)!;
+  for (const t of [0, 2, 5]) {
+    const feet = walkers(t);
+    [...set.plans.values()].forEach((plan, i) => {
+      const s = actorSubject(plan, t);
+      assert.deepEqual(feet[i].slice(0, 2), [s.center[0], s.center[2]], `${plan.id} at t=${t}`);
+    });
+  }
+  assert.equal(walkers(0)[0][2], 0.3, "standing: round the feet");
+  assert.ok(walkers(5)[1][2] > 1.5, `lying down: its height (${walkers(5)[1][2].toFixed(2)} m)`);
+  assert.notDeepEqual(walkers(5)[0].slice(0, 2), walkers(0)[0].slice(0, 2), "the courier walks");
+  assert.equal(castWalkers(new Map()), undefined, "no cast: no walkers (the traffic as before)");
+});
+
+/** Is a point inside a kit house (its lot, up to its tallest piece)? */
+function inKitHouse(layout: CityLayout, tops: Map<string, number>, p: [number, number, number]): boolean {
+  for (const k of layout.kitBuildings) {
+    const top = tops.get(`${k.lot.x},${k.lot.z}`);
+    if (top === undefined || p[1] >= top) continue;
+    const c = Math.cos(k.lot.rotY);
+    const s = Math.sin(k.lot.rotY);
+    const dx = p[0] - k.lot.x;
+    const dz = p[2] - k.lot.z;
+    if (Math.abs(dx * c - dz * s) < k.lot.w / 2 && Math.abs(dx * s + dz * c) < k.lot.d / 2) return true;
+  }
+  return false;
+}
+
+test("the bell tower is a subject in the old towns, framed whole from the plaza's side", () => {
+  for (const [place, aspect] of [["paris", PORTRAIT], ["colmar", PORTRAIT], ["paris", 16 / 9], ["colmar", 16 / 9]] as const) {
+    const { scene, resolved } = placeScene(place, "12:00");
+    const set = worldShotSet(scene, resolved)!;
+    const layout = layoutOf(resolved);
+    const tower = layout.belfry!;
+    assert.ok(tower && set.subjects.belfry, `${place} has its bell tower as a subject`);
+    const subject = set.subjects.belfry(0);
+    assert.ok(Math.hypot(subject.center[0] - tower.x, subject.center[2] - tower.z) < 1e-9 && subject.height === tower.top, `${place}: the subject is the tower, cross included`);
+    const market = cityMarket(layout, resolved.style, resolved.place.id)!;
+    for (const size of ["FS", "WS"] as const) {
+      for (const angle of ["eye", "low"] as const) {
+        const shot = shotOf({ subject: "belfry", size, angle, side: "front", move: "static" });
+        const pose = solveShot(shot, subject, { aspect, u: 0.5, seconds: 3, seed: "b3" });
+        const cam = new THREE.PerspectiveCamera(pose.fov, aspect, 1, 70_000);
+        cam.position.set(...pose.position);
+        cam.quaternion.set(...pose.quaternion);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        const top = new THREE.Vector3(tower.x, tower.top, tower.z).project(cam);
+        const base = new THREE.Vector3(tower.x, 0, tower.z).project(cam);
+        const what = `${place} ${aspect < 1 ? "9:16" : "16:9"} ${size} ${angle}`;
+        assert.ok(top.y < 1 && base.y > -1 && Math.abs(top.x) < 1, `${what}: the whole tower in frame (top ${top.y.toFixed(2)}, base ${base.y.toFixed(2)})`);
+        assert.ok(top.y - base.y > (size === "FS" ? 0.8 : 0.3), `${what}: the tower fills the frame as its size asks (${((top.y - base.y) / 2).toFixed(2)})`);
+        // The lens is on the plaza's side of the tower (the front looks at it across the market).
+        const toPlaza = Math.atan2(market.centre[0] - tower.x, market.centre[1] - tower.z);
+        const toLens = Math.atan2(pose.position[0] - tower.x, pose.position[2] - tower.z);
+        assert.ok(Math.cos(toLens - toPlaza) > 0.5, `${what}: the lens looks from the plaza's side`);
+      }
+    }
+    // A close-up frames the belfry stage, the clock to the cornice, not the spire's tip.
+    const cu = shotOf({ subject: "belfry", size: "CU", angle: "eye", side: "front", move: "static" });
+    const pose = solveShot(cu, set.subjects.belfry(0, cu), { aspect, u: 0.5, seconds: 3, seed: "b3" });
+    const cam = new THREE.PerspectiveCamera(pose.fov, aspect, 1, 70_000);
+    cam.position.set(...pose.position);
+    cam.quaternion.set(...pose.quaternion);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
+    const lo = new THREE.Vector3(tower.x, tower.stage[0], tower.z).project(cam);
+    const hi = new THREE.Vector3(tower.x, tower.stage[1], tower.z).project(cam);
+    assert.ok(lo.y > -1 && hi.y < 1 && hi.y - lo.y > 1, `${place}: the CU holds the clock and the belfry (${lo.y.toFixed(2)}..${hi.y.toFixed(2)})`);
+  }
+  for (const place of ["new-york", "cairo"]) {
+    const { scene, resolved } = placeScene(place, "12:00");
+    const set = worldShotSet(scene, resolved)!;
+    assert.equal(set.subjects.belfry, undefined, `${place} has no bell tower`);
+    const found: WorldSpecShot = { ...shotOf({ subject: "belfry", size: "WS" }), from: 0, to: 3 };
+    assert.deepEqual(solveWorldShot(set, found, 1, PORTRAIT), solveWorldShot(set, { ...found, subject: "scene" }, 1, PORTRAIT), `${place}: a "belfry" shot films the scene`);
+  }
+});
+
+test("bell tower lenses keep out of the houses, the trees and the stalls (every size, angle, move)", () => {
+  for (const place of ["paris", "colmar"]) {
+    const { scene, resolved } = placeScene(place, "12:00");
+    const set = worldShotSet(scene, resolved)!;
+    const layout = layoutOf(resolved);
+    const tops = new Map(kitTown(layout.kitBuildings).buildings.map((b) => [`${b.x},${b.z}`, b.top]));
+    const market = cityMarket(layout, resolved.style, resolved.place.id)!;
+    const bad: string[] = [];
+    for (const size of SHOT_SIZES) {
+      for (const angle of SHOT_ANGLES) {
+        for (const move of SHOT_MOVES) {
+          for (const u of [0, 0.5, 1]) {
+            const p = solve(set, shotOf({ subject: "belfry", size, angle, move }), u).pose.position;
+            const stall = market.blockers.some((b) => Math.hypot(p[0] - b.x, p[2] - b.z) < b.r && p[1] < b.h);
+            if (inBuilding(layout, p) || inKitHouse(layout, tops, p) || inTree(layout, p) || stall) bad.push(`${size} ${angle} ${move} u=${u} @ ${p.map((v) => v.toFixed(1))}`);
+          }
+        }
+      }
+    }
+    assert.equal(bad.length, 0, `${place}: ${bad.length} bell tower lenses in a house, a tree or a stall, e.g.\n${bad.slice(0, 8).join("\n")}`);
+  }
 });
 
 test("world anchors are deterministic", () => {

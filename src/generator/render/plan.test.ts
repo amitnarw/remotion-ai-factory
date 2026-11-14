@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { validateSpec, videoSeconds, type ShotSpec } from "../spec.schema";
 import { secToFrame } from "../timing";
 import { audioKey, flightWindows, hardCuts, planRender, transitionWindows, MAX_CHUNK_SEC, MIN_CHUNK_SEC } from "./plan";
+import { introFrames, videoFrameOf, videoFrames } from "../../compositions/brand/length";
 
 const FPS = 30;
 const SALT = { bundle: "b1", remotion: "4.0.536", gl: "angle", crf: 18 };
@@ -252,4 +253,33 @@ test("a chunk that shows a flight is keyed by both places it joins", () => {
   moved.scenes[0].world!.place = "colmar";
   const after = plan(moved);
   assert.notEqual(after.chunks[k].key, before.chunks[k].key, "the flight leaves from Colmar now");
+});
+
+test("a channel brand's bumpers: the story's chunks move by the intro, the first takes the intro, the last the outro", () => {
+  const spec = makeSpec();
+  const brand = { name: "Action short", mark: "bolt", colors: { accent: "#ff6a1a", text: "#ffffff", background: "#0d0f14" }, intro: { seconds: 1.5 }, outro: { seconds: 3 } };
+  const branded = validateSpec({ ...JSON.parse(JSON.stringify(spec)), brand }) as ShotSpec;
+  assert.ok(branded.brand, "validateSpec keeps the brand");
+  const total = videoFrames(branded, FPS);
+  assert.equal(total, frames(spec) + 45 + 90);
+  const plain = plan(spec);
+  const b = planRender(branded, { fps: FPS, durationInFrames: total, salt: SALT, fileHash: (f) => `hash-of-${f}` });
+  assert.equal(b.chunks.length, plain.chunks.length, "the same cuts as the story alone");
+  assert.equal(b.chunks[0].start, 0);
+  assert.equal(b.chunks[b.chunks.length - 1].end, total);
+  for (let i = 1; i < b.chunks.length; i++) {
+    assert.equal(b.chunks[i].start, plain.chunks[i].start + 45, "every cut 1.5 s later");
+    assert.equal(b.chunks[i].start, b.chunks[i - 1].end);
+  }
+  assert.notEqual(b.globalKey, plain.globalKey, "the brand is global");
+  // A caption inside chunk 3 of the story still changes only chunk 3.
+  const chunk = plain.chunks[3];
+  const i = branded.captions.findIndex((c) => c.from > chunk.start / FPS + b.padSec + 0.1 && c.to < chunk.end / FPS - b.padSec - 0.1);
+  const edited = JSON.parse(JSON.stringify(branded)) as ShotSpec;
+  edited.captions[i].text = "a new line";
+  const after = planRender(edited, { fps: FPS, durationInFrames: total, salt: SALT, fileHash: (f) => `hash-of-${f}` });
+  assert.deepEqual(after.chunks.filter((c, k) => c.key !== b.chunks[k].key).map((c) => c.index), [3]);
+  assert.equal(introFrames(spec, FPS), 0);
+  assert.equal(videoFrameOf(branded, 100, FPS), 145);
+  assert.equal(videoFrameOf(spec, 100, FPS), 100, "no brand: the same frame");
 });

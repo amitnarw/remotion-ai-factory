@@ -41,6 +41,24 @@ function duckFactor(voices: Array<{ at: number; dur?: number }>): (sec: number) 
   };
 }
 
+/** An ambience bed with its fades (seconds; sound.ts AmbientBed). */
+type Bed = NonNullable<NonNullable<ShotSpec["audio"]>["ambient"]>[number] & { fadeIn?: number; fadeOut?: number };
+
+/**
+ * A bed's fade at a time (1 = full level). Beds fade only where they cross
+ * over (a time-lapse's light change, sound.ts lapseAmbience), so the ramps
+ * are equal-power (a quarter sine): two beds crossing over the same window
+ * keep the loudness steady, where straight lines would dip 3 dB in the
+ * middle. Music keeps its straight fades: it fades to and from silence.
+ */
+export function bedFade(bed: { from: number; fadeIn?: number; fadeOut?: number }, end: number, sec: number): number {
+  const ramp = (x: number) => (x >= 1 ? 1 : x <= 0 ? 0 : Math.sin((x * Math.PI) / 2));
+  let g = 1;
+  if (bed.fadeIn && bed.fadeIn > 0) g *= ramp((sec - bed.from) / bed.fadeIn);
+  if (bed.fadeOut && bed.fadeOut > 0) g *= ramp((end - sec) / bed.fadeOut);
+  return g;
+}
+
 /** Local file, or the synthesized fallback in public/sfx. */
 function sfxSrc(cue: { tag: string; file?: string }): string {
   return cue.file ? staticFile(cue.file) : staticFile(`sfx/${cue.tag}.wav`);
@@ -56,7 +74,7 @@ function warmUp(volume: number | ((f: number) => number)): (f: number) => number
 export const CompositionAudio: React.FC<CompositionAudioProps> = ({ spec, fps }) => {
   const events = spec.events ?? [];
   const audio = spec.audio ?? {};
-  const ambient = audio.ambient ?? [];
+  const ambient: Bed[] = audio.ambient ?? [];
   const voiceFiles = audio.voiceFiles ?? [];
   const music = audio.music ?? [];
   const transitions = audio.transitions ?? [];
@@ -102,8 +120,12 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({ spec, fps })
           ? (bed.gain ?? 1) * Math.min(2, Math.max(0.25, (bed.vol ?? 0.35) / 0.35))
           : bed.vol ?? 0.35;
         const src = bed.file ? staticFile(bed.file) : staticFile(`sfx/${bed.tag}.wav`);
-        // Beds always loop from the start of the file, so they never run out
-        // before the scene ends (synthesized beds are 30 s, videos can be longer).
+        // A bed without fades plays exactly as it always has.
+        const fades = !!(bed.fadeIn || bed.fadeOut);
+        const end = bed.to ?? duration;
+        // Beds loop from the start of the file, so they never run out before
+        // the scene ends (synthesized beds are 30 s, videos can be longer). A
+        // bullet time's slowed bed (loop false) is rendered to the cue's end.
         return (
           <Sequence
             key={`ambient-${i}`}
@@ -112,9 +134,12 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({ spec, fps })
           >
             <Audio
               src={src}
-              loop
+              loop={bed.loop !== false}
               loopVolumeCurveBehavior="extend"
-              volume={(f: number) => level * duck((fromFrame + f) / fps)}
+              volume={(f: number) => {
+                const sec = (fromFrame + f) / fps;
+                return fades ? level * bedFade(bed, end, sec) * duck(sec) : level * duck(sec);
+              }}
             />
           </Sequence>
         );

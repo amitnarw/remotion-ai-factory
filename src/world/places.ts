@@ -12,7 +12,7 @@
  * generate box buildings.
  */
 import { surfaceAt } from "./earth-grid";
-import { localToUtcMs, seasonAt, sunAt, type Season, type SunLocal } from "./geo";
+import { groundOffset, localToUtcMs, seasonAt, sunAt, type Season, type SunLocal } from "./geo";
 import type { KitSetId } from "./kits";
 import { Surface } from "./surface";
 
@@ -45,6 +45,12 @@ export interface KitStyle {
   /** Block interiors behind the street walls: "garden" (grass, by season)
    *  or "paved" (the sidewalk slab). */
   yards: "garden" | "paved";
+  /** Paints for a modular set's houses (kitPaint.ts): each house draws one
+   *  (seeded by the house) for its wall swatch; "" keeps the kit's own. */
+  paints?: Partial<Record<KitSetId, string[]>>;
+  /** Water tanks (kits.ts WATER_TOWER) on the flat roofs of these sets'
+   *  buildings, each with this chance (seeded by the building). */
+  tanks?: { sets: KitSetId[]; chance: number };
 }
 
 export interface RegionStyle {
@@ -76,6 +82,16 @@ export interface RegionStyle {
    *  broadleaf trees, 3 with palms. */
   avenueWalk?: number;
   landmark: "minaret" | null;
+  /** The main plaza's bell tower (city.ts `belfry`): a square stone tower
+   *  on a lot facing the plaza. Walls, trim (plinth, string courses,
+   *  cornice), spire and clock colours; its width, the height of the
+   *  shaft's top and the spire's height (m). */
+  belfry?: { walls: string; trim: string; spire: string; clock: string; width: number; shaft: number; spireHeight: number };
+  /** Half-size of the built area, suburbs included (m; default 2600). The
+   *  terrain is flat under it and rises into the land beyond (terrain.ts),
+   *  so a village keeps its hills close. At least the cars' avenue reach
+   *  (traffic.ts AVENUE_REACH, 1500 m) plus a block. */
+  outerHalf?: number;
   /** 0..1: how much the horizon takes on the ground colour (dust). */
   haze: number;
   /** Core buildings from CC0 kits instead of boxes (the suburbs stay boxes). */
@@ -96,7 +112,9 @@ export const REGION_STYLES: Record<RegionStyleId, RegionStyle> = {
     floors: [5, 7],
     floorHeight: 3.3,
     roof: "mansard",
-    walls: ["#e9dcc0", "#e3d3b4", "#efe4cc", "#dccaa6", "#e6d8bd", "#d9c7a8"],
+    // Stone and painted render: cream and limestone, ochre, rose, apricot,
+    // pale yellow, sage and powder blue (each building draws one).
+    walls: ["#efe4cc", "#e3d3b4", "#dccaa6", "#ecd29a", "#e9c2b2", "#e3a98c", "#f0e0a2", "#c9d3b2", "#c3d1da", "#e8c9a0"],
     roofColors: ["#7d8a96", "#6f7c88", "#87929c"],
     sidewalkColor: "#c9c1b2",
     roadColor: "#62656b",
@@ -104,6 +122,8 @@ export const REGION_STYLES: Record<RegionStyleId, RegionStyle> = {
     windows: { cell: 3.1, w: 0.42, h: 0.62, glass: "#2b3440" },
     trees: { kind: "broadleaf", avenueSpacing: 9, parkChance: 0.07 },
     landmark: null,
+    // A Romanesque stone tower with a slate spire, over the six-storey blocks.
+    belfry: { walls: "#ddd0b4", trim: "#c4b596", spire: "#5d6875", clock: "#f4efe2", width: 9, shaft: 34, spireHeight: 14 },
     haze: 0.1,
   },
   "arab-desert-city": {
@@ -143,7 +163,9 @@ export const REGION_STYLES: Record<RegionStyleId, RegionStyle> = {
     floors: [2, 3],
     floorHeight: 3.2,
     roof: "flat",
-    walls: ["#efe6d2", "#e8d9bc", "#d9b38c", "#f2e2c4", "#e4cfa8"],
+    // Painted houses, as in Colmar's Petite Venise: yellow, apricot, coral,
+    // sky blue, mint, pink, lilac and cream.
+    walls: ["#f2d27a", "#eaa97e", "#dc8070", "#9fc4d8", "#a9cf9c", "#ebb8c6", "#c6abd6", "#f0e6d2"],
     roofColors: ["#b0503e", "#9c4a3a", "#c0634a"],
     sidewalkColor: "#c6bba6",
     roadColor: "#6a6863",
@@ -152,9 +174,17 @@ export const REGION_STYLES: Record<RegionStyleId, RegionStyle> = {
     // Small limes, so the trees do not hide the two-to-four-storey houses.
     trees: { kind: "broadleaf", avenueSpacing: 15, parkChance: 0.05, size: 0.68, avenueSides: "north" },
     landmark: null,
+    // The church tower over the market square: cream render, red sandstone
+    // trim and a steep red-tiled spire.
+    belfry: { walls: "#efe3c8", trim: "#c9876b", spire: "#b5523c", clock: "#f7f2e4", width: 7, shaft: 24, spireHeight: 11 },
+    // A small town: the fields and hills begin a block past the cars' reach.
+    outerHalf: 1600,
     haze: 0.08,
     kit: {
       yards: "garden",
+      // Petite Venise: yellow, ochre, apricot, coral, red, sky blue, mint,
+      // pink and cream render; one house in ten keeps the kit's lilac.
+      paints: { "fantasy-town": ["#f1cf6a", "#dcae52", "#f0ac7c", "#e2806a", "#c95f4f", "#93bcdf", "#a3d3a2", "#efb4c6", "#f2e7cc", ""] },
       zones: [
         { within: 330, sets: { "fantasy-town": 1 }, floors: [2, 4], houseWidth: [6, 10], depth: 13 },
         { within: Infinity, sets: { "fantasy-town": 1 }, floors: [2, 3], houseWidth: [6, 11], depth: 13 },
@@ -180,14 +210,22 @@ export const REGION_STYLES: Record<RegionStyleId, RegionStyle> = {
     roadColor: "#4f5257",
     outskirts: ["#7f8a64", "#8a8f6c", "#6f7a58", "#958f6a"],
     windows: { cell: 2.8, w: 0.5, h: 0.55, glass: "#2a3340" },
-    trees: { kind: "broadleaf", avenueSpacing: 16, parkChance: 0.04, size: 0.85 },
+    // A few small trees: big crowns hid the shop fronts in the walking shots.
+    trees: { kind: "broadleaf", avenueSpacing: 32, parkChance: 0.04, size: 0.6 },
     landmark: null,
     haze: 0.12,
     kit: {
       yards: "paved",
+      // The Building Kit's mid-rises in red and brown brick, sandstone,
+      // limestone and cream stone (its walls are a slate lilac).
+      paints: { "building-kit": ["#9c4a36", "#b05a40", "#8a3e31", "#a8603f", "#7c4636", "#c9a77c", "#d6c9ad", "#cfc4ae", "#b8ad98", "#e3d9c3"] },
+      // Wooden water tanks on most walk-ups and mid-rises, as in the reference aerial.
+      tanks: { sets: ["walkups", "building-kit"], chance: 0.6 },
+      // Brick walk-ups with shop fronts between the towers and the stone
+      // mid-rises (the Kenney shop models were pastel).
       zones: [
-        { within: 330, sets: { "commercial-towers": 0.5, commercial: 0.5 }, floors: [5, 8], houseWidth: [12, 18], depth: 30, infill: "building-kit" },
-        { within: 520, sets: { commercial: 0.5, "building-kit": 0.5 }, floors: [3, 6], houseWidth: [10, 16], depth: 24, infill: "building-kit" },
+        { within: 330, sets: { "commercial-towers": 0.45, walkups: 0.55 }, floors: [5, 8], houseWidth: [12, 18], depth: 30, infill: "building-kit" },
+        { within: 520, sets: { walkups: 0.55, "building-kit": 0.45 }, floors: [3, 6], houseWidth: [10, 16], depth: 24, infill: "building-kit" },
         { within: Infinity, sets: { "suburban-houses": 0.65, "building-kit": 0.35 }, floors: [2, 4], houseWidth: [10, 14], depth: 22, yards: "garden" },
       ],
     },
@@ -257,6 +295,44 @@ export function utcOffsetFor(tz: TimeZoneRule, date: string, time: string): numb
 /*  Places                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A place's own colours on its region's look (resolvePlace lays them over
+ * the region style): the layout, streets, kits, traffic and sound stay the
+ * region's, keyed by its id, so Rome is an old town in Roman ochre and
+ * terracotta, not a new style.
+ */
+export interface PlaceLook {
+  walls?: string[];
+  roofColors?: string[];
+  sidewalkColor?: string;
+  /** The bell tower's colours and shape (the region's, where left out). */
+  belfry?: Partial<NonNullable<RegionStyle["belfry"]>>;
+  /** Kit styles: paints per modular set (KitStyle.paints). */
+  paints?: KitStyle["paints"];
+  /** Kit styles: water tanks on the flat roofs; null for none. */
+  tanks?: KitStyle["tanks"] | null;
+}
+
+/**
+ * Water round a place where the surface map is too coarse to draw it
+ * (terrain.ts, an Ocean surface): bays and straits, land with hills
+ * everywhere else. Each body is placed at a real latitude and longitude,
+ * pulled in along its bearing to LANDMARK_MAX_DISTANCE as a landmark is
+ * (placeOffset), so a strait still runs under the bridge that spans it.
+ */
+export interface PlaceWater {
+  /** Bays: discs of open water, radius in metres. */
+  bays: { at: [number, number]; r: number }[];
+  /** Straits: bands of water `width` metres wide along a line through `at`
+   *  on a compass `bearing`, from `from` to `to` metres along it (negative:
+   *  behind the point). `bluff`: within `reach` metres of `at` along the
+   *  band, both banks stand at least this high (a bridge's ends land on
+   *  them, as the Golden Gate's on its headlands). */
+  straits: { at: [number, number]; bearing: number; width: number; from: number; to: number; bluff?: { height: number; reach: number } }[];
+  /** The land's hill height, metres (the Ocean surface's own is 70). */
+  hills: number;
+}
+
 export interface PlaceDef {
   id: string;
   name: string;
@@ -272,8 +348,30 @@ export interface PlaceDef {
    *  (e.g. Cairo sits on a green river strip inside desert). */
   terrain?: Surface;
   /** Famous landmarks at their real positions: a catalog asset id
-   *  (src/world/data/world-catalog.json) and where it stands. */
-  landmarks?: { asset: string; lat: number; lon: number; rotY?: number }[];
+   *  (src/world/data/world-catalog.json) and where it stands; `clear`: the
+   *  open ground round its footprint, metres (default 40). */
+  landmarks?: { asset: string; lat: number; lon: number; rotY?: number; clear?: number }[];
+  /** The place's own colours on its region's look. */
+  look?: PlaceLook;
+  /** Bays and straits the surface map can't draw (an Ocean terrain). */
+  water?: PlaceWater;
+}
+
+/** Landmarks (and a place's bays and straits) farther than this from the
+ *  city's centre are pulled in along their true bearing, so they stay
+ *  visible through the haze and still sit in the right direction. */
+export const LANDMARK_MAX_DISTANCE = 7000;
+
+/** Where a point near a place lies in its ground frame (x east, z south,
+ *  metres), pulled in along its bearing to LANDMARK_MAX_DISTANCE. */
+export function placeOffset(place: Pick<PlaceDef, "lat" | "lon">, lat: number, lon: number): [number, number] {
+  let [x, z] = groundOffset(place.lat, place.lon, lat, lon);
+  const dist = Math.hypot(x, z);
+  if (dist > LANDMARK_MAX_DISTANCE) {
+    x *= LANDMARK_MAX_DISTANCE / dist;
+    z *= LANDMARK_MAX_DISTANCE / dist;
+  }
+  return [x, z];
 }
 
 /** The places this build can show. The AI chooses from this list. */
@@ -303,6 +401,65 @@ export const PLACES: Record<string, PlaceDef> = {
       { asset: "landmark-statue-of-liberty", lat: 40.6892, lon: -74.0445 },
     ],
   },
+  rome: {
+    // Centred on Piazza Venezia; the Colosseum stands 1.1 km to the
+    // south-east, at the end of the Via dei Fori Imperiali, its long axis
+    // roughly east-west, in open ground (its piazza, the Forum and the
+    // Palatine to the west, the Colle Oppio park to the north-east). Ochre
+    // and terracotta render under tiled roofs, and a brick campanile with a
+    // low tiled roof by the main square.
+    id: "rome", name: "Rome", country: "Italy", lat: 41.896, lon: 12.4825, style: "european-old-town", cloudiness: 0.3,
+    tz: { std: 1, dst: "eu" },
+    landmarks: [{ asset: "landmark-colosseum", lat: 41.8902, lon: 12.4922, rotY: Math.PI / 2, clear: 250 }],
+    look: {
+      walls: ["#dca35e", "#c97d4f", "#bb6649", "#e7c072", "#e9b88e", "#ebe0c8", "#d99c86", "#b95e4b", "#e2cfa4", "#d8b27c"],
+      roofColors: ["#b3603f", "#a6553a", "#c06d4a"],
+      sidewalkColor: "#cdbfa6",
+      belfry: { walls: "#b8724f", trim: "#e6dcc4", spire: "#a95c3e", clock: "#f4efe2", width: 8, shaft: 34, spireHeight: 6 },
+    },
+  },
+  london: {
+    // Centred on Trafalgar Square; Big Ben's clock tower stands 0.8 km to
+    // the south. London stock and red brick, Portland stone and white
+    // stucco under slate, and a stone church tower with a lead spire.
+    // Summer time follows the EU's rule (01:00 UTC, the last Sundays of
+    // March and October). The river is not drawn: the city's flat square
+    // has no river through it.
+    id: "london", name: "London", country: "UK", lat: 51.508, lon: -0.1281, style: "european-old-town", cloudiness: 0.65,
+    tz: { std: 0, dst: "eu" },
+    landmarks: [{ asset: "landmark-big-ben", lat: 51.5007, lon: -0.1246 }],
+    look: {
+      walls: ["#b89b6c", "#c9ae7d", "#9c4d3d", "#a8603f", "#7e5b49", "#e3ddcf", "#ece7dc", "#e6dcc3", "#bfa47a", "#8f4a3a"],
+      roofColors: ["#5b636c", "#4f5760", "#6a727a"],
+      sidewalkColor: "#bdb8ae",
+      belfry: { walls: "#e3ddcf", trim: "#cdc6b6", spire: "#59626b", clock: "#f4efe2", width: 9, shaft: 30, spireHeight: 20 },
+    },
+  },
+  "san-francisco": {
+    // Centred on Union Square. The bay lies north and east of the city and
+    // the Golden Gate strait runs west under the bridge (7.2 km to the
+    // west-north-west, pulled in to 7 km), the Marin headlands across it;
+    // the surface map's quarter-degree cells only say "ocean" here. White,
+    // cream and buff stone mid-rises (laid as ashlar, kitPaint.ts) between
+    // the brick walk-ups, pastel houses further out; no water tanks.
+    id: "san-francisco", name: "San Francisco", country: "USA", lat: 37.788, lon: -122.4075, style: "american-downtown", cloudiness: 0.35, terrain: Surface.Ocean,
+    tz: { std: -8, dst: "us" },
+    // Turned half round: the model's grass block (left out, landmarks.ts) is its north end.
+    landmarks: [{ asset: "landmark-golden-gate-bridge", lat: 37.8199, lon: -122.4783, rotY: Math.PI + 0.087 }],
+    water: {
+      bays: [
+        { at: [37.84, -122.38], r: 3600 },
+        { at: [37.785, -122.35], r: 2300 },
+      ],
+      straits: [{ at: [37.8199, -122.4783], bearing: 270, width: 1100, from: -7600, to: 4500, bluff: { height: 90, reach: 900 } }],
+      hills: 160,
+    },
+    look: {
+      walls: ["#efe8da", "#e6d6b8", "#d9c39a", "#c9d6c4", "#bfcfdc", "#e5c3bd", "#f3efe6", "#d4cbbd"],
+      paints: { "building-kit": ["#f2eee4", "#e9dcc0", "#e3d3bd", "#d9c7a8", "#cfc6b8", "#f6f1e7", "#e6dcc8", "#c9bfae", "#ddd5c6", "#efe3cf"] },
+      tanks: null,
+    },
+  },
 };
 
 export interface Moment {
@@ -327,6 +484,27 @@ export interface ResolvedPlace {
   style: RegionStyle;
 }
 
+const PLACE_STYLES = new Map<string, RegionStyle>();
+
+/**
+ * A place's region style with its own look laid over (PlaceLook): one object
+ * per place, so the stage's memos keep their keys. A place without a look
+ * gets its region's style object itself.
+ */
+export function placeStyle(place: PlaceDef): RegionStyle {
+  const base = REGION_STYLES[place.style];
+  const look = place.look;
+  if (!look) return base;
+  let style = PLACE_STYLES.get(place.id);
+  if (!style) {
+    const { paints, tanks, belfry, ...colours } = look;
+    const kit = base.kit && (paints !== undefined || tanks !== undefined) ? { ...base.kit, ...(paints !== undefined ? { paints } : {}), tanks: tanks === null ? undefined : (tanks ?? base.kit.tanks) } : base.kit;
+    style = { ...base, ...colours, belfry: base.belfry && belfry ? { ...base.belfry, ...belfry } : base.belfry, kit };
+    PLACE_STYLES.set(place.id, style);
+  }
+  return style;
+}
+
 export function resolvePlace(placeId: string, moment: Moment): ResolvedPlace {
   const place = PLACES[placeId];
   if (!place) {
@@ -343,6 +521,6 @@ export function resolvePlace(placeId: string, moment: Moment): ResolvedPlace {
     season: seasonAt(place.lat, month),
     month,
     surface: place.terrain ?? surfaceAt(place.lat, place.lon),
-    style: REGION_STYLES[place.style],
+    style: placeStyle(place),
   };
 }

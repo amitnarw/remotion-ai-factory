@@ -2,9 +2,12 @@
  * src/world/terrain.ts
  *
  * Seeded low-poly terrain around a place: exactly flat (y = 0) on the square
- * the city stands on, then rising into rolling hills, mountains, dunes,
- * tundra swells or ice depending on the surface, coloured for the season and
- * latitude (fields, woods, rock, snow line).
+ * the city stands on, then a level foot of noisy width (so the pad blends
+ * into the land and a flood's shore follows its contours, not the square),
+ * then rising into rolling hills, mountains, dunes, tundra swells or ice
+ * depending on the surface, coloured for the season and latitude (fields,
+ * woods, rock, snow line). Hills rise close round the towns, but low along
+ * a valley that the city's avenue (z = 0) leaves by.
  *
  * Mesh: square rings of cells around the flat square, the cell size doubling
  * from one detail level to the next (fine near the city, coarse at the
@@ -17,9 +20,14 @@
  * no lookup tables built at random), so the same seed gives the same
  * terrain on every machine and every render tab.
  * Ground frame: metres, x = east, y = up, z = south.
+ *
+ * A place may name its own bays and straits (places.ts PlaceDef.water, read
+ * by its id, the seed): on an Ocean surface they replace the seeded coast,
+ * so San Francisco has its bay and the Golden Gate under its bridge.
  */
 import * as THREE from "three";
 import type { Season } from "./geo";
+import { PLACES, placeOffset, type PlaceDef } from "./places";
 import { Surface } from "./surface";
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +241,7 @@ const KINDS: GroundKind[] = ["flat", "field", "meadow", "forest", "rock", "snow"
 const K = Object.fromEntries(KINDS.map((k, i) => [k, i])) as Record<GroundKind, number>;
 
 export interface TerrainOptions {
+  /** The place's id: a place's own bays and straits (PlaceDef.water) are found by it. */
   seed: string;
   surface: Surface;
   season: Season;
@@ -320,6 +329,38 @@ function planLevels(flatHalf: number, half: number, s0: number, rings: number, f
 }
 
 /* ------------------------------------------------------------------ */
+/*  A place's own water                                                 */
+/* ------------------------------------------------------------------ */
+
+interface Strait {
+  x: number;
+  z: number;
+  /** Unit vectors along the band and across it (ground frame). */
+  ux: number;
+  uz: number;
+  half: number;
+  from: number;
+  to: number;
+  bluff?: { height: number; reach: number };
+}
+
+/** A place's bays and straits in its ground frame (each placed as a landmark is). */
+export function placeWater(place: PlaceDef): { bays: { x: number; z: number; r: number }[]; straits: Strait[]; hills: number } | null {
+  const w = place.water;
+  if (!w) return null;
+  const bays = w.bays.map((b) => {
+    const [x, z] = placeOffset(place, b.at[0], b.at[1]);
+    return { x, z, r: b.r };
+  });
+  const straits = w.straits.map((st): Strait => {
+    const [x, z] = placeOffset(place, st.at[0], st.at[1]);
+    const a = (st.bearing * Math.PI) / 180;
+    return { x, z, ux: Math.sin(a), uz: -Math.cos(a), half: st.width / 2, from: st.from, to: st.to, ...(st.bluff ? { bluff: st.bluff } : {}) };
+  });
+  return { bays, straits, hills: w.hills };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Builder                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -365,6 +406,8 @@ export function buildTerrain(opts: TerrainOptions): Terrain {
   const { flatEdge, levels, extent } = plan;
 
   const sd = hashString(`terrain:${opts.seed}`);
+  const place = PLACES[opts.seed];
+  const water = surface === Surface.Ocean && place ? placeWater(place) : null;
   const snowLine = snowLineFor(lat, season, surface);
   const treeLine = treeLineFor(lat, surface);
   const groundSnow = groundSnowFor(lat, season);
@@ -388,8 +431,12 @@ export function buildTerrain(opts: TerrainOptions): Terrain {
   const angle = unit(hash2(1, 2, sd)) * Math.PI * 2;
   const dirX = Math.cos(angle);
   const dirZ = Math.sin(angle);
-  const rampWidth = surface === Surface.Mountain ? 2600 : surface === Surface.Desert ? 700 : 1400;
-  const rampJitter = surface === Surface.Desert ? 300 : 700;
+  const rampWidth = surface === Surface.Mountain ? 2600 : surface === Surface.Desert ? 700 : surface === Surface.Land ? 1000 : 1400;
+  // The level foot between the flat square and the rise: at least foot0
+  // wide, up to foot0 + footSpan where the noise says, so the land's lowest
+  // contours (a flood's shore) wander instead of following the square.
+  // Desert: a broad sand plain before the dunes, in bays and spurs.
+  const [foot0, footSpan] = surface === Surface.Desert ? [120, 2200] : surface === Surface.Mountain ? [100, 600] : [60, 450];
 
   const hills = (x: number, z: number, cell: number, amp: number) =>
     amp * Math.pow(0.5 + 0.5 * fbm(x, z, 2400, 4, sd + 1, cell), 1.5) + amp * 0.12 * fbm(x, z, 520, 2, sd + 2, cell);
@@ -415,6 +462,36 @@ export function buildTerrain(opts: TerrainOptions): Terrain {
     );
   };
 
+  /** A place's own water (PlaceDef.water): how far a point lies inside its
+   *  bays and straits (m, negative outside), the shores a little ragged. */
+  const inWater = (x: number, z: number): number => {
+    let p = -Infinity;
+    for (const b of water!.bays) p = Math.max(p, b.r * (1 + 0.1 * noise2(x / 1300, z / 1300, sd + 40)) - Math.hypot(x - b.x, z - b.z));
+    for (const st of water!.straits) {
+      const t = (x - st.x) * st.ux + (z - st.z) * st.uz;
+      const q = -(x - st.x) * st.uz + (z - st.z) * st.ux;
+      const past = t < st.from ? st.from - t : t > st.to ? t - st.to : 0;
+      p = Math.max(p, st.half * (1 + 0.08 * noise2(t / 1100, 0.5, sd + 41)) - Math.hypot(q, past));
+    }
+    return p;
+  };
+  /** The land round a place's own water: hills, steep banks (90 m from
+   *  the shore to the hills' height), a strait's bluffs near its bridge,
+   *  and below the water past the shore. */
+  const waterShape = (x: number, z: number, cell: number): number => {
+    const p = inWater(x, z);
+    if (p > 0) return -1 - p * 0.15;
+    let land = hills(x, z, cell, water!.hills);
+    for (const st of water!.straits) {
+      if (!st.bluff) continue;
+      const t = (x - st.x) * st.ux + (z - st.z) * st.uz;
+      const q = Math.abs(-(x - st.x) * st.uz + (z - st.z) * st.ux);
+      const near = (1 - smoothstep(st.bluff.reach * 0.6, st.bluff.reach, Math.abs(t))) * (1 - smoothstep(st.half + 300, st.half + 900, q));
+      land = Math.max(land, st.bluff.height * near);
+    }
+    return land * smoothstep(0, 90, -p);
+  };
+
   /** Raw land height (may be negative: below water) before the flat-square
    *  ramp and the edge fade. */
   const shape = (x: number, z: number, d: number): number => {
@@ -432,6 +509,7 @@ export function buildTerrain(opts: TerrainOptions): Terrain {
       case Surface.Ice:
         return 260 * Math.pow(0.5 + 0.5 * fbm(x, z, 3600, 3, sd + 10, cell), 1.5) + 35 * ridged(x, z, 1000, 2, sd + 11, cell);
       case Surface.Ocean: {
+        if (water) return waterShape(x, z, cell);
         // A coast on one side: land falls away below the water past it.
         const s = x * dirX + z * dirZ;
         const coast = flatEdge + 250 + 900 * (0.5 + 0.5 * noise2(x / 2600, z / 2600, sd + 12));
@@ -444,19 +522,30 @@ export function buildTerrain(opts: TerrainOptions): Terrain {
         return hills(x, z, cell, 80) - Math.max(0, r - Math.hypot(x - cx, z - cz)) * 0.12;
       }
       default: {
-        const grow = 0.45 + 0.55 * smoothstep(flatEdge, extent * 0.75, d);
-        return hills(x, z, cell, 260 * grow);
+        // Hills close behind the town, kept low along the valley the avenue
+        // leaves by (a far landmark at its end stands low).
+        const grow = 0.75 + 0.25 * smoothstep(flatEdge, extent * 0.75, d);
+        const meander = 260 * noise2(x / 2600, 0.5, sd + 30);
+        const valley = 0.15 + 0.85 * smoothstep(380, 1150, Math.abs(z - meander));
+        return hills(x, z, cell, 320 * grow * valley);
       }
     }
   };
 
-  /** Weight of the land shape: 0 on the flat square, ramping up past its
-   *  (noisy) edge, back to 0 at the outer edge so the terrain meets the
-   *  far ground without a cliff. */
+  /** The foot's width at a point, foot0 .. foot0 + footSpan (three octaves,
+   *  so its edge is ragged at every scale). */
+  const footAt = (x: number, z: number) =>
+    foot0 + footSpan * clamp01(0.5 + 0.6 * (0.6 * noise2(x / 1700, z / 1700, sd + 14) + 0.28 * noise2(x / 640, z / 640, sd + 31) + 0.12 * noise2(x / 240, z / 240, sd + 32)));
+
+  /** Weight of the land shape: 0 on the flat square and the foot past it,
+   *  ramping up with the distance from the square (rounded at its corners),
+   *  back to 0 at the outer edge so the terrain meets the far ground
+   *  without a cliff. */
   const ramp = (x: number, z: number, d: number) => {
     if (d <= flatEdge) return 0;
-    const start = flatEdge + rampJitter * clamp01(0.5 + 0.5 * noise2(x / 1700, z / 1700, sd + 14));
-    return smoothstep(start, start + rampWidth, d) * (1 - smoothstep(extent * 0.84, extent, d));
+    const q = Math.hypot(Math.max(0, Math.abs(x) - flatEdge), Math.max(0, Math.abs(z) - flatEdge));
+    const start = footAt(x, z);
+    return smoothstep(start, start + rampWidth, q) * (1 - smoothstep(extent * 0.84, extent, d));
   };
 
   const heightField = (x: number, z: number): number => {

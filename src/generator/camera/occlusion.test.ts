@@ -137,3 +137,32 @@ test("bounds that pull a wide shot into its subject: another side or height inst
   const d = Math.hypot(pose.position[0], pose.position[1] - 0.6, pose.position[2]);
   assert.ok(d > 2.5 * 2, `the lens stands ${d.toFixed(2)} m from the subject`);
 });
+
+test("an area subject (a plaza spot's reach): a lens within its radius or pulled in by its bounds is no fault, a blocker on the line still is", () => {
+  // a plaza spot as world.ts makes it: 9 m of reach round a point on the paving
+  const spot: Subject = { center: [0, 1.68, 0], radius: 9, height: 4, facing: 0, ground: 0.18, bounds: { minX: -6, maxX: 6, minZ: -6, maxZ: 6 } };
+  const far: Occluder = { kind: "column", x: 200, z: 200, r: 1, top: 3.5, owner: -1 }; // a stall across the plaza
+  const opts = { aspect: 9 / 16, u: 0.5, seconds: 3, seed: "a" };
+  let climbed = 0;
+  let within = 0;
+  for (const size of ["CU", "MS", "FS", "WS"] as const) for (const side of ["front", "left34"] as const) for (const angle of ["eye", "high"] as const) {
+    const s = shot({ size, side, angle, place: "center" });
+    const bare = solveShot(s, spot, opts);
+    if (Math.hypot(bare.position[0], bare.position[1] - 1.68, bare.position[2]) < 9) within++;
+    // as a body, any blocker sends many of these lenses up (the fountain MS went 9 m up)
+    if (solveShot(s, { ...spot, blockers: [far] }, opts).position[1] > bare.position[1] + 2) climbed++;
+    assert.deepEqual(solveShot(s, { ...spot, area: true, blockers: [far] }, opts), bare, `${size} ${side} ${angle}: an area's lens stays put`);
+  }
+  assert.ok(within >= 12, `${within} of 16 lenses stand within the spot's reach`);
+  assert.ok(climbed >= 6, `${climbed} of 16 body lenses climbed`);
+  // a stall roof on the FS line across the open paving: the area's lens goes round it, at its height
+  const open: Subject = { ...spot, bounds: { minX: -20, maxX: 20, minZ: -20, maxZ: 20 } };
+  const s = shot({ size: "FS", side: "front", place: "center" });
+  const bare = solveShot(s, open, opts);
+  const stall: Occluder = { kind: "column", x: bare.position[0] * 0.55, z: bare.position[2] * 0.55, r: 1.6, top: 3.5, owner: -1 };
+  const aim: Vec3 = [0, 1.68, 0];
+  assert.ok(lineHits([stall], bare.position, aim), "the stall stands on the plain line");
+  const round = solveShot(s, { ...open, area: true, blockers: [stall] }, opts);
+  assert.ok(!lineHits([stall], round.position, aim), `lens at ${round.position.map((v) => v.toFixed(2))}`);
+  assert.ok(Math.abs(round.position[1] - bare.position[1]) < 0.5, "the detour turns, it does not climb");
+});

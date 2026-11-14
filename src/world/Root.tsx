@@ -16,6 +16,7 @@ import { WorldFlight, type WorldFlightProps } from "./WorldFlight";
 import { WorldActors, type WorldActorsProps } from "./WorldActors";
 import { ReactionsPreview, type ReactionsPreviewProps } from "./react/ReactionsPreview";
 import { ReactionsPreviewDark, type DarkPreviewProps } from "./react/darkPreview";
+import { VfxPreview, type VfxPreviewProps } from "./vfx/VfxPreview";
 
 const FPS = 30;
 
@@ -44,6 +45,13 @@ const reactionsMoney: ReactionsPreviewProps = { ...parisPlaza, react: "money" };
 // 1.5 s, the plaza breaks into slabs at the 16x beat), at night (22:30) like
 // the reference's night frames.
 const reactionsCrack: ReactionsPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "22:30" }, react: "crack" };
+
+// The effects (src/world/vfx/, docs/factory/21-vfx-effekseer.md): the six
+// families on the Paris avenue by day and at night; one family alone at the
+// plaza (90 s: a loop's 80th second, alone or in a run).
+const vfxDay: VfxPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "11:00" } };
+const vfxNight: VfxPreviewProps = { place: "paris", moment: { date: "2026-10-23", time: "22:30" } };
+const vfxFamily: VfxPreviewProps = { ...vfxDay, family: "explosion" };
 
 const parisToCairo: WorldFlightProps = {
   from: { place: "paris", moment: { date: "2026-10-23", time: "09:15", utcOffset: 2 } },
@@ -318,6 +326,43 @@ export const WorldRoot: React.FC = () => (
       width={1080}
       height={1920}
       defaultProps={reactionsCrack}
+    />
+    {/* The effects (src/world/vfx/): the six families, then one alone. */}
+    <Composition
+      id="VfxPreview"
+      component={VfxPreview}
+      durationInFrames={8 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1920}
+      defaultProps={vfxDay}
+    />
+    <Composition
+      id="VfxPreviewWide"
+      component={VfxPreview}
+      durationInFrames={8 * FPS}
+      fps={FPS}
+      width={1920}
+      height={1080}
+      defaultProps={vfxDay}
+    />
+    <Composition
+      id="VfxPreviewNight"
+      component={VfxPreview}
+      durationInFrames={8 * FPS}
+      fps={FPS}
+      width={1920}
+      height={1080}
+      defaultProps={vfxNight}
+    />
+    <Composition
+      id="VfxFamily"
+      component={VfxPreview}
+      durationInFrames={90 * FPS}
+      fps={FPS}
+      width={1080}
+      height={1080}
+      defaultProps={vfxFamily}
     />
   </>
 );

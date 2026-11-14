@@ -19,10 +19,16 @@
  * and index) goes out with its building as the blackout wave passes. The
  * colour itself is never used (the output below replaces it). Without
  * instance keys (the far cards' bake, plain meshes) the glow stays on.
+ *
+ * Dusk (atmosphere/dusk.ts): in a scene between day and night the glow
+ * copies take a separate dusk material, whose instances also wait for their
+ * key's turn against the shared uDusk and then fade in over a short ramp
+ * (dkDusk, 0 .. 1). The night material's program stays exactly as it was.
  */
 import * as THREE from "three";
+import { DUSK_GLSL } from "./atmosphere/dusk";
 import { DARK_GLSL } from "./react/dark";
-import { bindDarkWave } from "./react/darkShader";
+import { bindDarkWave, DUSK_UNIFORMS } from "./react/darkShader";
 
 const GLOW_CACHE = new Map<string, THREE.Material>();
 
@@ -68,18 +74,20 @@ function isGlassName(material: THREE.Material): boolean {
  * The additive duplicate's material for a kit part's material, or null
  * when the part carries no window (nothing dark/glass in it to light).
  * Shared per source material and glow strength, so a whole facade built
- * from one atlas costs one glow program.
+ * from one atlas costs one glow program. `dusk`: the copy for a scene
+ * between day and night, shared apart from the night one.
  */
 export function windowGlowMaterialFor(
   source: THREE.Material,
   color: string,
   strength: number,
+  dusk = false,
 ): THREE.MeshBasicMaterial | null {
   const std = source as THREE.MeshStandardMaterial;
   const mapped = std.map !== undefined && std.map !== null;
   const bareGlass = !mapped && isGlassName(source);
   if (!mapped && !bareGlass) return null;
-  const key = `${source.uuid}:${color}:${strength}`;
+  const key = `${source.uuid}:${color}:${strength}${dusk ? ":dusk" : ""}`;
   const hit = GLOW_CACHE.get(key);
   if (hit) return hit as THREE.MeshBasicMaterial;
   const mat = new THREE.MeshBasicMaterial({
@@ -105,6 +113,7 @@ export function windowGlowMaterialFor(
     shader.uniforms.uGlowWarm = { value: warm };
     shader.uniforms.uGlowLevel = { value: strength };
     bindDarkWave(shader.uniforms);
+    if (dusk) shader.uniforms.uDusk = DUSK_UNIFORMS.uDusk;
     if (mapped) {
       const tex = std.map!;
       tex.updateMatrix?.();
@@ -114,6 +123,7 @@ export function windowGlowMaterialFor(
     shader.vertexShader =
       "varying vec2 vGlowUv;\nflat varying float vDarkLit;\n#ifdef USE_GLOWMAP\nuniform mat3 uGlowT;\n#endif\n" +
       DARK_GLSL +
+      (dusk ? DUSK_GLSL : "") +
       shader.vertexShader.replace(
         "#include <uv_vertex>",
         [
@@ -122,9 +132,10 @@ export function windowGlowMaterialFor(
           "  vec3 gUv3 = vec3( uv, 1.0 );",
           "  vGlowUv = ( uGlowT * gUv3 ).xy;",
           "#endif",
-          // The instance's key rides in instanceColor (lights out, react/dark.ts).
+          // The instance's key rides in instanceColor (lights out, react/dark.ts);
+          // at dusk its windows also wait for their turn and fade in (atmosphere/dusk.ts).
           "#ifdef USE_INSTANCING_COLOR",
-          "  vDarkLit = dkLit( instanceColor );",
+          dusk ? "  vDarkLit = dkLit( instanceColor ) * dkDusk( instanceColor.z );" : "  vDarkLit = dkLit( instanceColor );",
           "#else",
           "  vDarkLit = 1.0;",
           "#endif",
@@ -133,6 +144,12 @@ export function windowGlowMaterialFor(
     shader.fragmentShader =
       MASK + shader.fragmentShader.replace("#include <colorspace_fragment>", GLOW_OUTPUT);
   };
+  // Every glow copy shares this onBeforeCompile's source, the default program
+  // key: the dusk copy's shader differs, so it names itself.
+  if (dusk) {
+    const own = mat.customProgramCacheKey.bind(mat);
+    mat.customProgramCacheKey = () => `${own()}|dusk`;
+  }
   GLOW_CACHE.set(key, mat);
   return mat;
 }

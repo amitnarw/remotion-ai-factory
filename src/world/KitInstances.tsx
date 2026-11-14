@@ -15,6 +15,10 @@
  * A model that does not load (the asset packs of `npm run world:assets` not
  * installed, a file missing) is drawn as a stand-in box the catalog's size
  * for that file, with a warning, instead of cancelling the render.
+ *
+ * Painted houses (kitPaint.ts): a kit town's houses may each wear a paint on
+ * their wall swatch, carried by the near pieces' instance colours and the
+ * far cards' vertex colours; a town without paints draws as before.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
@@ -25,7 +29,9 @@ import type { Placement } from "./assembler";
 import { allAssets, type CatalogAsset } from "./catalog";
 import { bakeCardAtlas, farCity, type FarCity } from "./kitFar";
 import { buildingOfPlacement, cardKinds, type CardKind } from "./kitLod";
-import type { KitTownBuilding } from "./kitTown";
+import { masonryFor, paintable, patchKitPaint, patchWalkupMasonry } from "./kitPaint";
+import { kitPaints, type KitTownBuilding } from "./kitTown";
+import { omittedParts } from "./landmarks";
 import { WINDOW_GLOW_COLOR, windowGlowMaterialFor } from "./kitWindows";
 import { kitMoveSlots, writeKitMoves, type KitMoveSlots } from "./react/buildings";
 import { placementKeys } from "./react/dark";
@@ -73,7 +79,7 @@ function textureKey(gltf: GLTF, tex: THREE.Texture | null | undefined, url: stri
   return `${new URL(uri, new URL(url, window.location.href)).href}|${xf}`;
 }
 
-function shareMaterial(gltf: GLTF, mat: THREE.Material, url: string): THREE.Material {
+function shareMaterial(gltf: GLTF, mat: THREE.Material, url: string, apart = ""): THREE.Material {
   const m = mat as THREE.MeshStandardMaterial;
   // Blended glass (Kenney "glass", alpha 0.5) becomes opaque: instanced
   // meshes cannot be depth-sorted per instance, and see-through windows
@@ -101,6 +107,9 @@ function shareMaterial(gltf: GLTF, mat: THREE.Material, url: string): THREE.Mate
     textureKey(gltf, m.roughnessMap, url),
     textureKey(gltf, m.metalnessMap, url),
     textureKey(gltf, m.alphaMap, url),
+    // Materials a file patches for itself (the walk-ups' masonry) are not
+    // shared with the rest of their atlas's kit.
+    apart,
   ].join("|");
   const hit = materialCache.get(key);
   if (hit) {
@@ -119,21 +128,49 @@ export function loadKitModel(file: string): Promise<KitModel> {
   const promise = loader.loadAsync(url).then((gltf) => {
     const root = gltf.scene;
     root.updateMatrixWorld(true);
+    // GLTFLoader makes each material once its textures have decoded, so
+    // their ids (three.js draws opaque meshes in material-id order) follow
+    // decode timing, which differs from tab to tab; coplanar parts drawn in
+    // another order z-fight the other way (the Eiffel Tower's base at night).
+    // Remake the file's materials in its own order (glTF index, then first
+    // use), the same in every tab.
+    const fresh = new Map<THREE.Material, THREE.Material>();
+    const order = (m: THREE.Material) => gltf.parser.associations.get(m)?.materials ?? 1e9;
+    const used: THREE.Material[] = [];
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (!used.includes(m)) used.push(m);
+    });
+    used
+      .map((m, i) => ({ m, i }))
+      .sort((x, y) => order(x.m) - order(y.m) || x.i - y.i)
+      .forEach(({ m }) => fresh.set(m, m.clone()));
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = Array.isArray(mesh.material) ? mesh.material.map((m) => fresh.get(m)!) : fresh.get(mesh.material)!;
+    });
+    for (const m of fresh.keys()) m.dispose();
     const parts: KitPart[] = [];
+    const masonry = masonryFor(file);
+    const apart = masonry === "walkup" ? "walkup" : "";
+    // A landmark's own diorama base (landmarks.ts LANDMARK_BASES) is never drawn.
+    const omit = omittedParts(file);
     root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh || (mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       if (mats.length === 1) {
-        parts.push({ geometry: mesh.geometry, material: shareMaterial(gltf, mats[0], url), matrix: mesh.matrixWorld.clone() });
+        if (omit.includes(mats[0].name)) return;
+        parts.push({ geometry: mesh.geometry, material: shareMaterial(gltf, mats[0], url, apart), matrix: mesh.matrixWorld.clone() });
         return;
       }
       // Multi-material mesh: one part per group.
       for (const g of mesh.geometry.groups) {
+        if (omit.includes(mats[g.materialIndex ?? 0].name)) continue;
         const geo = mesh.geometry.clone();
         geo.clearGroups();
         geo.setDrawRange(g.start, g.count);
-        parts.push({ geometry: geo, material: shareMaterial(gltf, mats[g.materialIndex ?? 0], url), matrix: mesh.matrixWorld.clone() });
+        parts.push({ geometry: geo, material: shareMaterial(gltf, mats[g.materialIndex ?? 0], url, apart), matrix: mesh.matrixWorld.clone() });
       }
     });
     // Self-lit materials (unlit, or a fixed emissive) ignore the lights:
@@ -148,6 +185,13 @@ export function loadKitModel(file: string): Promise<KitModel> {
       patchWaterMarks(p.material);
       patchSnowCover(p.material);
     }
+    // Painted houses: the modular kits' materials, in every scene (without an
+    // instance colour the patch compiles three's own chunk), so every render
+    // tab compiles the same programs whatever it drew before.
+    if (paintable(file)) for (const p of parts) patchKitPaint(p.material, false, masonry === "building-kit");
+    // Brick and stone (kitPaint.ts masonry): the Building Kit's painted
+    // walls (above) and the KayKit walk-ups' wall colours.
+    if (masonry === "walkup") for (const p of parts) patchWalkupMasonry(p.material);
     return { file, parts };
   });
   modelCache.set(file, promise);
@@ -200,7 +244,15 @@ export function placementMatrix(p: Placement, out = new THREE.Matrix4()): THREE.
 export function buildKitInstances(
   placements: readonly Placement[],
   models: ReadonlyMap<string, KitModel>,
-  opts: { castShadow?: boolean; receiveShadow?: boolean; /** Night window glow additive copies. */ windowGlow?: boolean } = {},
+  opts: {
+    castShadow?: boolean;
+    receiveShadow?: boolean;
+    /** Night window glow additive copies. */
+    windowGlow?: boolean;
+    /** A scene between day and night (atmosphere/dusk.ts): the glow copies
+     *  wait for their key's turn against the shared uDusk. */
+    dusk?: boolean;
+  } = {},
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = "kit-instances";
@@ -231,7 +283,7 @@ export function buildKitInstances(
       // the whole glass pane) - see kitWindows.ts. Materials are shared
       // from the glow cache; only the instance buffers are disposed.
       if (opts.windowGlow) {
-        const glowMat = windowGlowMaterialFor(part.material, WINDOW_GLOW_COLOR, 2.4);
+        const glowMat = windowGlowMaterialFor(part.material, WINDOW_GLOW_COLOR, 2.4, opts.dusk);
         if (glowMat) {
           const glow = new THREE.InstancedMesh(part.geometry, glowMat, list.length);
           glow.name = `${file}#glow`;
@@ -267,9 +319,15 @@ export function buildKitNear(
     castShadow?: boolean;
     receiveShadow?: boolean;
     windowGlow?: boolean;
+    /** A scene between day and night (atmosphere/dusk.ts): the glow copies
+     *  wait for their key's turn against the shared uDusk. */
+    dusk?: boolean;
     /** Lights out: each placement's key, 3 numbers (react/dark.ts
-     *  placementKeys; default: by grid cell). */
+     *  placementKeys; default: by grid cell). Dusk reads the same keys. */
     darkKeys?: Float32Array;
+    /** Each placement's paint, 3 numbers (kitTown.ts kitPaints; a negative
+     *  red is unpainted): the paintable parts carry it as instance colour. */
+    paints?: Float32Array | null;
   } = {},
 ): { group: THREE.Group; fill(near: Uint8Array): void; move(slotOf: Int32Array, lift: Float32Array): void } {
   const group = new THREE.Group();
@@ -286,6 +344,8 @@ export function buildKitNear(
     list: number[];
     matrices: Float32Array;
     keys: Float32Array | null;
+    /** The instances' paints, in the matrices' order (null: none painted). */
+    paint: Float32Array | null;
     /** The moving instances after the last fill, for one lift slot table (react/buildings.ts kitMoveSlots). */
     moves?: { slotOf: Int32Array; slots: KitMoveSlots } | null;
   }[] = [];
@@ -303,7 +363,16 @@ export function buildKitNear(
       mesh.receiveShadow = opts.receiveShadow ?? true;
       group.add(mesh);
       const meshes = [mesh];
-      const glowMat = opts.windowGlow ? windowGlowMaterialFor(part.material, WINDOW_GLOW_COLOR, 2.4) : null;
+      // Painted houses: only a part that holds a painted placement takes the
+      // instance colour (a different program); the others draw as before.
+      const paints = opts.paints;
+      let paint: Float32Array | null = null;
+      if (paints && paintable(file) && list.some((pi) => paints[pi * 3] >= 0)) {
+        paint = new Float32Array(list.length * 3);
+        list.forEach((pi, i) => paint!.set(paints.subarray(pi * 3, pi * 3 + 3), i * 3));
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
+      }
+      const glowMat = opts.windowGlow ? windowGlowMaterialFor(part.material, WINDOW_GLOW_COLOR, 2.4, opts.dusk) : null;
       let keys: Float32Array | null = null;
       if (glowMat) {
         const glow = new THREE.InstancedMesh(part.geometry, glowMat, list.length);
@@ -316,23 +385,26 @@ export function buildKitNear(
         group.add(glow);
         meshes.push(glow);
       }
-      sets.push({ meshes, list, matrices, keys });
+      sets.push({ meshes, list, matrices, keys, paint });
     }
   }
   let filled: Uint8Array | null = null;
   const fill = (near: Uint8Array) => {
     filled = near.slice();
     for (const set of sets) set.moves = null;
-    for (const { meshes, list, matrices, keys } of sets) {
+    for (const { meshes, list, matrices, keys, paint } of sets) {
       const out = meshes[0].instanceMatrix.array as Float32Array;
-      // The glow copy's keys follow its instances (same order as the matrices).
+      // The glow copy's keys follow its instances (same order as the matrices),
+      // and so do the paints.
       const outKeys = keys ? (meshes[1].instanceColor!.array as Float32Array) : null;
+      const outPaint = paint ? (meshes[0].instanceColor!.array as Float32Array) : null;
       let k = 0;
       list.forEach((pi, i) => {
         const b = buildingOf[pi];
         if (b >= 0 && !near[b]) return;
         out.set(matrices.subarray(i * 16, i * 16 + 16), k * 16);
         if (outKeys) outKeys.set(keys!.subarray(i * 3, i * 3 + 3), k * 3);
+        if (outPaint) outPaint.set(paint!.subarray(i * 3, i * 3 + 3), k * 3);
         k++;
       });
       for (const mesh of meshes) {
@@ -399,6 +471,7 @@ export function KitInstances({
   castShadow = true,
   receiveShadow = true,
   windowGlow = false,
+  dusk = false,
   lod,
   lift,
   onReady,
@@ -408,6 +481,10 @@ export function KitInstances({
   receiveShadow?: boolean;
   /** Night window glow: additive copies of the window-bearing parts. */
   windowGlow?: boolean;
+  /** The city lighting up (atmosphere/dusk.ts, a scene strictly between day
+   *  and night): with the window glow, each building's glow, near and far,
+   *  waits for its turn against the shared uDusk (GroundWorld writes it). */
+  dusk?: boolean;
   /** Distance levels of detail (kitLod.ts): `placements` is a kit town
    *  (kitTown.ts) whose buildings are drawn from their kit pieces where
    *  `near` is 1 and as baked far cards where it is 0. `near` may change
@@ -452,17 +529,20 @@ export function KitInstances({
 
   const built = useMemo((): { group: THREE.Group; lod: KitLodScene | null } | null => {
     if (!loaded || loaded.key !== filesKey) return null;
-    if (!lodBuildings) return { group: buildKitInstances(placements, loaded.models, { castShadow, receiveShadow, windowGlow }), lod: null };
+    if (!lodBuildings) return { group: buildKitInstances(placements, loaded.models, { castShadow, receiveShadow, windowGlow, dusk }), lod: null };
     // Near: every placement has room, the near buildings' are drawn. Far:
     // the cards, from pictures of these very models (baked now, once).
-    // Lights out: a building's windows go out together (react/dark.ts).
+    // Lights out: a building's windows go out together (react/dark.ts);
+    // at dusk they come on together, by the same key.
     const darkKeys = windowGlow ? placementKeys(placements, lodBuildings) : undefined;
-    const near = buildKitNear(placements, loaded.models, buildingOfPlacement(lodBuildings, placements.length), { castShadow, receiveShadow, windowGlow, darkKeys });
+    // Painted houses (kitPaint.ts), near and far alike.
+    const paints = kitPaints(placements, lodBuildings);
+    const near = buildKitNear(placements, loaded.models, buildingOfPlacement(lodBuildings, placements.length), { castShadow, receiveShadow, windowGlow, dusk, darkKeys, paints });
     const metres = new Map<string, number>();
     for (const p of placements) metres.set(p.file, Math.max(metres.get(p.file) ?? 0, p.scale));
     CARD_KINDS ??= cardKinds();
     const atlas = bakeCardAtlas(gl, files, loaded.models, CARD_KINDS, metres, { glow: windowGlow });
-    const far = farCity(placements, lodBuildings, atlas, { castShadow, receiveShadow });
+    const far = farCity(placements, lodBuildings, atlas, { castShadow, receiveShadow, dusk, paints });
     // The far cards take the wet marks and the snow cover too, with a band
     // below each building's top (their side cards stand vertical).
     far.mesh.geometry.setAttribute("aSnowTop", snowCardAttribute(far.cards));
@@ -470,7 +550,7 @@ export function KitInstances({
     patchSnowCards(far.mesh.material as THREE.Material);
     near.group.add(far.mesh);
     return { group: near.group, lod: { fill: near.fill, move: near.move, far } };
-  }, [loaded, filesKey, placements, castShadow, receiveShadow, windowGlow, lodBuildings, gl, files]);
+  }, [loaded, filesKey, placements, castShadow, receiveShadow, windowGlow, dusk, lodBuildings, gl, files]);
   const group = built?.group ?? null;
 
   // The near mask of the frame being drawn, applied just before each draw

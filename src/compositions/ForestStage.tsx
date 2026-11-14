@@ -28,6 +28,7 @@ import { MountainRidge } from "./mountains";
 import { Birds } from "./Birds";
 import { keepMistBase, driftMist } from "./mist";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
+import { useSceneDrawOrder } from "./glb";
 
 /** Per-TOD look for forest. */
 const FOREST_TOD: Record<
@@ -265,7 +266,8 @@ function LightShaft({ active, opacity, dirColor }: {
 
 function ForestMist({ active, night }: { active: boolean; night: boolean }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const positions: number[] = [];
@@ -307,9 +309,10 @@ function ForestMist({ active, night }: { active: boolean; night: boolean }) {
  */
 function ForestCameraRig({ spec }: { spec: ShotSpec }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const { camera } = useThree();
   const panel = spec.statPanel ?? null;
-  const t = frame / 30;
+  const t = frame / fps;
   const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.1 : 1;
   useFrame(() => {
     restoreRigLens(camera);
@@ -335,6 +338,45 @@ export function restoreRigLens(camera: THREE.Camera) {
   cam.near = 0.1;
   cam.far = 1000;
   cam.updateProjectionMatrix();
+}
+
+/** A stage's scene fog: exponential (`density`) or linear (`near`, `far`). */
+export type StageFog = { color: string; density: number } | { color: string; near: number; far: number };
+
+/**
+ * The scene's fog and background, written in the frame callback while a stage
+ * is mounted (null: none) and cleared when it goes. Set once in an effect, a
+ * stage's fog came after ThreeCanvas had drawn the frame (the first frame
+ * after a cut kept the fog of the stage before in a tab that had drawn it,
+ * and had its own in a fresh tab), and it stayed for the stage after.
+ */
+export function useStageFog(fog: StageFog | null, background: string | null = null) {
+  const scene = useThree((s) => s.scene);
+  useEffect(
+    () => () => {
+      scene.fog = null;
+      scene.background = null;
+    },
+    [scene],
+  );
+  useFrame(() => {
+    if (!fog) scene.fog = null;
+    else if ("density" in fog) {
+      if (!(scene.fog instanceof THREE.FogExp2)) scene.fog = new THREE.FogExp2(fog.color, fog.density);
+      scene.fog.color.set(fog.color);
+      scene.fog.density = fog.density;
+    } else {
+      if (!(scene.fog instanceof THREE.Fog)) scene.fog = new THREE.Fog(fog.color, fog.near, fog.far);
+      scene.fog.color.set(fog.color);
+      scene.fog.near = fog.near;
+      scene.fog.far = fog.far;
+    }
+    if (background === null) scene.background = null;
+    else {
+      if (!(scene.background instanceof THREE.Color)) scene.background = new THREE.Color();
+      scene.background.set(background);
+    }
+  });
 }
 
 export type ForestTree = { x: number; z: number; scale: number; variant: "pine" | "oak" | "birch" | "maple" | "dead"; rot: number };
@@ -759,18 +801,17 @@ export function forestAnchors(layout: ForestLayout, aspect: number): Anchors {
 }
 
 export function ForestStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const active = scene ?? spec.scenes[0];
-  const t = frame / 30;
+  const t = frame / fps;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = FOREST_TOD[tod] ?? FOREST_TOD.afternoon;
   const night = tod === "night";
 
-  const { scene: threeScene } = useThree();
-  useEffect(() => {
-    threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
-  }, [look.fog, look.fogDensity, threeScene]);
+  useStageFog({ color: look.fog, density: look.fogDensity });
 
   // Procedural forest layout
   const layout = useMemo(() => forestLayout(spec.id), [spec.id]);

@@ -41,10 +41,36 @@ const CANDIDATES: Record<ClipKey, string[]> = {
   cheer: ["cheer", "victory", "celebrate", "dance", "clapping", "clap", "yes", "emote_yes", "jump"],
   clap: ["clapping", "clap", "cheer", "yes", "emote_yes"],
   jump: ["jump", "jump_start", "jumping", "running_jump", "runningjump"],
+  // Bullet time's (docs/factory/14-bullet-time.md): a pistol aimed, a shot, a roll.
+  aim: ["idle_gun_pointing", "gun_pointing", "pistol_aim", "aim_pistol", "aiming", "aim", "holding_right_shoot"],
+  shoot: ["gun_shoot", "idle_gun_shoot", "pistol_shoot", "shoot", "holding_right_shoot"],
+  roll: ["roll", "dodge_roll", "roll_forward"],
+  // P6's, from the packs on disk: Quaternius Punch_Right / Man_Punch / Punch,
+  // Kenney attack-melee-right; Quaternius Kick_Right, Kenney attack-kick-right;
+  // Kenney mini crouch; Kenney pick-up. No pack has a climb.
+  punch: ["punch_right", "punch", "attack_melee_right", "punch_left", "attack_melee_left"],
+  kick: ["kick_right", "attack_kick_right", "kick", "kick_left", "attack_kick_left"],
+  crouch: ["crouch_idle", "crouch"],
+  pickup: ["pick_up", "pickup", "pick_up_item"],
 };
 
 /** Clips that are never a plain body action (weapons, vehicles, props). */
 const EXCLUDE = /gun|sword|shoot|pistol|rifle|wheelchair|drive|holding|punch|kick|slash|attack|roll|knife|pan_|chop|assembly/i;
+/** The device's keys may use the gun, shoot, pistol, holding and roll clips
+ *  (EXCLUDE still hides them from every other key). */
+const DEVICE_EXCLUDE = /sword|rifle|wheelchair|drive|punch|kick|slash|attack|knife|pan_|chop|assembly|run_|walk_/i;
+/** Keys mapped only for a plan that uses them (a featured actor's bullet
+ *  time, a fight, a pickup): every other rig maps exactly the clips it always
+ *  did. */
+export const DEVICE_KEYS: ReadonlySet<ClipKey> = new Set(["aim", "shoot", "roll", "punch", "kick", "crouch", "pickup"]);
+/** What each on-demand key may not use, when not EXCLUDE (the bullet time's
+ *  keys: DEVICE_EXCLUDE). A punch may use the punch and melee-attack clips, a
+ *  kick the kick and kick-attack clips. */
+const KEY_EXCLUDE: Partial<Record<ClipKey, RegExp>> = {
+  punch: /gun|sword|shoot|pistol|rifle|wheelchair|drive|holding|kick|slash|roll|knife|pan_|chop|assembly/i,
+  kick: /gun|sword|shoot|pistol|rifle|wheelchair|drive|holding|punch|melee|slash|roll|knife|pan_|chop|assembly/i,
+};
+const BULLET_KEYS: ReadonlySet<ClipKey> = new Set(["aim", "shoot", "roll"]);
 
 export interface ClipMap {
   /** Model clip name per key, where the model has one. */
@@ -53,8 +79,9 @@ export interface ClipMap {
   missing: ClipKey[];
 }
 
-/** Picks a clip per key from a model's clip names. */
-export function mapClips(names: readonly string[]): ClipMap {
+/** Picks a clip per key from a model's clip names. The device's keys
+ *  (DEVICE_KEYS) are mapped only when `keys` (the plan's) has them. */
+export function mapClips(names: readonly string[], keys: readonly ClipKey[] = []): ClipMap {
   const byNorm = new Map<string, string>();
   for (const n of names) {
     const k = normClip(n);
@@ -63,15 +90,21 @@ export function mapClips(names: readonly string[]): ClipMap {
   const clips: Partial<Record<ClipKey, string>> = {};
   const missing: ClipKey[] = [];
   for (const key of Object.keys(CANDIDATES) as ClipKey[]) {
-    const hit = CANDIDATES[key].map((c) => byNorm.get(c)).find((n): n is string => !!n && !EXCLUDE.test(n));
+    const device = DEVICE_KEYS.has(key);
+    if (device && !keys.includes(key)) continue;
+    const exclude = BULLET_KEYS.has(key) ? DEVICE_EXCLUDE : KEY_EXCLUDE[key] ?? EXCLUDE;
+    const hit = CANDIDATES[key].map((c) => byNorm.get(c)).find((n): n is string => !!n && !exclude.test(n));
     if (hit) clips[key] = hit;
     else missing.push(key);
   }
   return { clips, missing };
 }
 
-/** Keys an overlay can stand in for when the model has no clip. */
-export const PROCEDURAL: ReadonlySet<ClipKey> = new Set(["wave", "point", "cheer", "clap", "react", "cower", "jump"]);
+/** Keys an overlay can stand in for when the model has no clip (an aim is
+ *  the point overlay, a shot a procedural recoil, a roll a duck, a crouch the
+ *  duck held, a pickup a bend with the arms reaching down). A punch and a kick
+ *  have none: a model without the clip is not cast for them. */
+export const PROCEDURAL: ReadonlySet<ClipKey> = new Set(["wave", "point", "cheer", "clap", "react", "cower", "jump", "aim", "shoot", "roll", "crouch", "pickup"]);
 
 /**
  * Whether a model can play a plan: every clip key either maps to a clip or
@@ -79,7 +112,7 @@ export const PROCEDURAL: ReadonlySet<ClipKey> = new Set(["wave", "point", "cheer
  * Returns the keys it can't do.
  */
 export function unsupported(names: readonly string[], keys: readonly ClipKey[]): ClipKey[] {
-  const { clips } = mapClips(names);
+  const { clips } = mapClips(names, keys);
   return keys.filter((k) => !clips[k] && !PROCEDURAL.has(k) && !(k === "run" && clips.walk));
 }
 
@@ -89,6 +122,9 @@ export interface BoneNames {
   head?: string;
   neck?: string;
   chest?: string;
+  /** The spine from the hips up (abdomen, torso, chest, as the rig has them):
+   *  what a dodge bends. Fewer than two: no chain (blocky rigs). */
+  spine: string[];
   /** Upper arm, forearm, hand (forearm and hand may be absent: one-bone arms). */
   armR: string[];
   armL: string[];
@@ -117,7 +153,13 @@ export function findBones(names: readonly string[]): BoneNames {
     const hand = first(names, [new RegExp(`^(wrist|palm|hand)${s}$`), new RegExp(`^${word}hand$`), new RegExp(`^hand${word}$`)]);
     return [upper, lower, hand].filter((n): n is string => !!n);
   };
-  return { head, neck, chest, armR: side("r"), armL: side("l") };
+  // The spine chain, bottom up: Quaternius Abdomen/Torso/Chest, Mixamo Spine/Spine1/Spine2.
+  const spine = [
+    first(names, [/^abdomen$/, /^(mixamorig)?spine$/, /^spine0?1$/]),
+    first(names, [/^torso$/, /^(mixamorig)?spine1$/, /^spine0?2$/]),
+    first(names, [/^chest$/, /^upperchest$/, /^(mixamorig)?spine2$/, /^spine0?3$/]),
+  ].filter((n, i, all): n is string => !!n && all.indexOf(n) === i);
+  return { head, neck, chest, spine, armR: side("r"), armL: side("l") };
 }
 
 /** Thigh bones (or blocky legs, which pivot at the hip): their midpoint is the hip joint. */

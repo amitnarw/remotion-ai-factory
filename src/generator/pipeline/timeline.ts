@@ -54,6 +54,24 @@ export interface Timeline {
 const FPS = 30;
 const q = (sec: number) => Math.round(sec * FPS) / FPS;
 
+/**
+ * The video's length before it is fitted to a target: the hook, each beat's
+ * speech with its usual lead-in and tail (or its silent hold), and the end.
+ * The as-written mode sets its target from this, since a user's script is
+ * never cut or sped up.
+ */
+export function naturalLength(input: { beats: WriterBeat[]; lines: PlannedLine[]; format: VideoFormat }): number {
+  const hookLine = input.lines.find((l) => l.beatId === "hook");
+  const hookDur = q(hookLine ? Math.max(TIMING.hookMin, hookLine.dur + 0.25) : TIMING.hookSilent);
+  let total = hookDur + TIMING.endPad;
+  for (const b of input.beats) {
+    const ls = input.lines.filter((l) => l.beatId === b.id);
+    const talk = ls.reduce((s, l) => s + l.dur, 0) + TIMING.gap * Math.max(0, ls.length - 1);
+    total += ls.length > 0 ? Math.max(TIMING.minBeat[input.format], TIMING.lead + talk + TIMING.tail) : TIMING.hold[b.pace];
+  }
+  return total;
+}
+
 export function buildTimeline(input: {
   beats: WriterBeat[];
   lines: PlannedLine[];

@@ -2,12 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { measureGlb, type GlbBounds, type Lot as KitLot } from "./assembler";
+import { gltfBounds, measureGlb, type GlbBounds, type Lot as KitLot } from "./assembler";
 import { generateCity, type CityLayout, type KitBuilding } from "./city";
 import { surfaceAt } from "./earth-grid";
 import { flightAt, TIMING, travelCourse } from "./flight";
 import { bearing, localToUtcMs, seasonAt, subsolarPoint, sunAt } from "./geo";
 import { assetById } from "./catalog";
+import { roadsGeometry } from "./meshes";
 import { KIT_SETS } from "./kits";
 import { kitPlacements } from "./kitTown";
 import { creditsForPlaces, LANDMARK_MAX_DISTANCE, landmarkPlacements, landmarksFor } from "./landmarks";
@@ -75,7 +76,8 @@ test("city: same seed gives the same city; buildings stay off the avenue", () =>
     const b = generateCity(style, opts);
     assert.deepEqual(a, b);
     assert.notDeepEqual(a.buildings.slice(0, 20), generateCity(style, { ...opts, seed: "other" }).buildings.slice(0, 20));
-    assert.ok(a.buildings.length > 1000, `${style.id}: ${a.buildings.length} buildings`);
+    // A village's built area is smaller (style.outerHalf): fewer suburbs.
+    assert.ok(a.buildings.length > (style.outerHalf ? 400 : 1000), `${style.id}: ${a.buildings.length} buildings`);
     assert.ok(a.trees.length > 50, `${style.id}: ${a.trees.length} trees`);
     for (const bl of a.buildings) {
       // How far a rotated footprint reaches along z.
@@ -186,7 +188,9 @@ const boundsCache = new Map<string, GlbBounds>();
 function glbBounds(file: string): GlbBounds {
   let b = boundsCache.get(file);
   if (!b) {
-    b = measureGlb(new Uint8Array(readFileSync(join(process.cwd(), "public", file))));
+    const path = join(process.cwd(), "public", file);
+    // KayKit's models are glTF text (the bounds are in its JSON).
+    b = file.endsWith(".gltf") ? gltfBounds(JSON.parse(readFileSync(path, "utf8"))) : measureGlb(new Uint8Array(readFileSync(path)));
     boundsCache.set(file, b);
   }
   return b;
@@ -288,10 +292,11 @@ test("kit styles: kit buildings fill the core, off the avenue, without overlappi
     assert.ok(placements.length > 20_000, `${p.id}: ${placements.length} placements`);
     for (const pl of placements) {
       assert.ok([pl.x, pl.y, pl.z, pl.rotY, pl.scale].every(Number.isFinite), `${p.id}: bad placement ${JSON.stringify(pl)}`);
-      assert.ok(pl.y >= 0 && pl.y < 120, `${p.id}: ${pl.file} at y=${pl.y}`);
-      // The piece's measured bounds (not its origin: wall tiles sit off-centre)
-      // stay out of the avenue, give or take shutters and eaves.
+      // The piece's measured bounds (not its origin: wall tiles sit off-centre,
+      // KayKit's models stand 0.1 unit up) stay on the ground, below 120 m,
+      // and out of the avenue, give or take shutters and eaves.
       const b = glbBounds(pl.file);
+      assert.ok(pl.y + b.min[1] * pl.scale >= -1e-3 && pl.y < 120, `${p.id}: ${pl.file} at y=${pl.y}`);
       const c = Math.cos(pl.rotY);
       const s = Math.sin(pl.rotY);
       for (const lx of [b.min[0], b.max[0]]) {
@@ -308,7 +313,9 @@ test("kit styles: each zone uses its own sets (towers downtown, houses further o
   const zones = REGION_STYLES["american-downtown"].kit!.zones;
   const city = kitCity("new-york");
   const sets = new Set(city.kitBuildings.map((b) => b.set));
-  for (const id of ["commercial-towers", "commercial", "building-kit", "suburban-houses"] as const) assert.ok(sets.has(id), `new-york uses ${id}`);
+  for (const id of ["commercial-towers", "walkups", "building-kit", "suburban-houses"] as const) assert.ok(sets.has(id), `new-york uses ${id}`);
+  // Brick walk-ups, not the pastel Kenney shops.
+  assert.ok(!sets.has("commercial"), "new-york has no Kenney shop models");
   for (const b of city.kitBuildings) {
     const d = Math.hypot(b.lot.x, b.lot.z);
     if (b.set === "commercial-towers") assert.ok(d < zones[0].within + 40, `tower at ${d.toFixed(0)} m`);
@@ -347,4 +354,17 @@ test("New York landmarks: Empire State Building to the north-east, Statue of Lib
   assert.ok(esb.x > 1500 && esb.x < 1900 && esb.z < -3800 && esb.z > -4100, `ESB at ${esb.x}, ${esb.z}`);
   assert.equal(liberty.assetId, "landmark-statue-of-liberty");
   assert.ok(liberty.x < -3000 && liberty.z > 2400, `Liberty at ${liberty.x}, ${liberty.z}`);
+});
+
+test("roads: an alley's paving lies under the roads it runs onto (no z-fighting), above the sidewalks", () => {
+  const style = REGION_STYLES["arab-desert-city"];
+  const heights = (kind: "alley" | "main") => {
+    const geo = roadsGeometry([{ points: [[0, 0], [20, 0]], width: kind === "alley" ? 4 : 18, kind, closed: false }], style);
+    const pos = geo.getAttribute("position");
+    const ys = new Set<number>();
+    for (let i = 0; i < pos.count; i++) ys.add(Math.round(pos.getY(i) * 1000) / 1000);
+    return [...ys].sort();
+  };
+  assert.deepEqual(heights("main"), [0.08, 0.12], "sidewalk band, asphalt");
+  assert.deepEqual(heights("alley"), [0.08, 0.1], "sidewalk band, paving just under the asphalt");
 });

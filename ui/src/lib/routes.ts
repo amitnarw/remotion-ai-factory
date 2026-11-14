@@ -8,7 +8,8 @@
  *   ?tab=create&step=done&job=<jobId>                         watch, download, edit
  *   ?tab=library                     all videos
  *   ?tab=library&video=<id>          one video
- *   ?tab=settings&section=models|voice|checklist  (&view=providers|roles, &provider=<name>)
+ *   ?tab=assets                      the sources, the build requests, what was acquired
+ *   ?tab=settings&section=models|channels|voice|checklist  (&view=providers|roles, &provider=<name>; &channel=<id>)
  *   ?tab=help
  *   ?tab=editor&film=<id>&from=library|plan(&plan=<jobId>)
  *
@@ -16,13 +17,13 @@
  * ?tab=providers&provider=, ?tab=setup are mapped onto the new screens.
  */
 
-export type Section = "create" | "library" | "settings" | "help" | "editor";
+export type Section = "create" | "library" | "assets" | "settings" | "help" | "editor";
 
 export const SETUP_STEPS = ["idea", "format", "voice", "captions", "summary"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 export type CreateStep = SetupStep | "writing" | "review" | "rendering" | "done";
 
-export const SETTINGS_SECTIONS = ["models", "voice", "checklist"] as const;
+export const SETTINGS_SECTIONS = ["models", "channels", "voice", "checklist"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 const CREATE_STEPS: readonly string[] = [...SETUP_STEPS, "writing", "review", "rendering", "done"];
@@ -77,6 +78,9 @@ export function normalizeQuery(q: URLSearchParams): Params | null {
     case "videos":
       next = { tab: "library", video: q.get("selected") ?? q.get("video") ?? undefined };
       break;
+    case "assets":
+      next = { tab: "assets" };
+      break;
     case "settings": {
       const section = q.get("section");
       const valid = section && (SETTINGS_SECTIONS as readonly string[]).includes(section) ? section : "models";
@@ -85,6 +89,7 @@ export function normalizeQuery(q: URLSearchParams): Params | null {
         section: valid,
         view: valid === "models" ? q.get("view") ?? undefined : undefined,
         provider: valid === "models" ? q.get("provider") ?? undefined : undefined,
+        channel: valid === "channels" ? q.get("channel") ?? undefined : undefined,
       };
       break;
     }
@@ -108,7 +113,7 @@ export function normalizeQuery(q: URLSearchParams): Params | null {
 
 export function sectionOf(q: URLSearchParams): Section {
   const tab = q.get("tab");
-  return tab === "library" || tab === "settings" || tab === "help" || tab === "editor" ? tab : "create";
+  return tab === "library" || tab === "assets" || tab === "settings" || tab === "help" || tab === "editor" ? tab : "create";
 }
 
 /** The step the wizard is on (already normalized). */

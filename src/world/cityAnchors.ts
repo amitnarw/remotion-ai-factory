@@ -25,6 +25,7 @@ export const ANCHOR_VOCAB = [
   "sidewalk-north", "sidewalk-south", "sidewalk-north-east", "sidewalk-north-west",
   "sidewalk-south-east", "sidewalk-south-west",
   "plaza", "plaza-north", "plaza-south", "plaza-east", "plaza-west",
+  "plaza-ring-north", "plaza-ring-south", "plaza-ring-east", "plaza-ring-west",
   "park", "park-east",
   "landmark-front",
 ] as const;
@@ -36,10 +37,15 @@ export function anchorsForPrompt(): string {
     `- avenue: its centre; avenue-east / avenue-west: 20 m either way on the avenue`,
     `- sidewalk-north / -south (and their -east / -west variants): on the pavement`,
     `- plaza (+ compass corners), park (+ park-east): only when the place has one`,
+    `- plaza-ring-north / -south / -east / -west: open paving ${RING} m out from the plaza's fountain, inside the market's clear ring (room to move round someone)`,
     `- landmark-front: only in front of the place's landmark (a minaret today)`,
     `an unknown or absent name places the actor at the city centre (with a warning, so name them deliberately)`,
   ].join("\n");
 }
+
+/** The plaza's ring spots stand this far from its centre (the fountain basin is
+ *  2.9 m, the market keeps 9 m clear: atmosphere/market.ts MARKET_CLEAR_RING). */
+export const RING = 6;
 
 /** [x, z] points. */
 type XZ = [number, number];
@@ -121,6 +127,11 @@ export function cityAnchors(layout: CityLayout, style: RegionStyle): CityAnchors
     spots["plaza-south"] = { pos: [cx, GROUND.plaza, cz + reach] };
     spots["plaza-east"] = { pos: [cx + reach, GROUND.plaza, cz] };
     spots["plaza-west"] = { pos: [cx - reach, GROUND.plaza, cz] };
+    // The clear ring round the fountain, each spot facing out from it.
+    spots["plaza-ring-north"] = { pos: [cx, GROUND.plaza, cz - RING], facing: Math.PI };
+    spots["plaza-ring-south"] = { pos: [cx, GROUND.plaza, cz + RING], facing: 0 };
+    spots["plaza-ring-east"] = { pos: [cx + RING, GROUND.plaza, cz], facing: Math.PI / 2 };
+    spots["plaza-ring-west"] = { pos: [cx - RING, GROUND.plaza, cz], facing: -Math.PI / 2 };
   }
 
   // The parks (largest first), with an eastern point on the first.

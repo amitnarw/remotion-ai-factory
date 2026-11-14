@@ -22,7 +22,10 @@
  *  - Gravity on (the level falls back under the threshold): a ballistic
  *    fall from the height and speed of that moment, then a short bounce
  *    (restitution e: bounce k lasts 2eᵏv/g, the series settles by
- *    2ev/(g(1 − e))). The spin is paced to land the piece the right way up.
+ *    2ev/(g(1 − e))). A fall longer than DROP_LAND_MAX is pulled down
+ *    harder, to land in that time, and bounces as if dropped from the
+ *    height of that long a free fall. The spin is paced to land the piece
+ *    the right way up.
  *
  * Plain numbers only (no three.js), so the tests run in node.
  */
@@ -78,6 +81,23 @@ export const HOP_TURN = 0.9;
 const STEP_WINDOW = 0.45;
 /** Bounce restitution after gravity comes back. */
 export const RESTITUTION = 0.32;
+/**
+ * Gravity on: the longest a dropped piece falls before it touches down,
+ * seconds. A piece higher than a free fall of this long (3.1 m from rest)
+ * comes down under a stronger pull that lands it in this time (from above
+ * 12 m a little later: DROP_SPEED_MAX), and bounces no higher than a piece
+ * dropped from 3.1 m: gravity comes back at once and what was up to 12 m
+ * high is down within 1.5 s (the level's 0.3 s ramp and the release front
+ * come first). Before 2026-11-05 a piece fell freely from up to 20 m (2.5 s)
+ * and bounced 2 m, and the chips drifted down for up to 25 s.
+ */
+export const DROP_LAND_MAX = 0.8;
+/**
+ * ...but a held fall touches down no faster than this, m/s (1 m a frame at
+ * 30 fps, inside the no-jump check): a piece higher than 12 m takes longer
+ * than DROP_LAND_MAX, 2h/v (1.3 s from 20 m).
+ */
+export const DROP_SPEED_MAX = 30;
 /** Bounces slower than this (m/s) are not drawn: the piece has settled. */
 export const BOUNCE_MIN_SPEED = 0.3;
 /** Most bounces drawn. */
@@ -180,35 +200,62 @@ export function weightAt(track: LevelTrack, t: number): number {
 export interface Fall {
   h0: number;
   v0: number;
+  /** The fall's pull, m/s²: G, or more for a fall held to `maxLand`. */
+  g: number;
   /** When it first touches down. */
   land: number;
   /** Speed at touch-down, m/s. */
   vLand: number;
-  /** Each bounce's start and launch speed. */
+  /** Each bounce's start and launch speed (bounces are under G). */
   bounces: { start: number; speed: number }[];
   /** When it is at rest. */
   settle: number;
 }
 
-export function fallPlan(h0: number, v0: number, restitution = RESTITUTION): Fall {
+/**
+ * The time a held fall takes (heldFall): `maxLand`, or longer when landing
+ * that soon would touch down faster than `maxSpeed` (2h/T + v0 under an
+ * even pull).
+ */
+export function heldLand(h: number, v0: number, maxLand: number, maxSpeed: number): number {
+  return Math.max(maxLand, (2 * h) / Math.max(1e-3, maxSpeed - v0));
+}
+
+/**
+ * A fall from h0 moving up at v0, and its bounces. With `maxLand`
+ * (seconds), a fall that would take longer is pulled down harder (an even
+ * pull over G) so that it touches down at maxLand, or later when that would
+ * land faster than `maxSpeed` (heldLand); its first bounce then leaves no
+ * faster than one off a free fall of maxLand from rest (restitution × G ×
+ * maxLand). A fall that takes no longer is exactly the plain one.
+ */
+export function fallPlan(h0: number, v0: number, restitution = RESTITUTION, maxLand = Infinity, maxSpeed = Infinity): Fall {
   const h = Math.max(0, h0);
-  const vLand = Math.sqrt(v0 * v0 + 2 * G * h);
-  const land = Math.max(0, (v0 + vLand) / G);
+  let g = G;
+  let vLand = Math.sqrt(v0 * v0 + 2 * G * h);
+  let land = Math.max(0, (v0 + vLand) / G);
+  let u = restitution * vLand;
+  const held = land > maxLand ? heldLand(h, v0, maxLand, maxSpeed) : Infinity;
+  if (held < land) {
+    g = (2 * (h + v0 * held)) / (held * held);
+    land = held;
+    vLand = g * held - v0;
+    u = Math.min(restitution * vLand, restitution * G * maxLand);
+  }
   const bounces: Fall["bounces"] = [];
   let s = land;
-  let u = restitution * vLand;
   while (u >= BOUNCE_MIN_SPEED && bounces.length < MAX_BOUNCES) {
     bounces.push({ start: s, speed: u });
     s += (2 * u) / G;
     u *= restitution;
   }
-  return { h0: h, v0, land, vLand, bounces, settle: s };
+  return { h0: h, v0, g, land, vLand, bounces, settle: s };
 }
 
 /** Height above rest, s seconds into a fall (never below 0). */
 export function fallHeight(f: Fall, s: number): number {
   if (s <= 0) return f.h0;
-  if (s < f.land) return Math.max(0, f.h0 + f.v0 * s - 0.5 * G * s * s);
+  if (s < f.land) return Math.max(0, f.h0 + f.v0 * s - 0.5 * f.g * s * s);
   for (const b of f.bounces) {
     const sig = s - b.start;
     if (sig < (2 * b.speed) / G) return Math.max(0, b.speed * sig - 0.5 * G * sig * sig);
@@ -285,7 +332,7 @@ export function liftSchedule(track: LevelTrack, seed: LiftSeed): LiftSchedule {
     const eps = 1 / 120;
     const before = rising(track, seed, base, drop - eps);
     const vel = at.map((v, k) => (v - before[k]) / eps);
-    const fall = fallPlan(at[1], Math.max(0, vel[1]));
+    const fall = fallPlan(at[1], Math.max(0, vel[1]), RESTITUTION, DROP_LAND_MAX, DROP_SPEED_MAX);
     // The spin keeps going through the fall at a steady rate chosen so the
     // piece touches down the right way up (a whole number of turns).
     const turn = 2 * Math.PI;

@@ -186,6 +186,33 @@ export interface WaterOptions {
    *  shore, foam) times this shared uniform, 1 .. ~0.02, written per frame
    *  by the caller. Without it the look never changes. */
   light?: { value: number };
+  /** A time lapse (docs/factory/13-light-and-time.md): the sky's reflection
+   *  and the sun's glint as shared uniforms (waterLive), written per frame
+   *  by the caller; `sky`, `sunColor` and `sunDir` are then only their first
+   *  values. Without it they are set once. */
+  live?: WaterLive;
+}
+
+/** The drawn water's sky and sun as uniforms the caller writes per frame. */
+export interface WaterLive {
+  uWatSky: { value: THREE.Color };
+  uWatSun: { value: THREE.Color };
+  uWatSunDir: { value: THREE.Vector3 };
+}
+
+/** Uniforms holding the sky and sun of `opts` (as waterMaterial sets them). */
+export function waterLive(opts: Pick<WaterOptions, "sky" | "sunColor" | "sunDir">): WaterLive {
+  const live: WaterLive = { uWatSky: { value: new THREE.Color() }, uWatSun: { value: new THREE.Color() }, uWatSunDir: { value: new THREE.Vector3() } };
+  setWaterLive(live, opts);
+  return live;
+}
+
+/** Writes a frame's sky and sun: the values waterMaterial gives a material
+ *  built with these options. */
+export function setWaterLive(live: WaterLive, opts: Pick<WaterOptions, "sky" | "sunColor" | "sunDir">): void {
+  live.uWatSky.value.set(opts.sky);
+  live.uWatSun.value.set(opts.sunColor ?? "#ffffff").multiplyScalar(1.4);
+  live.uWatSunDir.value.set(...(opts.sunDir ?? [0.3, 0.8, 0.2])).normalize();
 }
 
 export interface WaterMaterial {
@@ -223,9 +250,10 @@ export function waterMaterial(opts: WaterOptions): WaterMaterial {
   patchMaterial(mat, (shader) => {
     shader.uniforms.uWatTime = uTime;
     shader.uniforms.uWatDeep = { value: new THREE.Color(opts.deep ?? "#2e7d84") };
-    shader.uniforms.uWatSky = { value: new THREE.Color(opts.sky) };
-    shader.uniforms.uWatSun = { value: new THREE.Color(opts.sunColor ?? "#ffffff").multiplyScalar(1.4) };
-    shader.uniforms.uWatSunDir = { value: new THREE.Vector3(...(opts.sunDir ?? [0.3, 0.8, 0.2])).normalize() };
+    const live = opts.live;
+    shader.uniforms.uWatSky = live ? live.uWatSky : { value: new THREE.Color(opts.sky) };
+    shader.uniforms.uWatSun = live ? live.uWatSun : { value: new THREE.Color(opts.sunColor ?? "#ffffff").multiplyScalar(1.4) };
+    shader.uniforms.uWatSunDir = live ? live.uWatSunDir : { value: new THREE.Vector3(...(opts.sunDir ?? [0.3, 0.8, 0.2])).normalize() };
     shader.uniforms.uWatShore = { value: new THREE.Color(opts.shore ?? "#b3a077") };
     shader.uniforms.uWatFoam = { value: new THREE.Color(opts.foam ?? "#e8ecd8") };
     shader.uniforms.uWatShoreM = { value: opts.shoreM ?? 1.6 };

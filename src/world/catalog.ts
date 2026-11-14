@@ -28,9 +28,19 @@
  *     l, by, u, cr   licence, author, url, credit line when they differ from the pack
  *     lm    [landmark name, city, country] for famous structures
  *
+ * Acquired models (acquired.catalog.json at the repo root, written by
+ * src/generator/library/acquire) are records in this same format. They are
+ * merged on load, by id only: assetById and creditsFor find them, so a model
+ * the director names from the shopping list can be placed and credited. They
+ * stay out of allAssets, findAssets and catalogSummary, the pools the world
+ * casts and dresses from by itself, so no scene changes unless a plan names
+ * one. A built-in id wins a clash; an item held back on a re-download is left
+ * out. With an empty acquired catalog every answer is the built-in one.
+ *
  * Pure and deterministic: no randomness, no clock.
  */
 import catalogData from "./data/world-catalog.json";
+import acquiredData from "../../acquired.catalog.json";
 
 export type AssetCategory =
   | "building"
@@ -555,6 +565,40 @@ function catalog(): WorldCatalog {
   return builtIn;
 }
 
+/** The parts of acquired.catalog.json the world reads: its models, and which items are held back. */
+export interface AcquiredModels {
+  models?: Partial<CatalogFile>;
+  items?: Array<{ id: string; held?: string }>;
+}
+
+/** The acquired models as a catalog of their own, without held-back items and ids `base` already has; null when none are left. */
+export function acquiredCatalogOf(file: AcquiredModels | null | undefined, base: Pick<WorldCatalog, "assetById">): WorldCatalog | null {
+  const m = file?.models;
+  if (!m?.assets?.length) return null;
+  const held = new Set((file?.items ?? []).filter((i) => i.held).map((i) => i.id));
+  const assets = m.assets.filter((a) => !held.has(a.id) && !base.assetById(a.id));
+  return assets.length ? createCatalog({ v: 1, keys: m.keys ?? "", packs: m.packs ?? {}, assets }) : null;
+}
+
+let acquired: WorldCatalog | null | undefined;
+function acquiredCatalog(): WorldCatalog | null {
+  if (acquired === undefined) acquired = acquiredCatalogOf(acquiredData as unknown as AcquiredModels, catalog());
+  return acquired;
+}
+
+/**
+ * Replaces the acquired models this process sees (a Node process that took
+ * items in after it loaded; null: none). The render bundle reads the file.
+ */
+export function setAcquiredModels(file: AcquiredModels | null): void {
+  acquired = acquiredCatalogOf(file, catalog());
+}
+
+/** The acquired models, reachable by id (not in allAssets or findAssets). */
+export function acquiredAssets(): CatalogAsset[] {
+  return acquiredCatalog()?.assets ?? [];
+}
+
 /** Ranked assets matching a query: word/tag match first, then size fit, then id. */
 export function findAssets(q: AssetQuery): CatalogAsset[] {
   return catalog().findAssets(q);
@@ -562,8 +606,9 @@ export function findAssets(q: AssetQuery): CatalogAsset[] {
 export function scoreAssets(q: AssetQuery): AssetMatch[] {
   return catalog().scoreAssets(q);
 }
+/** A built-in asset, or an acquired one by its id. */
 export function assetById(id: string): CatalogAsset | undefined {
-  return catalog().assetById(id);
+  return catalog().assetById(id) ?? acquiredCatalog()?.assetById(id);
 }
 /** Compact text (< ~1,500 tokens) for a director prompt: counts, kinds and example ids per category x region, landmarks with cities. */
 export function catalogSummary(opts?: SummaryOptions): string {
@@ -571,7 +616,12 @@ export function catalogSummary(opts?: SummaryOptions): string {
 }
 /** Sorted, de-duplicated credit lines for the CC-BY assets among `ids`. Throws on unknown ids. */
 export function creditsFor(ids: string[]): string[] {
-  return catalog().creditsFor(ids);
+  const base = catalog();
+  const acq = acquiredCatalog();
+  const mine = acq ? ids.filter((id) => !base.assetById(id) && acq.assetById(id)) : [];
+  if (!acq || !mine.length) return base.creditsFor(ids);
+  const theirs = new Set(mine);
+  return [...new Set([...base.creditsFor(ids.filter((id) => !theirs.has(id))), ...acq.creditsFor(mine)])].sort();
 }
 export function allAssets(): CatalogAsset[] {
   return catalog().assets;

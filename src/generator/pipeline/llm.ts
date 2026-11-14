@@ -16,7 +16,14 @@
  * Fixtures (no key needed):
  *   FACTORY_LLM_FIXTURES=<dir>  replay raw replies from <dir>/<label>-<n>.txt
  *   FACTORY_LLM_RECORD=<dir>    save every real reply there (to make fixtures)
+ *
+ * A run's saved replies (withCallCache, output/<run>/.calls/): each usable
+ * reply is kept, keyed by role, model and the exact prompt, so a run that
+ * crashed and is resumed gets the calls that already finished back at no
+ * cost. Fixture replay never reads or writes them.
  */
+import { AsyncLocalStorage } from "async_hooks";
+import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { generateText } from "ai";
@@ -152,6 +159,26 @@ export function resetFixtureCounters() {
   fixtureCounters.clear();
 }
 
+/* ---------------- a run's saved replies ---------------- */
+
+/** The .calls folder of the run being planned (per async context, so runs in parallel keep apart). */
+const callCache = new AsyncLocalStorage<string>();
+
+/** Plan inside `fn` with a run's saved replies in `dir` (output/<run>/.calls). */
+export function withCallCache<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  return callCache.run(dir, fn);
+}
+
+/** The key of one call: the role, its model, and the exact system text, prompt and images. */
+export function callKey(role: string, rm: RoleModel, system: string, prompt: string, images?: string[]): string {
+  return createHash("sha256").update(JSON.stringify([role, rm.provider, rm.model, system, prompt, images ?? []])).digest("hex").slice(0, 20);
+}
+
+/** Where a call's reply is saved: <dir>/<label>-<key>.txt. */
+export function callFile(dir: string, label: string, key: string): string {
+  return join(dir, `${label.replace(/[^A-Za-z0-9-]+/g, "_")}-${key}.txt`);
+}
+
 function contractFor(schema: z.ZodType): string {
   try {
     const json = z.toJSONSchema(schema, { unrepresentable: "any", io: "input" });
@@ -163,6 +190,8 @@ function contractFor(schema: z.ZodType): string {
     return "\n\nReply with ONE JSON object only — no markdown, no commentary.";
   }
 }
+
+type ModelAsker = (rm: RoleModel, system: string, prompt: string, schema: z.ZodType, images?: string[]) => Promise<string>;
 
 async function askModel(rm: RoleModel, system: string, prompt: string, schema: z.ZodType, images?: string[]): Promise<string> {
   const config = loadAiConfig();
@@ -206,6 +235,13 @@ async function askModel(rm: RoleModel, system: string, prompt: string, schema: z
   return result.text;
 }
 
+let asker: ModelAsker = askModel;
+
+/** Tests only: answer every model call with `fn` (no argument restores the real models). */
+export function setModelAsker(fn?: ModelAsker): void {
+  asker = fn ?? askModel;
+}
+
 function fixtureReply(dir: string, label: string): string {
   const n = (fixtureCounters.get(label) ?? 0) + 1;
   fixtureCounters.set(label, n);
@@ -228,6 +264,20 @@ function describeZod(error: z.ZodError): string {
     .join("; ");
 }
 
+/** Parse, clean, check: the reply's value, or what is wrong with it. */
+function readReply<T>(opts: CallOptions<T>, raw: string): { ok: true; value: T } | { ok: false; problem: string } {
+  try {
+    const parsed = lenientJson(raw);
+    const cleaned = opts.normalize ? opts.normalize(parsed) : parsed;
+    const result = opts.schema.safeParse(cleaned);
+    if (!result.success) return { ok: false, problem: describeZod(result.error) };
+    const essential = opts.essential?.(result.data) ?? null;
+    return essential ? { ok: false, problem: essential } : { ok: true, value: result.data };
+  } catch (e) {
+    return { ok: false, problem: (e as Error).message };
+  }
+}
+
 /** Ask a role for a value of type T, repairing up to maxAttempts times. */
 export async function callRole<T>(opts: CallOptions<T>): Promise<CallResult<T>> {
   const rm = opts.models[opts.role] ?? opts.models.writer;
@@ -237,31 +287,35 @@ export async function callRole<T>(opts: CallOptions<T>): Promise<CallResult<T>> 
   let prompt = opts.prompt;
   let lastProblem = "";
 
+  // The run's saved reply for this very call, keyed by the first prompt (a
+  // repaired reply is saved under it too). Fixture replay leaves them alone.
+  const cacheDir = fixtures ? undefined : callCache.getStore();
+  const saved = cacheDir ? callFile(cacheDir, opts.label, callKey(opts.role, rm, opts.system, opts.prompt, opts.images)) : undefined;
+  if (saved && existsSync(saved)) {
+    const got = readReply(opts, readFileSync(saved, "utf8"));
+    if (got.ok) {
+      console.log(`[llm] ${opts.label} replayed from the run's saved replies (no model call)`);
+      return { value: got.value, provider: rm.provider, model: rm.model, attempts: 0 };
+    }
+    console.warn(`[llm] ${opts.label}: the saved reply no longer passes the checks (${got.problem.slice(0, 160)}); asking the model`);
+  }
+
   for (let attempt = 1; attempt <= max; attempt++) {
     const started = Date.now();
     console.log(`[llm] ${opts.label} attempt ${attempt}/${max} — ${fixtures ? "fixture" : `${rm.provider}/${rm.model}`}`);
-    const raw = fixtures ? fixtureReply(fixtures, opts.label) : await askModel(rm, opts.system, prompt, opts.schema, opts.images);
+    const raw = fixtures ? fixtureReply(fixtures, opts.label) : await asker(rm, opts.system, prompt, opts.schema, opts.images);
     if (record && !fixtures) recordReply(record, opts.label, attempt, raw);
 
-    let problem = "";
-    try {
-      const parsed = lenientJson(raw);
-      const cleaned = opts.normalize ? opts.normalize(parsed) : parsed;
-      const result = opts.schema.safeParse(cleaned);
-      if (!result.success) {
-        problem = describeZod(result.error);
-      } else {
-        const essential = opts.essential?.(result.data) ?? null;
-        if (!essential) {
-          console.log(`[llm] ${opts.label} ok in ${((Date.now() - started) / 1000).toFixed(1)}s`);
-          return { value: result.data, provider: rm.provider, model: rm.model, attempts: attempt };
-        }
-        problem = essential;
+    const got = readReply(opts, raw);
+    if (got.ok) {
+      console.log(`[llm] ${opts.label} ok in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      if (saved && cacheDir) {
+        mkdirSync(cacheDir, { recursive: true });
+        writeFileSync(saved, raw);
       }
-    } catch (e) {
-      problem = (e as Error).message;
+      return { value: got.value, provider: rm.provider, model: rm.model, attempts: attempt };
     }
-
+    const problem = got.problem;
     lastProblem = problem;
     console.warn(`[llm] ${opts.label} attempt ${attempt} unusable: ${problem.slice(0, 300)}`);
     prompt =

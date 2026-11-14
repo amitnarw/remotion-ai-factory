@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SHOT_SIZES } from "../camera/shot";
 import { subjectsFor } from "../camera/subjects";
-import { normalizeShots, ruleShots, subjectFromSee, timeShots, holdReactions, REACTION_HOLD } from "./shots";
+import { frameEffects, normalizeShots, ruleShots, subjectFromSee, timeShots, holdReactions, REACTION_HOLD } from "./shots";
 import type { SpecShot } from "../spec.schema";
 import { buildTimeline } from "./timeline";
 import type { PlannedLine } from "./voice";
@@ -154,4 +154,71 @@ test("holdReactions: never past the scene; a shot left too short is folded in; w
   const tight2 = holdReactions(tight, { scenes, worldEvents: [{ t: 16.5, name: "ground-break" }] });
   assert.equal(tight2.length, 3, "19.0 would leave 0.93 s: folded into the held shot");
   assert.equal(tight2[2].to, 19.93);
+});
+
+test("shots: a world scene may film its featured actors (actorN, person); other kits still refuse names they lack", () => {
+  const world = () => "world";
+  const { shots, warnings } = timeShots({ directed: normalizeShots([{ beat: "b2", subject: "actor2", size: "MS" }, { beat: "b3", subject: "person", size: "FS" }]), story, timeline, kitAt: world });
+  assert.equal(shots.find((s) => s.beat === "b2")?.subject, "actor2");
+  assert.equal(shots.find((s) => s.beat === "b3")?.subject, "person");
+  assert.ok(!warnings.some((w) => /actor2|person/.test(w)));
+  const ocean = timeShots({ directed: normalizeShots([{ beat: "b2", subject: "actor2", size: "MS" }]), story, timeline, kitAt: () => "ocean" });
+  assert.equal(ocean.shots.find((s) => s.beat === "b2")?.subject, "scene");
+});
+
+test("shots: a model set films its parts, spots and actors; a name it lacks films the scene", async () => {
+  const { modelSetShotSubjects } = await import("../camera/modelSet");
+  const { SceneSchema } = await import("../spec.schema");
+  const scene = SceneSchema.parse({ scene: "model-set", kit: "model-set", from: 0, to: 30, modelSet: { model: "kenney-pirate-kit-ship-large" }, actors: [{ role: "Old Sailor", where: "aft" }] });
+  const names = modelSetShotSubjects(scene)!;
+  for (const n of ["scene", "ship", "bow", "stern", "mast", "deck", "fore", "port", "old-sailor", "old_sailor", "actor1", "person"]) assert.ok(names.includes(n), n);
+  assert.equal(modelSetShotSubjects(SceneSchema.parse({ scene: "s", kit: "ocean", from: 0, to: 3 })), undefined);
+  const { shots, warnings } = timeShots({
+    directed: normalizeShots([{ beat: "b1", subject: "mast", size: "WS" }, { beat: "b2", subject: "old-sailor", size: "MS" }, { beat: "b3", subject: "plaza", size: "FS" }]),
+    story,
+    timeline,
+    kitAt: () => "model-set",
+    subjectsAt: () => names,
+  });
+  assert.equal(shots.find((s) => s.beat === "b1")?.subject, "mast");
+  assert.equal(shots.find((s) => s.beat === "b2")?.subject, "old_sailor", "the director's name, as shots write it");
+  assert.equal(shots.find((s) => s.beat === "b3")?.subject, "scene");
+  assert.ok(warnings.some((w) => /"plaza" is not in the model-set set/.test(w)));
+});
+
+test("frameEffects: the shot when an effect starts films its spot, wide, and holds on it", () => {
+  const { scenes, shots } = parisEdit();
+  const beat = (sh: SpecShot[], i: number) => ({ ...sh[i], beat: `b${i + 1}` });
+  const named = shots.map((_, i) => beat(shots, i));
+  const fx = [{ ...scenes[0] }, { ...scenes[1], vfx: [{ kind: "explosion", t: 14.07, where: "avenue" }] }];
+  const out = frameEffects(named, fx);
+  // The "scene" MS shot (13.77-17.07) is turned to the avenue at MS (a size that sees it), held 2.5 s.
+  assert.equal(out[2].subject, "avenue");
+  assert.equal(out[2].size, "MS");
+  assert.equal(out[2].from, 13.77);
+  assert.equal(out[2].to, 17.07, "already long enough: no hold needed");
+  assert.deepEqual(out[1], named[1]);
+  // No effects: unchanged.
+  assert.deepEqual(frameEffects(named, scenes), named);
+  // No spot named: the plaza (the layer's default), already filmed at WS: kept as directed, held.
+  const plaza = frameEffects(named, [scenes[0], { ...scenes[1], vfx: [{ kind: "impact", t: 12.97 }] }]);
+  assert.equal(plaza[1].subject, "plaza");
+  assert.ok(Math.abs(plaza[1].to - (12.97 + REACTION_HOLD)) < 1 / 30, `held to ${plaza[1].to}`);
+  assert.equal(plaza[2].from, plaza[1].to);
+  // A close shot of something else that started well before: the director's framing up to a cut just before it.
+  const long = [beat([named[0]], 0), { ...named[1], to: 19.93, subject: "actor1", size: "CU" as const, beat: "b2" }];
+  const cut = frameEffects(long, [scenes[0], { ...scenes[1], vfx: [{ kind: "fire", t: 15, where: "landmark-front" }] }]);
+  assert.deepEqual(cut.map((s) => [s.beat, s.subject, s.size, s.from, s.to]), [
+    ["b1", "hero", "FS", 6.4, 11.03],
+    ["b2", "actor1", "CU", 11.03, 14.8],
+    ["b2-2", "landmark-front", "WS", 14.8, 19.93],
+  ]);
+  // Kit scenes and bullet time's arc are never touched.
+  assert.deepEqual(frameEffects(named, [{ ...scenes[0], vfx: [{ kind: "fire", t: 8 }] }, scenes[1]]), named);
+  const arc = named.map((s, i) => (i === 2 ? { ...s, move: "arc" as const } : s));
+  assert.deepEqual(frameEffects(arc, [scenes[0], { ...scenes[1], vfx: [{ kind: "magic", t: 14 }] }]), arc);
+  // A loop that started under a flight is framed when the flight lands.
+  const landed = frameEffects(named, [scenes[0], { ...scenes[1], vfx: [{ kind: "smoke", t: 11.03, where: "park" }] }], [{ from: 9, to: 13.8 }]);
+  assert.equal(landed[1].subject, "plaza", "the shot under the globe is left");
+  assert.equal(landed[2].subject, "park");
 });

@@ -1,26 +1,24 @@
 /**
  * src/generator/ai/knowledge.ts
  *
- * The AI's complete working knowledge — the single source that lets it CHOOSE
- * (rather than invent) for every story:
- *   • engine tools   — what the street renderer can physically build
+ * The vocabularies the director chooses from (rather than invents), and the
+ * director's memory:
+ *   • world library  — kits, world events, weather, times of day, camera styles
  *   • hero prop menu — procedural subject props + how they escalate on beats
- *   • sound catalog  — every sound id on disk (public/sfx)
- *   • asset catalog  — exact CC0 model ids, category-compacted (accents/cast)
  *   • memory         — the last N stories, so nothing is ever recycled
  *
  * Validation rejects anything invented (unknown style, unknown sound id) with
  * a repairable message, so the AI can only build from what really exists.
  */
-import { existsSync, readFileSync, readdirSync } from "fs";
+import { AsyncLocalStorage } from "async_hooks";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { catalogForPrompt } from "../asset-catalog";
+import { DEFAULT_CHANNEL } from "./channels";
 
 // 3 levels up from src/generator/ai → repo root (this file sits deep; the
 // import.meta anchor survives both ESM and tsx's CJS transpile)
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const SFX_CATALOG = join(ROOT, "public", "sfx", "sfx.catalog.json");
 const OUTPUT_DIR = join(ROOT, "output");
 
 /* ------------------------------------------------------------------ */
@@ -141,149 +139,6 @@ export const HERO_GROWTH = ["multiply", "vanish"] as const; // vanish = shrinks 
 /** Street accent palettes the renderer can apply to awnings/parasols/canopies. */
 export const STREET_ACCENTS = ["classic", "mint", "terracotta", "butter", "lagoon"] as const;
 
-export function engineToolsBlock(): string {
-  return `
-WORLD + PRODUCTION GUIDE — you are the DIRECTOR. Choose with these exact tools:
-
-1) LOCATION (scenes[i].kit — every scene must declare it, exact ids only):
-   ${SCENE_KITS.join(" | ")}
-   Guidance:
-   - "street-block": the flagship everyday world — a dense low-poly city street
-     with shops, café strip, traffic, a walking crowd. People/money/daily-life/
-     society premises live here. It has SIX time-of-day looks (below) + accent
-     palettes, so treat it as a whole neighborhood you can shoot any time.
-   - "space": planets, stars and orbit. Set scenes[i].subject to
-     ${SPACE_SUBJECTS.join(" | ")}. Premises about the moon/planets/earth/
-     space/cosmic scale live here. The BIG NUMBER (statPanel value) literally
-     GROWS the planet, e.g. "the moon doubled every 3 seconds" — heroProp is
-     NOT used, the world itself is the subject.
-   - "ocean": open water to the horizon — animated waves, a sandy beach with
-     dunes + parasols, a wooden jetty, canoes riding the swell, a mooring
-     buoy. Water/coast/sea premises live here ("the ocean doubled", "the sea
-     froze", "tsunami day"). NO cast needed — the stage populates itself.
-     The statPanel BIG NUMBER literally RAISES THE WATER LEVEL on every beat
-     (1x = normal shoreline, 16x = the dunes flood). For "water vanishes"
-     stories add spec.worldEvents: [{ t: <when>, name: "water-vanish" }] and
-     a "water-return" entry when the story brings it back.
-   - "countryside": rolling fields with crop strips, a dirt road, houses with
-     chimneys and glowing windows at night, a barn, haystacks, a windmill with
-     animated rotor, fence lines, and a distant mountain ridge backdrop. All
-     procedural (no GLBs). Rural/agriculture/wind/nature/quiet-life premises
-     live here ("the wheat doubled", "the windmill never stopped", "the village
-     lost power"). The statPanel BIG NUMBER can scale the windmill rotor speed
-     or camera zoom. Time-of-day + weather work fully (rain on crops, snow on
-     fields, storm lightning on the ridge). NO cast needed — the stage builds
-     itself from the spec id seed.
-   - "forest": dense procedural tree scatter (pine, oak, birch, maple, dead)
-     with ground mist, mossy rocks, fallen logs, and volumetric light shafts
-     at golden hour. Nature/wilderness/ancient/creepy premises live here
-     ("the forest grew overnight", "the trees walked", "the mist never lifted").
-     The statPanel BIG NUMBER can scale tree density or light shaft intensity.
-     Time-of-day + weather work fully (rain on canopy, snow on branches,
-     storm lightning through trunks). NO cast needed — the stage builds
-     itself from the spec id seed.
-   - "river": a flowing river strip with optional waterfall, mist, bank rocks,
-     and mountain ridge backdrop. Reuses the shared WaterSurface for animated
-     flow. Water/flood/journey/erosion premises live here ("the river changed
-     course", "the waterfall froze", "the dam broke"). The statPanel BIG NUMBER
-     can raise the river level or speed the flow. Time-of-day + weather work
-     fully (rain swells the river, snow on banks, storm lightning on water).
-     NO cast needed — the stage builds itself from the spec id seed.
-   - "interior": a lived-in room with walls, floor, window with TOD light shaft,
-     furniture (table, sofa, floor lamp), and warm lamp glow at night.
-     The window light shaft is visible at noon/afternoon/golden/dawn.
-     Cast characters using scene.cast with zone: "foreground" (near camera),
-     "midground" (center), or "background" (near window). Characters can
-     idle, sit, read, or stand. Room automatically adapts to time-of-day
-     (warm lamp glow at night, light shaft by day). Domestic/quiet/
-     mystery/night premises live here ("the lamp never went out", "the letter
-     arrived at midnight"). NO cast needed — the stage builds itself from the
-     spec id seed, but cast adds life.
-   - "park"/"boardwalk"/"pier"/"city-street": CC0 GLB sets; you pick
-     scene.cast entries from the model catalog (WHAT/WHO is in it — people,
-     animals, props, foods...), so a festival, a market morning or a beach day
-     is yours to dress. cast asset ids must exist in the catalog. A pier story
-     may also carry worldEvents water-return to flood its basin at the story's
-     climax.
-   - countryside / forest / river / ocean: also accept scene.cast entries
-     from the ANIMAL_CAST_IDS list (rigged wildlife with Walk/Gallop/Idle/
-     Eating animations) for wildlife/nature premises. Example:
-     { asset: "poly_deer", count: 3, action: "idle", zone: "midground" }.
-   - A story MAY use 2-3 scenes tiling time (a CUT = location/time change,
-     videos open at t=0 with the most striking setting). Scenes sharing one
-     kit must differ in look.timeOfDay or accent so every shot feels new.
-
-2) TIME OF DAY (scenes[i].look.timeOfDay — required in every scene):
-   ${TIME_OF_DAY.join(" | ")}
-   Mood guide: dawn = hope/new beginnings; noon = peak/heat; afternoons =
-   everyday normal; golden = drama/nostalgia (long shadows, amber city);
-   overcast = dread/warning; night = danger, mystery, stakes, lights.
-    Weather overlays (scenes[i].look.weather — ${WEATHER_LOOKS.join(" | ")}):
-    rain / snow add falling particles to every frame; storm also flashes
-    lightning. Pair rain with worldEvents rain-start / rain-stop when the
-    story is about the weather starting or stopping.
-   NEVER pick the same time-of-day as the last memory story.
-
-3) CAMERA (street-block only, scenes[i].street.cameraStyle):
-   ${CAMERA_STYLES.join(" | ")}
-   walk-through = the camera physically walks the street like a person filming
-   (recommended default); orbit-drift = slow circling drift; steady-push =
-   locked framing where beat push-ins do the drama. All styles keep handheld
-   micro-movement — the camera is NEVER a frozen tripod. Space scenes orbit
-   automatically; kit scenes have a fixed cinematic drift.
-
-4) STREET KNOBS (scenes[i].street): heroProp for the story's literal subject:
-   { style: ${HERO_PROP_STYLES.join(" | ")},
-     growth: ${HERO_GROWTH.join(" | ")} (multiply = rises on every beat,
-     vanish = dries/shrinks every beat),
-     anchor: ${HERO_ANCHORS.join(" | ")} (plaza anchors sit on the road's
-     center strip and survive every zoom beat) }
-   + accent ${STREET_ACCENTS.join(" | ")}, crowdCount 10-30, vehicleCount 4-10.
-   The prop count tracks the SAME numbers the HUD shows. statPanel (escalation
-   stories): 5 beats {t, value, zoom, sub}, value/zoom double; title names
-   the SUBJECT ("YOUR MONEY", "THE MOON"). bpm belongs to the optional pulse
-   device (fear/urgency premises only) — never a default beat field. Timer HUD for "gone for N seconds"
-   (timer {label, startT, endT}). Keep every beat >= 1.2s on screen and the
-   last beat ending >= 1s before the video ends.
-
-5) WORLD EVENTS (spec.worldEvents — the environment itself reacts):
-   ${WORLD_EVENTS.join(" | ")}
-   Use these when the premise changes THE WORLD rather than a prop: water
-   vanishing/returning on ocean + pier scenes, rain starting/stopping, lights
-   going out. Each event is { t, name }. The picture must SHOW the premise —
-   if the story says "the water came back", there MUST be a water-return
-   event the viewer can see happen.
-`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Sound catalog (exact ids from disk)                                */
-/* ------------------------------------------------------------------ */
-
-export function soundCatalogBlock(): string {
-  if (!existsSync(SFX_CATALOG)) {
-    return "(sound catalog missing — run npm run sfx; until then use NO sfx cues)";
-  }
-  try {
-    const cat = JSON.parse(readFileSync(SFX_CATALOG, "utf8")) as {
-      roles: Record<string, { label: string; family: string; dur: number }>;
-    };
-    const roles = Object.entries(cat.roles);
-    const beds = roles.filter(([, r]) => r.family === "ambient");
-    const shots = roles.filter(([, r]) => r.family !== "ambient");
-    const line = (id: string, r: { label: string; dur: number }) =>
-      `  ${id} — ${r.label} (${Math.round(r.dur)}s)`;
-    return `
-SOUND INVENTORY (ids are exact — anything else is rejected):
-one-shots (pin to event frames at seconds):
-${shots.map(([id, r]) => line(id, r)).join("\n")}
-ambient beds (layer one or more, from/to in seconds):
-${beds.map(([id, r]) => line(id, r)).join("\n")}`;
-  } catch {
-    return "(sound catalog unreadable — use NO sfx cues this story)";
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Anti-repetition memory: the last N stories, compressed             */
 /* ------------------------------------------------------------------ */
@@ -304,24 +159,62 @@ export interface RecentStory {
   worldEvts?: string[];
 }
 
-export function recentStories(max = 8): RecentStory[] {
-  if (!existsSync(OUTPUT_DIR)) return [];
-  const reports = readdirSync(OUTPUT_DIR)
-    .filter((f) => f.endsWith("-report.json"))
-    .map((f) => join(OUTPUT_DIR, f))
-    .map((p) => {
-      try {
-        return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean) as Array<Record<string, unknown>>;
-  reports.sort((a, b) => (b.generatedAt as number ?? 0) - (a.generatedAt as number ?? 0));
+/** A report's time for sorting: an ISO date (or, in very old reports, a number); 0 when missing. */
+export function reportTime(generatedAt: unknown): number {
+  if (typeof generatedAt === "number") return generatedAt;
+  return Date.parse(String(generatedAt ?? "")) || 0;
+}
+
+/**
+ * Every rendered video's report with its spec file: the per-video folders
+ * (output/<id>/report.json and spec.json, since 2026-10-25) and the old flat
+ * files (output/<id>-report.json and <id>-spec.json). Newest first.
+ */
+export function rendered(dir = OUTPUT_DIR): Array<{ report: Record<string, unknown>; specFile: string }> {
+  if (!existsSync(dir)) return [];
+  const found: Array<{ report: Record<string, unknown>; specFile: string }> = [];
+  const read = (file: string): Record<string, unknown> | null => {
+    try {
+      const r = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      return r && typeof r === "object" ? (r as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  for (const f of readdirSync(dir)) {
+    const p = join(dir, f);
+    if (f.endsWith("-report.json")) {
+      const report = read(p);
+      if (report) found.push({ report, specFile: join(dir, `${String(report.id ?? f.replace(/-report\.json$/, ""))}-spec.json`) });
+    } else if (existsSync(join(p, "report.json")) && statSync(p).isDirectory()) {
+      const report = read(join(p, "report.json"));
+      // The milestone renders a flat <id>-spec.json into the folder's report.
+      const own = join(p, "spec.json");
+      if (report) found.push({ report, specFile: existsSync(own) ? own : join(dir, `${f}-spec.json`) });
+    }
+  }
+  return found.sort((a, b) => reportTime(b.report.generatedAt) - reportTime(a.report.generatedAt));
+}
+
+/** The channel being planned (per async context): the memory is the channel's own. */
+const memoryChannel = new AsyncLocalStorage<string>();
+
+/** Plan inside `fn` with the director's memory limited to one channel's videos. */
+export function withMemoryChannel<T>(channel: string, fn: () => Promise<T>): Promise<T> {
+  return memoryChannel.run(channel, fn);
+}
+
+/** A report's channel: videos made before channels existed are what-if videos. */
+export function reportChannel(report: Record<string, unknown>): string {
+  return typeof report.channel === "string" && report.channel ? report.channel : DEFAULT_CHANNEL;
+}
+
+export function recentStories(max = 8, dir = OUTPUT_DIR): RecentStory[] {
   const out: RecentStory[] = [];
-  for (const r of reports.slice(0, max)) {
+  const channel = memoryChannel.getStore();
+  const mine = rendered(dir).filter((x) => !channel || reportChannel(x.report) === channel);
+  for (const { report: r, specFile } of mine.slice(0, max)) {
     const premise = typeof r.premise === "string" ? r.premise : "(unknown)";
-    const specFile = join(OUTPUT_DIR, `${String(r.id ?? "")}-spec.json`);
     let heroStyle: string | undefined;
     let accent: string | undefined;
     let statTitle: string | undefined;
@@ -392,20 +285,4 @@ time-of-day, camera treatment, hero prop style, accent palette, or beat
 pacing/spacing. If the premise resembles one of them, present it in a
 DIFFERENT world, at a DIFFERENT time of day, with a DIFFERENT camera style
 and prop treatment.`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Assembled knowledge block                                          */
-/* ------------------------------------------------------------------ */
-
-/** The full knowledge injected before each story is written. */
-export function buildKnowledge(premise: string): string {
-  const parts = [
-    engineToolsBlock(),
-    soundCatalogBlock(),
-    memoryBlock(),
-    "MODEL CATALOG (exact CC0 model ids, category-compacted — FYI inventory so you know what this world can contain; you do NOT list cast entries):",
-    catalogForPrompt(premise),
-  ];
-  return parts.join("\n");
 }

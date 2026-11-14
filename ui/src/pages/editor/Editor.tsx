@@ -39,7 +39,9 @@ import { EmptyState, ErrorBanner } from "../../components/shared";
 import { navigate, useQuery } from "../../lib/navigation";
 import { cn } from "../../lib/utils";
 import { SpecPlayer, specTiming } from "../../preview/PlayerPreview";
+import { brandOf, bumperFrames } from "@/compositions/brand/brand";
 import { AskAi } from "./AskAi";
+import { ProducerChat } from "../../components/ProducerChat";
 import { Inspector } from "./Inspector";
 import { Timeline } from "./Timeline";
 import { askTargetBeat, deriveTracks, findItem, type TrackItem } from "./tracks";
@@ -154,6 +156,17 @@ export default function Editor() {
   const timing = useMemo(() => (spec ? specTiming(spec) : null), [spec]);
   const selected = findItem(tracks, selectedId);
 
+  /** A change made outside the editor's own saves (the producer's): read the film again. */
+  const reloadFilm = useCallback(() => {
+    if (!filmId) return;
+    getFilm(filmId)
+      .then((r) => {
+        setData(r);
+        setMeasuring(!!r.measuring);
+      })
+      .catch((e) => toast.error(errorMessage(e)));
+  }, [filmId]);
+
   const adopt = useCallback((r: FilmChangeResponse) => {
     setData((d) => (d ? { ...d, head: r.head, film: r.film, spec: r.spec, warnings: r.warnings, audio: r.audio, measured: r.measured } : d));
     setMeasuring(!!r.measuring);
@@ -258,9 +271,8 @@ export default function Editor() {
     if (!filmId) return;
     setRendering(true);
     try {
-      // No audio override: the film's own voice settings are already in the spec.
-      // Chunked render: only the chunks this edit session changed are re-rendered.
-      const { jobId } = await renderSpec(filmId, undefined, { chunked: true });
+      // The film's own voices; chunked, so only the chunks this edit session changed are rendered again.
+      const { jobId } = await renderSpec(filmId);
       navigate({ tab: "create", step: "rendering", job: jobId });
     } catch (e) {
       toast.error(errorMessage(e));
@@ -328,6 +340,10 @@ export default function Editor() {
   const canRedo = at >= 0 && at < head.versions.length - 1;
   const locked = !!busy || rendering;
   const duration = timing.durationInFrames / timing.fps;
+  // The tracks are in spec time: a channel brand's intro plays first, so the
+  // timeline spans the story alone and its frames start after the intro.
+  const bumpers = bumperFrames(brandOf(spec), timing.fps);
+  const storyDuration = (timing.durationInFrames - bumpers.intro - bumpers.outro) / timing.fps;
 
   return (
     <div className="space-y-4" data-testid="editor">
@@ -419,14 +435,16 @@ export default function Editor() {
             onSave={onSaveUser}
             onSaveSpec={onSaveSpec}
           />
-          <AskAi filmId={filmId} beat={askTargetBeat(selected)} busy={locked} onApply={onApplyAi} />
+          <AskAi filmId={filmId} beat={askTargetBeat(selected)} busy={locked} wordsLocked={!!data?.wordsLocked} onApply={onApplyAi} />
+          <ProducerChat runId={filmId} busy={locked} onChanged={reloadFilm} />
         </div>
       </div>
 
       <Timeline
         tracks={tracks}
-        duration={duration}
+        duration={storyDuration}
         fps={timing.fps}
+        introFrames={bumpers.intro}
         player={player}
         selectedId={selected?.id ?? null}
         onSelect={onSelect}

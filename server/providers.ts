@@ -1,62 +1,50 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+/**
+ * server/providers.ts — the server's view of ai.config.json and .env, through
+ * the same readers and writers the CLI uses (src/generator/ai/provider-registry.ts
+ * and src/generator/env.ts; 16-code-map-pipeline.md §7.5 items 6 and 7).
+ *
+ * The dashboard's changes go to ai.config.local.json, this machine's choices
+ * laid over the tracked ai.config.json, which the dashboard never rewrites.
+ * Keys go to .env, with every other line kept.
+ */
 import { join } from "path";
+import { loadDotEnv, readDotEnv, saveDotEnv } from "../src/generator/env";
+import { readAiConfig, saveAiConfig, type AiConfig } from "../src/generator/ai/provider-registry";
 
 // Project root derived from THIS file (server must never depend on CWD —
 // starting the process from server/ or elsewhere must not break paths).
 const ROOT = join(__dirname, "..");
-const CONFIG_PATH = join(ROOT, "ai.config.json");
-const ENV_PATH = join(ROOT, ".env");
 
-export interface ProviderConfig {
-  package?: string;
-  apiKeyEnv?: string;
-  baseUrl?: string;
-  models?: string[];
-}
+export type { AiConfig };
+export type ProviderConfig = AiConfig["providers"][string];
 
-export interface AiConfig {
-  defaultProvider?: string;
-  defaultModel?: string;
-  providers: Record<string, ProviderConfig>;
-  roles?: Record<string, { provider?: string; model?: string }>;
-}
-
+/** This machine's AI config: the tracked defaults with its own choices over them. */
 export function loadConfig(): AiConfig {
-  if (!existsSync(CONFIG_PATH)) return { providers: {} };
-  try {
-    return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return { providers: {} };
-  }
+  return readAiConfig(ROOT).config;
 }
 
+/** What is wrong with either config file (shown on the Settings page), or []. */
+export function configProblems(): string[] {
+  return readAiConfig(ROOT).problems;
+}
+
+/** Save the dashboard's changes (to ai.config.local.json; the tracked file stays as it is). */
 export function saveConfig(cfg: AiConfig) {
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  saveAiConfig(cfg, ROOT);
 }
 
+/** The keys .env holds. */
 export function loadEnv(): Record<string, string> {
-  if (!existsSync(ENV_PATH)) return {};
-  const text = readFileSync(ENV_PATH, "utf8");
-  const env: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-    if (m) env[m[1]] = m[2].replace(/^"(.*)"$/, "$1");
-  }
-  return env;
+  return readDotEnv(ROOT);
+}
+
+/** Apply .env over the server's environment, so a key saved a moment ago is used (and the jobs it starts inherit it). */
+export function applyEnv(): void {
+  loadDotEnv({ override: true, root: ROOT });
 }
 
 export function saveEnv(updates: Record<string, string>) {
-  const env = loadEnv();
-  Object.assign(env, updates);
-  const lines = Object.entries(env).map(([k, v]) => `${k}="${v}"`);
-  writeFileSync(ENV_PATH, lines.join("\n") + "\n");
-}
-
-/** Apply .env values over process.env so newly saved keys are used immediately. */
-export function applyEnv(): void {
-  for (const [k, v] of Object.entries(loadEnv())) {
-    process.env[k] = v;
-  }
+  saveDotEnv(updates, ROOT);
 }
 
 export { ROOT };

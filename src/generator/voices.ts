@@ -49,9 +49,6 @@ export const KNOWN_VOICES: VoiceInfo[] = Object.entries(VOICE_PACE_MEASURED)
     sample: null,
   }));
 
-export const DEFAULT_NARRATOR = "Bruno";
-export const DEFAULT_CHARACTER = "Rosie";
-
 /**
  * Recommended casting notes for VoxCPM2 (no fixed voice list). Each is 12-22
  * words: age/gender + timbre + delivery + pacing + role, the official recipe.
@@ -160,14 +157,6 @@ export function voxTransform(voice: string | undefined): { semitones?: number; t
 
 export function voicesByQuality(q: "premium" | "draft"): typeof VOXCPM_VOICE_DESCRIPTIONS {
   return VOXCPM_VOICE_DESCRIPTIONS.filter((v) => (v.quality ?? (v.tags.includes("child") || v.tags.includes("elder") ? "draft" : "premium")) === q);
-}
-
-export function pickVoice(name: string | undefined, fallback: string): string {
-  if (!name) return fallback;
-  if (BANNED_VOICES.has(name)) return fallback;
-  return VOICE_PACE_MEASURED[name] != null || VOXCPM_VOICE_DESCRIPTIONS.some((v) => v.id === name)
-    ? name
-    : fallback;
 }
 
 /**

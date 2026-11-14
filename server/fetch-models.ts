@@ -121,6 +121,8 @@ export function fetchProviderModels(
   if (pkg === "openai") {
     return fetchOpenAiCompat(name, pc.baseUrl ?? "https://api.openai.com/v1", apiKey);
   }
+  // Ollama (cloud or local): its native /api/tags listing, via the same path.
+  if (pkg === "ollama") return fetchOpenAiCompat(name, pc.baseUrl ?? "https://ollama.com/v1", apiKey);
   if (pkg === "anthropic") return fetchAnthropic(apiKey);
   if (pkg === "google") return fetchGoogle(apiKey);
   throw new Error(`No live model listing for package "${pkg}" (provider "${name}")`);

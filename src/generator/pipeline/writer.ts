@@ -5,16 +5,23 @@
  * WHEN: there are no times in its output. It is asked for an exact number of
  * beats (models count items far better than words or seconds); code gives the
  * beats their ids b1..bN and the timeline turns them into seconds later.
+ *
+ * The channel's profile (ai/channels.ts) supplies the genre's part of every
+ * prompt: the intro, the rules, how the narrator speaks, the hook example and
+ * the music moods. With the default channel, what-if, the prompts are the
+ * ones of before profiles, word for word (prompts.test.ts). A `source` (the
+ * user's own story, the adapt mode) is given to the writer to rewrite.
  */
 import { z } from "zod";
 import { MOOD_TAGS } from "../audio-resolve";
 import type { VideoSettings } from "../spec.schema";
+import { channelMoods, loadChannel, writerRules, type ChannelProfile } from "../ai/channels";
 import { asArray, beatRef, callRole, fuzzyEnum, type RoleModel } from "./llm";
 
 export const MOODS = Object.keys(MOOD_TAGS) as [string, ...string[]];
-const PACES = ["quick", "normal", "linger"] as const;
-const GENDERS = ["male", "female", "any"] as const;
-const AGES = ["child", "adult", "old"] as const;
+export const PACES = ["quick", "normal", "linger"] as const;
+export const GENDERS = ["male", "female", "any"] as const;
+export const AGES = ["child", "adult", "old"] as const;
 
 export interface VoiceModes {
   narration: boolean;
@@ -45,6 +52,8 @@ export interface WriterCharacter {
 export interface WriterStory {
   title: string;
   hook: string;
+  /** false: the hook is shown but not read aloud (an as-written script that opens with dialogue). */
+  hookVoiced?: boolean;
   mood: string;
   characters: WriterCharacter[];
   beats: WriterBeat[];
@@ -104,7 +113,7 @@ function pick(o: Record<string, unknown>, keys: string[]): unknown {
 }
 
 /** Accept the usual variations a model produces and shape them for the schema. */
-export function normalizeWriter(raw: unknown, voice: VoiceModes): unknown {
+export function normalizeWriter(raw: unknown, voice: VoiceModes, maxCharacters = 3): unknown {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const beats = asArray<Record<string, unknown>>(pick(o, ["beats", "scenes", "story", "shots"]))
     .filter((b) => b && typeof b === "object")
@@ -134,7 +143,7 @@ export function normalizeWriter(raw: unknown, voice: VoiceModes): unknown {
           look: str(pick(c, ["look", "description", "appearance"])),
         }))
         .filter((c) => c.name)
-        .slice(0, 3)
+        .slice(0, maxCharacters)
     : [];
 
   return {
@@ -146,18 +155,37 @@ export function normalizeWriter(raw: unknown, voice: VoiceModes): unknown {
   };
 }
 
-const SYSTEM = `You write short, gripping "what if" videos for YouTube Shorts and long-form YouTube.
-You write the STORY only: what the narrator says and what the camera sees, beat by beat.
-Rules:
-- The hook is the premise as a question, at most 12 words. It is read aloud first and shown on screen.
-- Beat 1 answers the hook at once: the first consequence, concrete and visual.
-- Every beat escalates: bigger, stranger or closer to the viewer than the last. Use concrete places, people, numbers.
-- The last beat lands a surprising conclusion. No "thanks for watching", no questions to the viewer, no call to action.
-- "see" is what the camera shows, filmable in a stylised low-poly 3D world: a city street, space with planets, the ocean, countryside, a forest, a river, a room. At most 20 words.
-- "stress" is ONE word from the beat's line that should flash on screen.
-- "pace": quick for punchy beats, linger for awe, normal otherwise.
-- No times, no durations, no numbering of beats: the editor times everything from the voice.
-Reply with JSON only.`;
+/** The writer's rules every channel shares: what "see", "stress" and "pace" mean, and no times. */
+const COMMON_RULES = [
+  `"see" is what the camera shows, filmable in a stylised low-poly 3D world: a city street, space with planets, the ocean, countryside, a forest, a river, a room. At most 20 words.`,
+  `"stress" is ONE word from the beat's line that should flash on screen.`,
+  `"pace": quick for punchy beats, linger for awe, normal otherwise.`,
+  `No times, no durations, no numbering of beats: the editor times everything from the voice.`,
+];
+
+/** The writer's system text: the channel's intro and rules, then the rules every channel shares. */
+export function writerSystem(p: ChannelProfile = loadChannel()): string {
+  return [
+    p.writer.intro,
+    "You write the STORY only: what the narrator says and what the camera sees, beat by beat.",
+    "Rules:",
+    ...[...writerRules(p), ...COMMON_RULES].map((r) => `- ${r}`),
+    "Reply with JSON only.",
+  ].join("\n");
+}
+
+/** The user's own story, for the writer to rewrite into beats (the adapt mode). */
+function sourceBlock(source: string): string {
+  return `Source story, the user's own. Rewrite it into the beats below: keep its plot points, characters and order; you may cut, merge and rephrase.
+"""
+${source.trim()}
+"""`;
+}
+
+/** The channel's moods, and a story mood it does not use replaced by its fallback. */
+function channelMood(mood: string, p: ChannelProfile): string {
+  return channelMoods(p).includes(mood) ? mood : p.music.fallback;
+}
 
 /**
  * Words per spoken beat, from the time a beat gets and how fast the voice
@@ -172,29 +200,43 @@ export function wordsPerBeat(settings: VideoSettings, wps = 2.3): [number, numbe
   return [Math.max(3, Math.round(mid * 0.8)), Math.max(4, Math.round(mid * 1.2))];
 }
 
-function modeRules(voice: VoiceModes, settings: VideoSettings, wps?: number): string {
+/** The voices the channel lets the writer use: no characters when it casts none. */
+function channelVoice(voice: VoiceModes, p: ChannelProfile): VoiceModes {
+  return { narration: voice.narration, characters: voice.characters && p.writer.maxCharacters > 0 };
+}
+
+function modeRules(voice: VoiceModes, settings: VideoSettings, wps: number | undefined, p: ChannelProfile): string {
   const out: string[] = [];
   const [lo, hi] = wordsPerBeat(settings, wps);
-  if (voice.narration) out.push(`- "say" is the narrator's line for the beat: ${lo} to ${hi} words, present tense, plain speech. Every beat except at most one has a "say".`);
+  if (voice.narration) out.push(`- "say" is the narrator's line for the beat: ${lo} to ${hi} words, ${p.writer.narration}. Every beat except at most one has a "say".`);
   else out.push(`- There is NO narrator. "say" is a short on-screen caption (3 to 8 words) for the beat.`);
-  if (voice.characters) out.push(`- Up to 3 characters may speak. Give each a name, gender (male/female/any), age (child/adult/old) and a short look. Their "lines" are at most ${Math.max(5, hi)} words each. Use dialogue only where it adds drama: it takes time from the narration.`);
+  if (voice.characters) out.push(`- Up to ${p.writer.maxCharacters} characters may speak. Give each a name, gender (male/female/any), age (child/adult/old) and a short look. Their "lines" are at most ${Math.min(p.writer.maxLineWords ?? Infinity, Math.max(5, hi))} words each. Use dialogue only where it adds drama: it takes time from the narration.`);
   else out.push(`- No characters speak: "characters" is [] and every beat's "lines" is [].`);
   return out.join("\n");
 }
 
-export function writerPrompt(premise: string, settings: VideoSettings, voice: VoiceModes, beats: number, wps?: number): string {
-  return `Premise: "${premise}"
+export function writerPrompt(
+  premise: string,
+  settings: VideoSettings,
+  voice: VoiceModes,
+  beats: number,
+  wps?: number,
+  p: ChannelProfile = loadChannel(),
+  source?: string,
+): string {
+  const moods = channelMoods(p);
+  return `Premise: "${premise}"${source ? `\n\n${sourceBlock(source)}` : ""}
 
 Length: about ${defaultDuration(settings)} seconds (${settings.format}).
 Write EXACTLY ${beats} beats.
-${modeRules(voice, settings, wps)}
-- "mood" is one of: ${MOODS.join(", ")} (it picks the background music).
+${modeRules(voice, settings, wps, p)}
+- "mood" is one of: ${moods.join(", ")} (it picks the background music).
 
 JSON shape:
 {
   "title": "short title",
-  "hook": "What if ...?",
-  "mood": "${MOODS[0]}",
+  "hook": "${p.writer.hookExample}",
+  "mood": "${moods[0]}",
   "characters": [{ "name": "Ana", "gender": "female", "age": "adult", "look": "baker in a red apron" }],
   "beats": [
     { "say": "...", "lines": [{ "who": "Ana", "text": "..." }], "see": "...", "pace": "normal", "stress": "word" }
@@ -210,21 +252,27 @@ export async function writeStory(input: {
   models: Record<string, RoleModel>;
   /** Narrator's words per second (calibrated); sizes each beat's line. */
   wps?: number;
+  /** The channel (default: what-if). */
+  profile?: ChannelProfile;
+  /** The user's own story to rewrite into beats (the adapt mode). */
+  source?: string;
 }): Promise<WriterStory> {
+  const p = input.profile ?? loadChannel();
+  const voice = channelVoice(input.voice, p);
   // Long videos are outlined first and written one act per call.
-  if (defaultDuration(input.settings) > LONG_FORM_SECONDS) return writeLongStory(input);
+  if (defaultDuration(input.settings) > LONG_FORM_SECONDS) return writeLongStory({ ...input, voice, profile: p });
   const want = beatCountFor(input.settings);
   const result = await callRole({
     role: "writer",
-    label: "writer",
-    system: SYSTEM,
-    prompt: writerPrompt(input.premise, input.settings, input.voice, want, input.wps),
+    label: input.source ? "writer-adapt" : "writer",
+    system: writerSystem(p),
+    prompt: writerPrompt(input.premise, input.settings, voice, want, input.wps, p, input.source),
     schema: WriterSchema,
     models: input.models,
-    normalize: (raw) => normalizeWriter(raw, input.voice),
+    normalize: (raw) => normalizeWriter(raw, voice, p.writer.maxCharacters),
     essential: (v) => {
       if (v.beats.length < Math.ceil(want * 0.6)) return `only ${v.beats.length} beats; write exactly ${want}`;
-      if (input.voice.narration) {
+      if (voice.narration) {
         const spoken = v.beats.filter((b) => b.say.split(/\s+/).filter(Boolean).length >= 3).length;
         const [lo, hi] = wordsPerBeat(input.settings, input.wps);
         if (spoken < Math.ceil(v.beats.length * 0.7)) return `most beats need a spoken "say" of ${lo} to ${hi} words`;
@@ -236,7 +284,7 @@ export async function writeStory(input: {
   return {
     title: v.title,
     hook: v.hook,
-    mood: v.mood,
+    mood: channelMood(v.mood, p),
     characters: v.characters,
     beats: v.beats.slice(0, Math.max(want, Math.round(want * 1.4))).map((b, i) => ({ id: `b${i + 1}`, ...b })),
   };
@@ -256,6 +304,8 @@ export async function reviseStory(input: {
   story: WriterStory;
   wordDelta: number;
   models: Record<string, RoleModel>;
+  /** The channel (default: what-if). */
+  profile?: ChannelProfile;
 }): Promise<WriterStory> {
   const shorten = input.wordDelta < 0;
   const ranked = [...input.story.beats]
@@ -269,7 +319,7 @@ Reply as { "edits": [{ "beat": "b3", "say": "new line" }] } with one edit per be
   const result = await callRole({
     role: "writer",
     label: "writer-revise",
-    system: SYSTEM,
+    system: writerSystem(input.profile),
     prompt,
     schema: ReviseSchema,
     models: input.models,
@@ -325,24 +375,29 @@ async function writeLongStory(input: {
   voice: VoiceModes;
   models: Record<string, RoleModel>;
   wps?: number;
+  profile: ChannelProfile;
+  source?: string;
 }): Promise<WriterStory> {
+  const p = input.profile;
+  const moods = channelMoods(p);
+  const system = writerSystem(p);
   const want = beatCountFor(input.settings);
   const outline = await callRole({
     role: "writer",
     label: "writer-outline",
-    system: SYSTEM,
-    prompt: `Premise: "${input.premise}"
+    system,
+    prompt: `Premise: "${input.premise}"${input.source ? `\n\n${sourceBlock(input.source)}\n` : ""}
 Length: about ${defaultDuration(input.settings)} seconds (${input.settings.format}), ${want} beats in total.
 First write the OUTLINE: 3 to 8 acts that escalate, each with a name, a one-sentence summary and how many beats it gets (they add up to about ${want}).
-${modeRules(input.voice, input.settings, input.wps)}
-- "mood" is one of: ${MOODS.join(", ")}.
+${modeRules(input.voice, input.settings, input.wps, p)}
+- "mood" is one of: ${moods.join(", ")}.
 
 JSON shape:
-{ "title": "...", "hook": "What if ...?", "mood": "${MOODS[0]}", "characters": [], "acts": [{ "name": "The first minute", "summary": "...", "beats": 6 }] }`,
+{ "title": "...", "hook": "${p.writer.hookExample}", "mood": "${moods[0]}", "characters": [], "acts": [{ "name": "The first minute", "summary": "...", "beats": 6 }] }`,
     schema: OutlineSchema,
     models: input.models,
     normalize: (raw) => {
-      const base = normalizeWriter(raw, input.voice) as Record<string, unknown>;
+      const base = normalizeWriter(raw, input.voice, p.writer.maxCharacters) as Record<string, unknown>;
       const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
       const acts = asArray<Record<string, unknown>>(pick(o, ["acts", "parts", "chapters"])).map((a) => ({
         name: str(pick(a, ["name", "title"])),
@@ -361,18 +416,18 @@ JSON shape:
     const result = await callRole({
       role: "writer",
       label: `writer-act-${i + 1}`,
-      system: SYSTEM,
+      system,
       prompt: `Premise: "${input.premise}"  Title: "${o.title}"
 Outline: ${o.acts.map((a, k) => `${k + 1}. ${a.name}: ${a.summary}`).join(" ")}
 ${o.characters.length ? `Characters: ${o.characters.map((c) => `${c.name} (${c.look})`).join(", ")}` : ""}
 ${before ? `The previous act ended: ${before}` : "This is the first act: open on the strongest image."}
 Write ACT ${i + 1} ("${act.name}": ${act.summary}) as EXACTLY ${n} beats.
-${modeRules(input.voice, input.settings, input.wps)}
+${modeRules(input.voice, input.settings, input.wps, p)}
 
 JSON shape: { "beats": [{ "say": "...", "lines": [], "see": "...", "pace": "normal", "stress": "word" }] }`,
       schema: ActSchema,
       models: input.models,
-      normalize: (raw) => ({ beats: (normalizeWriter(raw, input.voice) as { beats: unknown[] }).beats }),
+      normalize: (raw) => ({ beats: (normalizeWriter(raw, input.voice, p.writer.maxCharacters) as { beats: unknown[] }).beats }),
       essential: (v) => (v.beats.length < Math.ceil(n * 0.6) ? `only ${v.beats.length} beats; write exactly ${n}` : null),
     });
     beats.push(...result.value.beats.slice(0, Math.max(n, Math.round(n * 1.4))));
@@ -380,7 +435,7 @@ JSON shape: { "beats": [{ "say": "...", "lines": [], "see": "...", "pace": "norm
   return {
     title: o.title,
     hook: o.hook,
-    mood: o.mood,
+    mood: channelMood(o.mood, p),
     characters: o.characters,
     beats: beats.map((b, i) => ({ id: `b${i + 1}`, ...b })),
   };

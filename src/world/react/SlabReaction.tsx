@@ -16,7 +16,7 @@
  * world coordinates; GroundWorld leaves the ground under it out and lays
  * the soil pit beneath (crackGround.ts).
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { applyCracks, crackValues, setCrackUniforms } from "./crack";
@@ -96,23 +96,22 @@ export interface SlabReactionProps {
   eye: Vec3;
   /** Dust puffs where slabs break off. Default true. */
   dust?: boolean;
-  /** Extra patches (height fog, mood palette) for the materials. */
+  /** Extra patches (height fog, mood palette) for the materials; a new patch
+   *  rebuilds the layers, so pass a memoized one. */
   patch?: (m: THREE.Material) => void;
-  /** Names `patch` in the programs' cache keys (a change rebuilds the layer). */
+  /** Names `patch` in the programs' cache keys (the shaders' code). */
   patchKey?: string;
 }
 
 export function SlabReaction({ plan, placeId, track, t, eye, dust = true, patch, patchKey }: SlabReactionProps) {
-  // The patch is applied once per layer; patchKey (not the function's identity) says when it changed.
-  const patchRef = useRef(patch);
-  patchRef.current = patch;
-  const slabs = useMemo(() => buildSlabLayer(plan, { patch: patchRef.current, patchKey }), [plan, patchKey]);
+  // The patch is applied once per layer, so a new patch (the next scene's fog) is a new layer.
+  const slabs = useMemo(() => buildSlabLayer(plan, { patch, patchKey }), [plan, patch, patchKey]);
   useEffect(() => () => slabs.dispose(), [slabs]);
   const puffs = useMemo((): DustLayer | null => {
     if (!dust) return null;
     const p = dustPuffs(plan, placeId);
-    return p.count ? buildDustLayer(p, { patch: patchRef.current, patchKey }) : null;
-  }, [plan, placeId, dust, patchKey]);
+    return p.count ? buildDustLayer(p, { patch, patchKey }) : null;
+  }, [plan, placeId, dust, patch, patchKey]);
   useEffect(() => () => puffs?.dispose(), [puffs]);
   const [ex, ey, ez] = eye;
   const epi = plan.grid.origin;

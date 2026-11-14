@@ -17,14 +17,16 @@
  * planet on every stat beat.
  */
 import { useMemo } from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
 import { statScaleAt } from "../generator/statPanel";
 import { solveShot, type Subject as Framed } from "../generator/camera/solve";
 import { ShotCamera, activeShot, type Anchors } from "./camera/ShotCamera";
+import { useStageFog } from "./ForestStage";
 import { ThreeCanvas } from "@remotion/three";
+import { useSceneDrawOrder } from "./glb";
 
 /* ------------------------------------------------------------------ */
 /*  Deterministic 3D value noise (no deps, stable across render pages) */
@@ -302,18 +304,20 @@ function solvedViewAt(spec: ShotSpec, anchors: Anchors, t: number, aspect: numbe
 function OrbitRig({ value }: { value: number }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
   useFrame(() => {
     const cam = camera as THREE.PerspectiveCamera;
     // the camera object outlives shots and stages: restore this rig's lens
-    // whenever a director's shot (or another stage) changed it
-    if (cam.far < 2600 || cam.fov !== 46 || cam.near !== 0.05) {
-      cam.far = Math.max(cam.far, 2600);
+    // whenever a director's shot (or another stage) changed it, the far too
+    // (a larger one left by a shot or a world stage used to stay)
+    if (cam.far !== 2600 || cam.fov !== 46 || cam.near !== 0.05) {
+      cam.far = 2600;
       cam.near = 0.05;
       cam.fov = 46;
       cam.updateProjectionMatrix();
     }
-    const t = frame / 30;
+    const t = frame / fps;
     const l2 = Math.min(6, Math.log2(Math.max(1, value)));
     const { az, el } = orbitAngles(t);
     // the world swells on every stat beat — the camera tracks its radius so
@@ -341,8 +345,10 @@ function OrbitRig({ value }: { value: number }) {
 /* ------------------------------------------------------------------ */
 
 export function SpaceStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const active = scene ?? spec.scenes[0];
   const subject = (active?.subject ?? "earth") as Subject;
   const panel = spec.statPanel ?? null;
@@ -394,14 +400,9 @@ export function SpaceStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
 }
 
 function SpaceLight({ subject, t, view }: { subject: Subject; t: number; view: { az: number; el: number } | null }) {
-  const { scene } = useThree();
-  useMemo(() => {
-    scene.background = new THREE.Color(subject === "moon" ? "#04060e" : "#050810");
-    scene.fog = null;
-    return () => {
-      scene.background = null;
-    };
-  }, [scene, subject]);
+  // Space black and no fog, every frame (set once in a memo, the background
+  // stayed for the stage after).
+  useStageFog(null, subject === "moon" ? "#04060e" : "#050810");
   // sun rides the camera orbit: ~31° right of the camera, ~33° above it, so
   // the viewer always sees a lit limb + terminator (pure function of t).
   // While a director's shot films, it rides that camera instead.

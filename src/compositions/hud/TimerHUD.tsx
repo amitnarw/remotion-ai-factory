@@ -13,7 +13,8 @@ import { useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import "./fonts";
 import { formatTimer } from "../../generator/timing";
-import { FONT_STACKS, type HudLook } from "../../generator/caption-style";
+import { FONT_STACKS } from "../../generator/caption-style";
+import type { BrandedHudLook } from "../brand/brand";
 import {
   SAFE_AREA,
   TEXT_HUD_LINE,
@@ -31,8 +32,8 @@ interface TimerHUDProps {
   fps?: number;
   /** Design px to move the HUD: cards down (e.g. below a counter card), text up from the column's base. */
   offsetY?: number;
-  /** Card or text over the picture (from the caption look). Omit for the card. */
-  hud?: HudLook;
+  /** Card or text over the picture (from the caption look), with a channel brand's colours and font. Omit for the card. */
+  hud?: BrandedHudLook;
   /** 0..1: the flight's cloud veil, for the text HUD's dark glow (as the captions). */
   glow?: number;
   /** Text HUD: design height of the whole HUD column (layout.ts hudStack). */
@@ -75,7 +76,7 @@ export const TimerHUD: React.FC<TimerHUDProps> = ({
           opacity,
           zIndex: 20,
           pointerEvents: "none",
-          color: "#ffffff",
+          color: hud.text ?? "#ffffff",
           fontFamily: FONT_STACKS.inter,
           textShadow: textHudShadow(glow),
           whiteSpace: "nowrap",
@@ -131,7 +132,7 @@ export const TimerHUD: React.FC<TimerHUDProps> = ({
         fontFamily: "Inter, system-ui, sans-serif",
       }}
     >
-      <div style={{ fontSize: 21, fontWeight: 900, letterSpacing: 2.2, color: "#e0342b", textTransform: "uppercase" }}>
+      <div style={{ fontSize: 21, fontWeight: 900, letterSpacing: 2.2, color: hud?.cardAccent ?? "#e0342b", textTransform: "uppercase" }}>
         {label}
       </div>
       <div

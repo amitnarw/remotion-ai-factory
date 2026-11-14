@@ -21,6 +21,10 @@ export interface ActiveJob {
   stage?: string;
   etaSec?: number | null;
   specId?: string;
+  /** A render job that makes the other versions of a finished run. */
+  variants?: boolean;
+  /** A job that makes a finished video's publish pack. */
+  publish?: boolean;
 }
 
 interface JobsState {
@@ -72,6 +76,8 @@ async function poll() {
           stage: full.stage,
           etaSec: full.etaSec,
           specId: full.specId,
+          ...(full.kind === "variants" ? { variants: true } : {}),
+          ...(full.kind === "publish" ? { publish: true } : {}),
         };
       } catch {
         return { id: j.id, status: j.status, premise: j.premise, kind: "render", progress: 0 };
@@ -88,16 +94,20 @@ async function poll() {
     if (onScreen(j.id)) continue;
     if (j.status === "done") {
       const isPlan = before.kind === "plan";
-      toast.success(isPlan ? "Your plan is ready" : "Your video is ready", {
+      // A plan job that stopped at a gate: the story, or the shopping list, waits for you.
+      const story = isPlan && j.gate === "story";
+      const shop = isPlan && j.gate === "shop";
+      const ready = story ? "Your story is ready to read" : shop ? "Your shopping list is ready" : isPlan ? "Your plan is ready" : before.variants ? "Your variants are ready" : before.publish ? "Your publish pack is ready" : "Your video is ready";
+      toast.success(ready, {
         description: j.premise,
         action: {
-          label: isPlan ? "Review it" : "Watch it",
+          label: story ? "Read it" : shop ? "Choose" : isPlan ? "Review it" : before.publish ? "See it" : "Watch it",
           onClick: () =>
             navigate(isPlan ? { tab: "create", step: "review", plan: j.id } : { tab: "create", step: "done", job: j.id }),
         },
       });
     } else if (j.status === "failed") {
-      toast.error(before.kind === "plan" ? "The plan could not be written" : "The video could not be made", {
+      toast.error(before.kind === "plan" ? "The plan could not be written" : before.variants ? "The variants could not be made" : before.publish ? "The publish pack could not be made" : "The video could not be made", {
         description: j.premise,
         action: { label: "See why", onClick: () => navigate(jobScreen(before)) },
       });

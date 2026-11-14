@@ -11,14 +11,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ShotSchema, SIZE_DEFAULTS, type Shot } from "./shot";
 import { solveShot, type Subject, type Vec3 } from "./solve";
-import { segmentEntry, type Occluder } from "./occlusion";
-import { worldShot, worldShotSet } from "./world";
+import { segmentEntry } from "./occlusion";
+import { marketBlockers, worldShot, worldShotSet } from "./world";
 import type { CastEntry, SceneType, ShotSpec } from "../spec.schema";
 import { countryLayout, countrysideAnchors } from "../../compositions/CountrysideStage";
 import { canoeLayout, oceanAnchors } from "../../compositions/OceanStage";
 import { interiorAnchors } from "../../compositions/InteriorStage";
 import { cityMarket } from "../../world/atmosphere/market";
-import { GROUND } from "../../world/cityAnchors";
 import { generateCity } from "../../world/city";
 import { landmarksFor } from "../../world/landmarks";
 import { resolvePlace } from "../../world/places";
@@ -267,9 +266,13 @@ test("interior: a close shot from the sofa's end keeps a hand's width off the so
 test("world plaza: the lens keeps off the market's flag poles and stalls, and sees its spot past them", () => {
   // The plaza's own guarantee (bounds and heights in world.ts), checked
   // against the market as GroundWorld draws it (market.ts): its stalls and
-  // parasols (a footprint round, a height) and the four flag poles.
+  // parasols (a footprint round, a height) and the four flag poles. The
+  // plaza's subjects carry the stalls as blockers (world.ts marketBlockers)
+  // and are areas (solve.ts `area`): a lens moves only when its plain view
+  // crosses a stall, and then round it, not up.
   let n = 0;
   let blocked = 0;
+  let moved = 0;
   for (const place of ["paris", "colmar"]) {
     const world = { place, date: "2026-06-21", time: "12:00" };
     const scene = { from: 0, to: 6, kit: "world", world } as unknown as SceneType;
@@ -283,23 +286,36 @@ test("world plaza: the lens keeps off the market's flag poles and stalls, and se
       cloudPassages: [[-75, 0]],
     });
     const market = cityMarket(layout, resolved.style, resolved.place.id)!;
-    const stalls: Occluder[] = market.blockers.map((b) => ({ kind: "column", x: b.x, z: b.z, r: b.r, top: GROUND.plaza + b.h, owner: -1 }));
+    const stalls = marketBlockers(market.blockers);
     for (const subject of ["plaza", "plaza-north", "plaza-south", "plaza-east", "plaza-west"]) {
       if (!set.subjects[subject]) continue;
       for (const aspect of ASPECTS) for (const size of SIZES) for (const side of SIDES) for (const angle of ANGLES) {
         const sh = worldShot(set, shot({ subject, size, side, angle }));
         const s = set.subjects[subject](1, sh);
-        const p = solveShot(sh, s, { aspect, u: 0.5, seconds: 3, seed: "w" }).position;
+        assert.equal(s.blockers?.length, stalls.length, `${place} ${subject}: the stalls are its blockers`);
+        const opts = { aspect, u: 0.5, seconds: 3, seed: "w" };
+        const p = solveShot(sh, s, opts).position;
         const label = `${place} ${subject} ${size} ${side} ${angle} ${aspect.toFixed(2)}: lens at ${p.map((v) => v.toFixed(1))}`;
         for (const pole of market.poles) assert.ok(Math.hypot(p[0] - pole.x, p[2] - pole.z) >= 0.5 || p[1] > 7.2, `${label}: at a flag pole`);
         for (const b of market.blockers) assert.ok(Math.hypot(p[0] - b.x, p[2] - b.z) >= b.r + 0.3 || p[1] >= b.h + 0.3, `${label}: in a stall`);
         n++;
-        if (blockedLine({ ...s, blockers: stalls, own: [] }, p, aimOf(s, size))) blocked++;
+        const aim = aimOf(s, size);
+        if (blockedLine({ ...s, blockers: stalls, own: [] }, p, aim)) blocked++;
+        // The same shot without the stalls: its lens stays, unless one of
+        // the solver's three lines (the framed region's centre, top, bottom) crossed a stall.
+        const plain = solveShot(sh, { ...s, blockers: undefined, area: undefined }, opts).position;
+        if (plain.every((v, i) => v === p[i])) continue;
+        moved++;
+        const up = 0.35 * (s.height ?? s.radius * 2) * SIZE_DEFAULTS[size].region;
+        const crossed = [0, up, -up].some((dy) => blockedLine({ ...s, blockers: stalls, own: [] }, plain, [aim[0], aim[1] + dy, aim[2]]));
+        assert.ok(crossed, `${label}: moved from ${plain.map((v) => v.toFixed(1))} with a clear view`);
+        assert.ok(Math.abs(plain[1] - p[1]) < 0.5 && Math.hypot(plain[0] - p[0], plain[2] - p[2]) < 10, `${label}: jumped from ${plain.map((v) => v.toFixed(1))}`);
       }
     }
   }
-  // Colmar's plaza-east and -west FS (the lens held 4.8 m up over the
-  // stalls) look down past a stall roof near their spot: 12 of 1800 lines.
-  assert.ok(blocked <= n * 0.01, `${blocked} of ${n} plaza sight lines through a stall`);
+  // Before the stalls were blockers, 12 of 1800 lines (Colmar's plaza-east
+  // and -west FS, the lens held 4.8 m up) looked down past a stall roof;
+  // now none, and 20 of the 1800 lenses turned 15-30 degrees round one.
+  assert.ok(blocked <= n * 0.002, `${blocked} of ${n} plaza sight lines through a stall`);
+  assert.ok(moved <= n * 0.03, `${moved} of ${n} plaza lenses moved for the stalls`);
 });
-

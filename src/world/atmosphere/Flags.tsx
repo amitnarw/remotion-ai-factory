@@ -3,11 +3,10 @@
  *
  * Waving flags on poles over the city's plazas and the avenue, a pure
  * function of the frame: the cloth's vertices are re-set every frame from
- * t = frame / fps (two travelling sine waves, growing with the distance from
+ * the place's time t (two travelling sine waves, growing with the distance from
  * the pole), so any frame renders identically in any order.
  */
 import { useMemo, useRef } from "react";
-import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { makeRng } from "../rng";
@@ -61,9 +60,8 @@ const CLOTH_SEG = [7, 3];
 const CLOTH_W = 2.2;
 const CLOTH_H = 1.25;
 
-export const Flags: React.FC<{ spots: FlagSpot[] }> = ({ spots }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+/** `t`: the place's time (GroundWorld's: the world's clock in a bullet time). */
+export const Flags: React.FC<{ spots: FlagSpot[]; t: number }> = ({ spots, t }) => {
   const cloths = useRef<THREE.Mesh[]>([]);
   const mats = useMemo(() => spots.map((s) => CLOTH(s.color)), [spots]);
   const geos = useMemo(
@@ -86,7 +84,6 @@ export const Flags: React.FC<{ spots: FlagSpot[] }> = ({ spots }) => {
   }, []);
 
   useFrame(() => {
-    const t = frame / (fps || 30);
     for (const [i, s] of spots.entries()) {
       const mesh = cloths.current[i];
       if (!mesh) continue;

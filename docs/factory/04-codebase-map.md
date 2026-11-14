@@ -1,4 +1,6 @@
-# 04 — Codebase map (as of 2026-10-22, commit d6633d7)
+# 04 — Codebase map (as of 2026-10-22, commit d6633d7) — HISTORY ONLY
+
+> **Out of date.** This is the code as it was when the rebuild started. For the current code read [00-overview.md](00-overview.md) and the code maps [16-code-map-pipeline.md](16-code-map-pipeline.md) and [17-code-map-world.md](17-code-map-world.md).
 
 A reference for whoever implements the plan. Line numbers are approximate and will drift as the code changes.
 

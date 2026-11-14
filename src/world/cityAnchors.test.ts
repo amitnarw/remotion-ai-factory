@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateCity } from "./city";
 import { REGION_STYLES } from "./places";
-import { blockCentre, cityAnchors, GROUND, openBlocks } from "./cityAnchors";
+import { blockCentre, cityAnchors, GROUND, openBlocks, RING } from "./cityAnchors";
+import { cityMarket } from "./atmosphere/market";
 import { planActor, poseAt } from "./actors/script";
 
 const layoutFor = (place: "paris" | "colmar" | "cairo" | "new-york") => {
@@ -117,4 +118,21 @@ test("city anchors: a scripted walk on them plans without warnings and moves per
   assert.ok(Math.hypot(p2[0] - p0[0], p2[2] - p0[2]) > 1, "the actor walks (moved over 1 m in 2 s)");
   // Pure per t: the same t gives the same pose.
   assert.deepEqual(poseAt(plan, 2).pos, p2);
+});
+test("city anchors: the plaza's ring spots stand on open paving round the fountain, clear of the market", () => {
+  for (const place of ["paris", "colmar"] as const) {
+    const { style, layout } = layoutFor(place);
+    const a = cityAnchors(layout, style);
+    const centre = a.spot("plaza")!.pos;
+    const market = cityMarket(layout, style, place);
+    for (const side of ["north", "south", "east", "west"]) {
+      const s = a.spot(`plaza-ring-${side}`);
+      assert.ok(s, `${place}: plaza-ring-${side}`);
+      assert.ok(Math.abs(Math.hypot(s!.pos[0] - centre[0], s!.pos[2] - centre[2]) - RING) < 1e-9);
+      assert.equal(a.groundAt(s!.pos[0], s!.pos[2]), GROUND.plaza, `${place} ${side}: on the plaza`);
+      for (const b of market?.blockers ?? []) assert.ok(Math.hypot(b.x - s!.pos[0], b.z - s!.pos[2]) > b.r + 1, `${place} ${side}: clear of a stall`);
+    }
+  }
+  const { style, layout } = layoutFor("cairo");
+  assert.ok(!cityAnchors(layout, style).spot("plaza-ring-north"), "no plaza, no ring");
 });

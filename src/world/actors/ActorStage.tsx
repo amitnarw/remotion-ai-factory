@@ -8,7 +8,7 @@
  *   npx remotion render src/world/index.ts ActorStage out/actors/stage.mp4
  */
 import { useMemo } from "react";
-import { AbsoluteFill, useVideoConfig } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { ThreeCanvas } from "@remotion/three";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
@@ -170,7 +170,9 @@ const GL = { antialias: true };
 const logWarnings = (w: string[]) => console.warn(`[actors] ${w.join("\n")}`);
 
 export const ActorStage: React.FC<ActorStageProps> = ({ scripts, style, camera }) => {
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
+  // This preview is its own clock's provider (a composition, not a layer).
+  const frame = useCurrentFrame();
   const anchors = useMemo(() => anchorTable(STAGE_SPOTS), []);
   const list = useMemo(() => scripts ?? DEFAULT_SCRIPTS, [scripts]);
   const cam = {
@@ -182,7 +184,7 @@ export const ActorStage: React.FC<ActorStageProps> = ({ scripts, style, camera }
     <AbsoluteFill style={{ background: "#bcd6ea" }}>
       <ThreeCanvas width={width} height={height} shadows gl={GL}>
         <Plaza camera={cam} />
-        <ActorsLayer scripts={list} anchors={anchors} style={style} onWarnings={logWarnings} />
+        <ActorsLayer scripts={list} anchors={anchors} style={style} t={frame / (fps || 30)} onWarnings={logWarnings} />
       </ThreeCanvas>
     </AbsoluteFill>
   );

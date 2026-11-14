@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useThree, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -37,7 +37,7 @@ import {
   PROPS_STREET,
   type IndexedAsset,
 } from "./assetIndex.generated";
-import { GlbSuspense, useGltfPaint } from "./glb";
+import { GlbSuspense, useGltfPaint, useSceneDrawOrder } from "./glb";
 import { Starfield } from "./SpaceStage";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { getActiveTodLook, TodLookTable } from "./tod";
@@ -191,6 +191,12 @@ function prepClone(
   source: THREE.Object3D,
   opts: { tintStrength?: number; tint?: string; roughness?: number; metalness?: number },
 ): THREE.Object3D {
+  // Warm the shared GLTF first, as AnimatedPerson does: a clone copies the
+  // source's world matrices and its skinned meshes' cached bounds, so a clone
+  // made before any warm measured a different height (the café idlers share
+  // files with the walkers, and whichever loaded first decided whether the
+  // idlers stood at their size or vanished, tab by tab).
+  void new THREE.Box3().setFromObject(source);
   const c = skeletonClone(source);
   const strength = opts.tintStrength ?? 0.5;
   const target = new THREE.Color(opts.tint ?? "#ffffff");
@@ -357,30 +363,35 @@ function SkyDome({ horizon, zenith }: { horizon: string; zenith: string }) {
 }
 
 /** Attach scene fog + fallback background imperatively; the range widens with
- *  the camera zoom so the framed band stays crisp during beats. */
+ *  the camera zoom so the framed band stays crisp during beats. Written in the
+ *  frame callback, so the frame drawn has its own range: an effect runs after
+ *  ThreeCanvas has drawn the frame, and the range was the one of whatever
+ *  frame the tab had drawn before. */
 function FogSetup({ look, zoomT }: { look: TodLook; zoomT: number }) {
   const { scene } = useThree();
-  useEffect(() => {
-    scene.fog = new THREE.Fog(look.sky, look.fogNear, look.fogFar);
-    scene.background = new THREE.Color(look.sky);
-    return () => {
+  useEffect(
+    () => () => {
       scene.fog = null;
       scene.background = null;
-    };
-  }, [scene, look.sky, look.fogNear, look.fogFar]);
-  useEffect(() => {
+    },
+    [scene],
+  );
+  useFrame(() => {
     const l2 = Math.log2(Math.max(1, zoomT));
-    if (scene.fog instanceof THREE.Fog) {
-      scene.fog.near = look.fogNear - 3 * l2;
-      scene.fog.far = look.fogFar + 115 * l2;
-    }
+    if (!(scene.fog instanceof THREE.Fog)) scene.fog = new THREE.Fog(look.sky);
+    scene.fog.color.set(look.sky);
+    scene.fog.near = look.fogNear - 3 * l2;
+    scene.fog.far = look.fogFar + 115 * l2;
+    if (!(scene.background instanceof THREE.Color)) scene.background = new THREE.Color();
+    scene.background.set(look.sky);
   });
   return null;
 }
 
 function DriftingClouds({ color }: { color: string }) {
   const frame = useCurrentFrame();
-  const drift = (frame / 30) * 0.5;
+  const { fps } = useVideoConfig();
+  const drift = (frame / fps) * 0.5;
   const puffs: Array<{ x: number; y: number; z: number; s: number; parts: Array<[number, number, number, number]> }> = [
     { x: -48, y: 36, z: -96, s: 1.0, parts: [[0, 0, 0, 6], [5, -1, 1, 4.4], [-5, -1.2, 0, 4.6], [1.5, 2.6, 0, 4]] },
     { x: 34, y: 44, z: -88, s: 0.8, parts: [[0, 0, 0, 5], [4.4, -0.8, 0, 3.6], [-4, -1, 0, 3.8], [-7.5, -1.4, 0, 2.6]] },
@@ -1086,7 +1097,8 @@ function TrafficLoop({ specId, vehicleCount }: { specId: string; vehicleCount?: 
 
 function MovingCar({ def, specId }: { def: CarDef; specId: string; index: number }) {
   const frame = useCurrentFrame();
-  const pos = carPos(def, frame / 30);
+  const { fps } = useVideoConfig();
+  const pos = carPos(def, frame / fps);
   return (
     <group position={[pos.x, 0.02, pos.z]} rotation={[0, pos.rotY, 0]}>
       <CarBody def={def} specId={specId} />
@@ -1246,7 +1258,7 @@ function Walkers({ specId, alertTimes, crowdCount }: { specId: string; alertTime
 }
 
 function WalkerFile({ def, alertTimes }: { def: WalkerDef; alertTimes: number[] }) {
-  const t = useCurrentFrame() / 30;
+  const t = useCurrentFrame() / useVideoConfig().fps;
   let lookUp = 0;
   for (const at of alertTimes.slice(1)) {
     if (def.alertWallet && t >= at && t < at + 2.2) lookUp = 1;
@@ -1343,7 +1355,7 @@ function AnimatedPerson({ def, t, alertTimes }: { def: WalkerDef; t: number; ale
 /* ------------------------------------------------------------------ */
 
 function CafeIdlers({ specId }: { specId: string }) {
-  const t = useCurrentFrame() / 30;
+  const t = useCurrentFrame() / useVideoConfig().fps;
   const variants = useMemo(() => pickUnique(S(specId, "idl"), walkerPool(), 3), [specId]);
   const spots: Array<{ x: number; z: number; rotY: number }> = [
     { x: 5.5, z: -11.0, rotY: Math.PI / 2 },
@@ -1399,7 +1411,7 @@ function StandingPerson({ file, x, z, rotY, h, tint, t }: { file: string; x: num
 /* ------------------------------------------------------------------ */
 
 function PetWalker({ specId }: { specId: string }) {
-  const t = useCurrentFrame() / 30;
+  const t = useCurrentFrame() / useVideoConfig().fps;
   const pet = firstMatch(PETS, /shiba/) ?? firstMatch(PETS, /husky/);
   if (!pet) return null;
   const def: WalkerDef = {
@@ -1890,15 +1902,11 @@ function CameraRig({
 }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
   useFrame(() => {
     const cam = camera as THREE.PerspectiveCamera;
-    if (cam.far < 2200) {
-      cam.far = 2200;
-      cam.near = 0.08;
-      cam.updateProjectionMatrix();
-    }
-    const t = frame / 30;
+    const t = frame / fps;
     const l2 = Math.log2(Math.max(1, zoomT));
     const D = Math.max(6, duration);
 
@@ -1979,9 +1987,14 @@ function CameraRig({
     const tz = -13 - l2 * 0.9 - push * 0.5;
     camera.lookAt(tx, ty, tz);
     camera.rotation.z = roll;
+    // Every frame its own lens. A change under 0.01° used to be skipped, and
+    // the far and near were set only once, so a frame kept the fov of the
+    // frame its tab drew before, or a director's shot's far and near.
     const fov = 62 / (1 + l2 * 0.17);
-    if (Math.abs(cam.fov - fov) > 0.01) {
+    if (cam.fov !== fov || cam.near !== 0.08 || cam.far !== 2200) {
       cam.fov = fov;
+      cam.near = 0.08;
+      cam.far = 2200;
       cam.updateProjectionMatrix();
     }
   });
@@ -1993,12 +2006,14 @@ function CameraRig({
 /* ------------------------------------------------------------------ */
 
 export function StreetStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const active = scene ?? spec.scenes[0];
   const panel = spec.statPanel ?? null;
   const lightsOut = lightsOutAt(spec, t);
-  const zoom = panel ? statZoomAt(panel, frame / 30) : 1;
+  const zoom = panel ? statZoomAt(panel, frame / fps) : 1;
   const alertTimes = panel ? panel.beats.map((b) => b.t) : [];
   const street = active?.street;
   const accent = street?.accent ?? "classic";
@@ -2166,7 +2181,8 @@ function heroMat(color: string, rough: number, metal: number, emissive?: string)
 /** Rows of subject props along one sidewalk. count tracks the HUD value. */
 function HeroProps({ spec }: { spec: ShotSpec }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const hp = spec.heroProp;
   if (!hp || hp.style === "none") return null;
   const res = heroAmountAt(spec, t);

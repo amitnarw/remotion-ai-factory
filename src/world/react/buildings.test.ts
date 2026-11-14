@@ -580,9 +580,11 @@ test("buildings: the budget: at most BUILDING_MAX buildings and BUILDING_MATRICE
     console.log(`  ${id}: ${set.buildings.length} buildings, ${perFrame} matrices per frame`);
   }
   // A tight budget skips a costly building and takes the next nearest instead of stopping.
-  const { rests, epicentre, town } = placeOf("new-york");
+  const { rests, epicentre, town, set } = placeOf("new-york");
+  const costly = set.buildings.reduce((a, b) => (b.cost > a.cost ? b : a));
+  assert.ok(costly.cost > 50, `the costliest takes ${costly.cost} matrices`);
   const tight = liftingBuildings(rests, epicentre, "new-york", "kit", { cost: (j) => kitBuildingCost(town, j), budget: 50 });
   assert.ok(buildingMatrices(tight) <= 50);
-  assert.ok(!tight.buildings.some((b) => b.id === placeOf("new-york").set.buildings[0].id), "the 187-matrix building is skipped");
+  assert.ok(!tight.buildings.some((b) => b.id === costly.id), `the ${costly.cost}-matrix building is skipped`);
   assert.ok(tight.buildings.length >= BUILDING_MAX - 1);
 });

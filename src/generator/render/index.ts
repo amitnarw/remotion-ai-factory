@@ -24,8 +24,8 @@
 import { join } from "path";
 import { selectComposition } from "@remotion/renderer";
 import { VERSION } from "remotion/version";
-import { videoSeconds, formatDims, type ShotSpec } from "../spec.schema";
-import { secToFrame } from "../timing";
+import { formatDims, type ShotSpec } from "../spec.schema";
+import { videoFrames } from "../../compositions/brand/length";
 import { ensureBundle } from "./bundle";
 import { BrowserPool, chromeVersion, GL } from "./browser";
 import { PublicHasher, visualManifest } from "./hash";
@@ -76,6 +76,8 @@ export async function renderChunked(
     log?: (line: string) => void;
     /** Frames finished out of the frames this call had to render. */
     onFrames?: (done: number, total: number) => void;
+    /** Renders an unused chunk is kept for (render/chunks.ts; variants pass more). */
+    keepRuns?: number;
   } = {},
 ): Promise<ChunkedRenderResult> {
   const t0 = Date.now();
@@ -84,7 +86,8 @@ export async function renderChunked(
   const root = process.cwd();
   const publicDir = join(root, "public");
   const fps = spec.fps ?? 30;
-  const durationInFrames = secToFrame(videoSeconds(spec), fps);
+  // The whole video: a channel brand's intro and outro bumpers included (brand/length.ts).
+  const durationInFrames = videoFrames(spec, fps);
   const dims = spec.settings ? formatDims(spec.settings.format) : { width: spec.width ?? 1080, height: spec.height ?? 1920 };
   const out = opts.out ?? join(root, "output", id, "video.mp4");
   const chunksDir = join(root, "output", id, "chunks");
@@ -152,6 +155,7 @@ export async function renderChunked(
       pool,
       log,
       onFrames,
+      ...(opts.keepRuns ? { keepRuns: opts.keepRuns } : {}),
     });
 
     const rendered = results.filter((r) => !r.reused);

@@ -10,7 +10,7 @@
  */
 import { useMemo } from "react";
 import React from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -60,7 +60,8 @@ export function Birds({
   speed = DEFAULT_SPEED,
 }: BirdsProps) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
 
   // Pre-compute deterministic per-bird parameters
   const birdParams = useMemo(() => {
@@ -139,7 +140,7 @@ export function Birds({
       // Simple: point toward next position on orbit
       const p = birdParams[i];
       const orbitSpeed = 0.15 * speed * p.speedMul;
-      const nextAngle = (t + 1/30) * orbitSpeed + p.phase;
+      const nextAngle = (t + 1 / fps) * orbitSpeed + p.phase;
       const nextX = center[0] + Math.cos(nextAngle) * p.radius;
       const nextZ = center[2] + Math.sin(nextAngle) * p.radius;
       const dir = new THREE.Vector3(nextX - pos.x, 0, nextZ - pos.z).normalize();

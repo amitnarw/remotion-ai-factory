@@ -4,6 +4,7 @@ import { validateSpec, type ShotSpec } from "../spec.schema";
 import { resolveAudio } from "../audio-resolve";
 import { whipBlur, whipYaw } from "../../compositions/TransitionOverlay";
 import { isFlightCut, planTransitions } from "./transitions";
+import type { AmbientBed } from "./sound";
 
 type Scene = ShotSpec["scenes"][number];
 const scene = (kit: string, from: number, to: number, timeOfDay = "afternoon"): Scene => ({ scene: kit, kit, from, to, look: { timeOfDay } }) as Scene;
@@ -28,8 +29,9 @@ test("a whip swings one way across the cut, with no jump at its edges", () => {
   assert.ok(whipBlur(tr, 10) > whipBlur(tr, 10.1));
 });
 
+// A world scene's moment fits its word (its real sun decides its light): 22:00 is night, 19:30 day.
 const world = (place: string, from: number, to: number, timeOfDay: string, flight?: boolean): Scene =>
-  ({ scene: "world", kit: "world", from, to, look: { timeOfDay }, world: { place, date: "2026-06-21", time: "19:30" }, ...(flight ? { flight } : {}) }) as Scene;
+  ({ scene: "world", kit: "world", from, to, look: { timeOfDay }, world: { place, date: "2026-06-21", time: timeOfDay === "night" ? "22:00" : "19:30" }, ...(flight ? { flight } : {}) }) as Scene;
 
 test("a flight between world places is the transition: no dip, whip or flash under it", () => {
   // street -> paris (a world scene, no flight: the first place) -> cairo (a flight, day -> night)
@@ -62,4 +64,59 @@ test("no cut whoosh under a flight; every other cut and sound keeps its own", ()
   // Without the flight window the same cut gets its whoosh back.
   const plain = resolveAudio({ ...spec, flights: undefined }, "flight-audio").spec;
   assert.deepEqual(plain.audio?.transitions?.map((x) => x.t), [6, 14]);
+});
+
+test("a time-lapse's cuts dip by the sun at each edge: its end going out, its start coming in", () => {
+  // Paris, 30 October: 17:00 is golden light (4.5 degrees), 19:30 full night (19 down).
+  const lapse = (from: number, to: number, time: string, lapseTo: string): Scene =>
+    ({ scene: "world", kit: "world", from, to, look: { timeOfDay: "golden" }, world: { place: "paris", date: "2026-10-30", time, lapse: { to: lapseTo } } }) as Scene;
+  const at = (from: number, to: number, timeOfDay: string): Scene =>
+    ({ scene: "world", kit: "world", from, to, look: { timeOfDay }, world: { place: "paris", date: "2026-10-30", time: timeOfDay === "night" ? "21:00" : "17:00" } }) as Scene;
+  const cuts = (scenes: Scene[]) => planTransitions(scenes, []).map((x) => `${x.t}:${x.type}`);
+  // A sunset lapse into a night scene: night on both sides of the cut, so no dip to black.
+  assert.deepEqual(cuts([lapse(0, 8, "17:00", "19:30"), at(8, 14, "night")]), ["8:dip-white"]);
+  // Into a golden scene: from night back to day, a dip to black.
+  assert.deepEqual(cuts([lapse(0, 8, "17:00", "19:30"), at(8, 14, "golden")]), ["8:dip-black"]);
+  // Coming in, the lapse is its first moment: golden after a night scene dips to black.
+  assert.deepEqual(cuts([at(0, 6, "night"), lapse(6, 14, "17:00", "19:30")]), ["6:dip-black"]);
+  assert.deepEqual(cuts([at(0, 6, "golden"), lapse(6, 14, "17:00", "19:30")]), ["6:dip-white"]);
+  // Without its lapse its one moment's sun decides: 17:00 is daylight, 21:00 night.
+  const plain = { ...lapse(0, 8, "17:00", "19:30"), world: { place: "paris", date: "2026-10-30", time: "17:00" } } as Scene;
+  assert.deepEqual(cuts([plain, at(8, 14, "night")]), ["8:dip-black"]);
+});
+
+test("a world scene's cut dips by its real sun, not by its word", () => {
+  const world = (from: number, to: number, place: string, time: string, timeOfDay: string): Scene =>
+    ({ scene: "world", kit: "world", from, to, look: { timeOfDay }, world: { place, date: "2026-06-21", time } }) as Scene;
+  const cuts = (scenes: Scene[]) => planTransitions(scenes, []).map((x) => `${x.t}:${x.type}`);
+  // Noon marked "night" before noon elsewhere: daylight on both sides, both world scenes: a dip to white.
+  assert.deepEqual(cuts([world(0, 6, "paris", "12:00", "night"), world(6, 12, "cairo", "12:00", "afternoon")]), ["6:dip-white"]);
+  // Paris at 22:30 in June marked "golden" has set: into a daylight scene, a dip to black.
+  assert.deepEqual(cuts([world(0, 6, "paris", "22:30", "golden"), world(6, 12, "cairo", "12:00", "golden")]), ["6:dip-black"]);
+  // A kit scene still goes by its word.
+  assert.deepEqual(cuts([scene("ocean", 0, 6, "night"), world(6, 12, "cairo", "12:00", "night")]), ["6:dip-black"]);
+});
+
+test("a bed crossing over from the same sound plays the same recording", () => {
+  const spec = validateSpec({
+    id: "lapse-audio",
+    title: "Lapse audio",
+    hook: { text: "What if?", t: 0, duration: 2 },
+    scenes: [scene("street-block", 0, 12, "golden")],
+    events: [{ t: 3, name: "hook", targets: [], sfx: [{ tag: "pop_light" }] }],
+    audio: { voiceFiles: [] },
+  });
+  // A lapse's level change (pipeline/sound.ts lapseAmbience): the murmur crosses over from 5 to 7 s.
+  const beds: AmbientBed[] = [
+    { tag: "street_murmur", from: 0, to: 7, vol: 0.45, fadeOut: 2 },
+    { tag: "forest_birds", from: 0, to: 7, vol: 0.2, fadeOut: 2 },
+    { tag: "street_murmur", from: 5, to: 12, vol: 0.3, fadeIn: 2 },
+  ];
+  spec.audio!.ambient = beds;
+  const { spec: out, report } = resolveAudio(spec, "lapse-audio");
+  const [before, , after] = out.audio!.ambient!;
+  assert.equal(after.file, before.file);
+  assert.equal(after.gain, before.gain);
+  if (report.libraryBuilt) assert.ok(before.file, "a library recording, the same on both sides");
+  assert.equal(report.ambientLibrary + report.ambientSynth, 3);
 });

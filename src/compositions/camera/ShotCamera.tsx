@@ -51,7 +51,10 @@ function SolvedCamera({ shot, anchor, t, transitions }: { shot: SpecShot; anchor
     const whip = whipYaw(transitions, t);
     if (whip !== 0) cam.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, whip));
     const far = Math.max(2200, Math.hypot(...pose.position) * 4 + subject.radius * 40);
-    if (Math.abs(cam.fov - pose.fov) > 1e-4 || cam.far < far || cam.near !== 0.05) {
+    // The lens whenever it differs at all: a larger far from an earlier frame
+    // in the tab used to stay, and fov changes under 1e-4 were skipped, so a
+    // frame depended on what its tab had drawn before.
+    if (cam.fov !== pose.fov || cam.far !== far || cam.near !== 0.05) {
       cam.fov = pose.fov;
       cam.near = 0.05;
       cam.far = far;

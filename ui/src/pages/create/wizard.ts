@@ -12,6 +12,18 @@ const IDEA_LS_KEY = "vf:idea";
 const VOICE_LS_KEY = "vf:voiceConfig";
 const VIDEO_LS_KEY = "vf:videoSettings";
 const CAPTION_LS_KEY = "vf:captionStyle";
+const CHANNEL_LS_KEY = "vf:channel";
+const STORY_LS_KEY = "vf:story";
+
+/** The user's own story: off (the AI writes from the idea), adapted into beats, or kept word for word. */
+export interface OwnStory {
+  on: boolean;
+  text: string;
+  mode: "adapt" | "as-written";
+}
+
+/** Enough of a pasted story to plan from. */
+export const MIN_STORY_LENGTH = 20;
 
 /** Production settings chosen before writing the plan (sent as spec.settings). */
 export interface VideoSettingsForm {
@@ -23,6 +35,12 @@ export interface VideoSettingsForm {
   quality: "draft" | "final";
   /** One extra AI pass that rewrites weak beats before you review. */
   critic?: boolean;
+  /** Stop after the story so you can read it first (the story gate). Unset means on.
+   *  Sent as its own field, not as a video setting. */
+  storyGate?: boolean;
+  /** Stop at the shopping list when the library is missing something (gate 2). Unset means on.
+   *  Sent as its own field, not as a video setting. */
+  shopGate?: boolean;
 }
 
 /** Narration (the story read aloud) and character voices (dialogue) are independent. */
@@ -47,6 +65,14 @@ export interface WizardState {
   video: VideoSettingsForm;
   voice: VoiceConfig;
   captions: CaptionStyleInput;
+  /** The channel the video is made for (channels/<id>.json). */
+  channel: string;
+  story: OwnStory;
+}
+
+/** The idea step can be left: an idea, or a pasted story. */
+export function hasIdea(w: Pick<WizardState, "idea" | "story">): boolean {
+  return w.idea.trim().length >= MIN_IDEA_LENGTH || (w.story.on && w.story.text.trim().length >= MIN_STORY_LENGTH);
 }
 
 export const MIN_IDEA_LENGTH = 6;
@@ -132,11 +158,25 @@ function loadCaptionStyle(): CaptionStyleInput {
   return {};
 }
 
+/** The pasted story the user last worked on. */
+function loadStory(): OwnStory {
+  try {
+    const raw = read(STORY_LS_KEY);
+    if (raw) {
+      const s = JSON.parse(raw) as Partial<OwnStory>;
+      return { on: !!s.on, text: typeof s.text === "string" ? s.text : "", mode: s.mode === "as-written" ? "as-written" : "adapt" };
+    }
+  } catch { /* ignore */ }
+  return { on: false, text: "", mode: "adapt" };
+}
+
 let state: WizardState = {
   idea: read(IDEA_LS_KEY) ?? "",
   video: loadVideoSettings(),
   voice: loadVoiceConfig(),
   captions: loadCaptionStyle(),
+  channel: read(CHANNEL_LS_KEY) ?? "what-if",
+  story: loadStory(),
 };
 const listeners = new Set<() => void>();
 
@@ -151,6 +191,8 @@ export function updateWizard(patch: Partial<WizardState>): void {
   if (patch.video) write(VIDEO_LS_KEY, JSON.stringify(patch.video));
   if (patch.voice) write(VOICE_LS_KEY, JSON.stringify(patch.voice));
   if (patch.captions) write(CAPTION_LS_KEY, JSON.stringify(patch.captions));
+  if (patch.channel !== undefined) write(CHANNEL_LS_KEY, patch.channel);
+  if (patch.story) write(STORY_LS_KEY, JSON.stringify(patch.story));
   listeners.forEach((l) => l());
 }
 

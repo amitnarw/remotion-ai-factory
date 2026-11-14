@@ -10,7 +10,7 @@
  */
 
 /** Plan jobs: the progress each pipeline stage starts at. */
-export const PLAN_PROGRESS: Record<string, number> = { writer: 10, voice: 30, director: 50, sound: 70, critic: 80, assemble: 90 };
+export const PLAN_PROGRESS: Record<string, number> = { writer: 10, claims: 20, voice: 30, check: 34, breakdown: 38, match: 44, shop: 47, director: 50, sound: 70, critic: 80, assemble: 90 };
 
 /** Render jobs: the order of the stages the log heuristics can move to. */
 const RENDER_ORDER = ["script", "voice", "assemble", "bundle", "render", "encode"];

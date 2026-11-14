@@ -225,18 +225,6 @@ export function ChoiceCard({
   );
 }
 
-/** A small label above a control. */
-export function FieldLabel({ children, htmlFor, hint }: { children: React.ReactNode; htmlFor?: string; hint?: React.ReactNode }) {
-  return (
-    <div className="mb-2">
-      <label htmlFor={htmlFor} className="text-sm font-semibold text-foreground">
-        {children}
-      </label>
-      {hint ? <div className="text-sm text-muted-foreground">{hint}</div> : null}
-    </div>
-  );
-}
-
 /** A labelled value in a list of facts. */
 export function InfoRow({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   if (value === undefined || value === null || value === "") return null;
@@ -277,7 +265,7 @@ export function MetaRow({ items, className }: { items: Array<{ label: string; va
       {items.map((it, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
           <span className="font-semibold uppercase tracking-wide text-muted-foreground/70">{it.label}</span>
-          <span className="text-foreground/90">{it.value ?? "—"}</span>
+          <span className="text-foreground/90">{it.value ?? "none"}</span>
         </span>
       ))}
     </div>

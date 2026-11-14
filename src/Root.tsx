@@ -13,8 +13,8 @@ import { WhatIfDemo } from "./compositions/WhatIfVideo/demo";
 import { WhatIfVideo } from "./compositions/WhatIfVideo/index";
 import { WhatIfVideo as LegacyWhatIfVideo } from "./compositions/WhatIfVideo/index";
 import { WhatIfAudio } from "./compositions/WhatIfAudio";
-import { ShotSpecSchema, validateSpec, formatDims, videoSeconds, type ShotSpec } from "./generator/spec.schema";
-import { secToFrame } from "./generator/timing";
+import { ShotSpecSchema, validateSpec, formatDims, type ShotSpec } from "./generator/spec.schema";
+import { videoFrames } from "./compositions/brand/length";
 import gravitySpec from "./generator/spec.example.gravity.json";
 import eyesightSpec from "./generator/spec.example.eyesight.json";
 
@@ -34,7 +34,7 @@ const WhatIfGravityDemo = () => <LegacyWhatIfVideo spec={gravityDemoSpec} />;
  */
 const WhatIfVideoPropsSchema = z.object({ spec: ShotSpecSchema });
 
-/** Size and length come from the spec, so a 16:9 plan opens as a 16:9 composition. */
+/** Size and length come from the spec, so a 16:9 plan opens as a 16:9 composition. The length holds a channel brand's bumpers. */
 const specMetadata = ({ props }: { props: { spec: ShotSpec } }) => {
   const spec = props.spec;
   const dims = spec.settings ? formatDims(spec.settings.format) : { width: spec.width, height: spec.height };
@@ -42,7 +42,7 @@ const specMetadata = ({ props }: { props: { spec: ShotSpec } }) => {
     width: dims.width,
     height: dims.height,
     fps: spec.fps ?? FPS,
-    durationInFrames: secToFrame(videoSeconds(spec), spec.fps ?? FPS),
+    durationInFrames: videoFrames(spec, spec.fps ?? FPS),
     props,
   };
 };

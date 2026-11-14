@@ -3,22 +3,37 @@ import cors from "cors";
 import { spawn, spawnSync } from "child_process";
 import { join, basename } from "path";
 import fs from "fs";
-import { loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
-const FFMPEG = join(ROOT, "node_modules", "@remotion", "compositor-win32-x64-msvc", "ffmpeg.exe");
+import { applyEnv, configProblems, loadConfig, saveConfig, loadEnv, saveEnv, ROOT } from "./providers";
+import { FFMPEG } from "../src/generator/ffmpeg";
+import { reportTime } from "../src/generator/ai/knowledge";
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
 import { createJob, getJob, getAllJobs, premiseSlug, runJob, deleteJob, subscribeSSE } from "./jobs";
-import { loadAiConfig, resolveModel } from "../src/generator/ai/provider-registry";
+import { resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
 import { ROLE_DEFS, ROLE_NAMES, pickRoleModel } from "../src/generator/ai/roles";
 import { resolveRoleModels } from "../src/generator/pipeline/llm";
 import { canReassemble, reassemble } from "../src/generator/pipeline/run";
+import { isComplete, nextStage, readBrief, readRun, STAGE_LABELS, STAGES, waitsForShopping, waitsForStory } from "../src/generator/pipeline/manifest";
+import { DEFAULT_CHANNEL, listChannels, loadChannel, readChannelFile, saveChannel, STORY_MODES, type ChannelProfile, type StoryMode } from "../src/generator/ai/channels";
+import { MOOD_TAGS } from "../src/generator/audio-resolve";
+import { scriptPremise } from "../src/generator/pipeline/script";
+import { SECTIONS, shoppingList } from "../src/generator/library/shopping";
+import type { NeedsFile } from "../src/generator/library/match";
+import { findOffers, offerFromLink, parseApprovals, type Shopping } from "../src/generator/library/acquire/acquire";
+import type { SourceId } from "../src/generator/library/acquire/types";
+import { acquirePaths, readAcquired } from "../src/generator/library/acquire/catalog";
+import { rankRequests, readRequests } from "../src/generator/library/acquire/requests";
+import { sourceStatus } from "../src/generator/library/acquire/sources";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
 import { AUDITION_TEXT, KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription, voxTransform, voxReferenceId, voiceLabel, voiceMeta } from "../src/generator/voices";
 import { resolveTtsPython } from "../src/generator/tts-python";
-import { cacheKey, synthesizeLines, voicePreviewKey, voicePreviewLine } from "../src/generator/tts";
+import { cacheKey, synthesizeLines, voicePreviewKey, voicePreviewLine, type VoiceLine } from "../src/generator/tts";
 import { queueFilmChange, registerFilmRoutes } from "./film";
+import { registerProducerRoutes } from "./producer";
+import { registerVariantsRoutes } from "./variants";
+import { registerPublishRoutes } from "./publish";
 import { checkRecast } from "../src/generator/film/recast";
 import { captionOverrides } from "../src/generator/film/store";
 import { applyCaptionOverrides } from "../src/generator/film/diff";
@@ -28,6 +43,11 @@ app.use(cors());
 app.use(express.json());
 // Editor (Phase 4): versioned edits, "Ask AI", undo/redo.
 registerFilmRoutes(app);
+// The producer you talk to (P5): notes on a run, proposals, confirm and undo.
+registerProducerRoutes(app);
+// Variants (15-producer.md §17): other hooks, endings and formats of a finished run.
+registerVariantsRoutes(app);
+registerPublishRoutes(app);
 
 // ---------- Providers ----------
 /** Model role assignments: which provider/model each pipeline step uses. */
@@ -37,6 +57,7 @@ app.get("/api/roles", (_req, res) => {
     roles: ROLE_DEFS.map((d) => ({ ...d, assignment: cfg.roles?.[d.name] ?? null })),
     providers: Object.entries(cfg.providers).map(([name, c]) => ({ name, models: c.models ?? [] })),
     defaultProvider: cfg.defaultProvider ?? null,
+    problems: configProblems(),
   });
 });
 
@@ -89,7 +110,7 @@ app.get("/api/providers", (_req, res) => {
     keyConfigured: !!env[c.apiKeyEnv!],
     isDefault: name === cfg.defaultProvider,
   }));
-  res.json({ providers: out, defaultProvider: cfg.defaultProvider });
+  res.json({ providers: out, defaultProvider: cfg.defaultProvider, problems: configProblems() });
 });
 
 app.post("/api/providers/:name/key", (req, res) => {
@@ -201,8 +222,8 @@ app.post("/api/providers/:name/test", async (req, res) => {
     // gateway), the list proves nothing about the key — the key only matters
     // for generation. Run a real 1-token generation as the credential check.
     if (name === "ollama" || name === "openrouter" || name === "gateway") {
-      const cfg2 = loadAiConfig();
-      for (const [k, v] of Object.entries(loadEnv())) process.env[k] = v;
+      const cfg2 = loadConfig();
+      applyEnv();
       const resolution = resolveModel(cfg2, name, chosenModel);
       if (!resolution.reference) {
         return res.json({
@@ -271,9 +292,81 @@ app.get("/api/providers/:name/models", (req, res) => {  const { name } = req.par
 });
 
 // ---------- Plan Studio: spec engine (AI writes the plan, you approve) ----------
+/**
+ * Every pipeline role must have a working key (roles without their own model
+ * use the writer's). The problem as an API error, or null.
+ */
+function rolesProblem(cli: { provider?: string; model?: string }, reader = false): { error: string; fix: string } | null {
+  const savedEnv = loadEnv();
+  const config = loadConfig();
+  // The script reader is asked only for a script as written.
+  const roleModels = resolveRoleModels(["writer", ...(reader ? (["reader"] as const) : []), "checker", "breakdown", "matcher", "director", "sound", "critic"], cli);
+  for (const [role, rm] of Object.entries(roleModels)) {
+    const pc = config.providers?.[rm.provider];
+    if (!pc) {
+      return { error: `the ${role} role uses provider "${rm.provider}", which is not configured`, fix: "Fix it in Settings → AI models → Model roles" };
+    }
+    if (pc.apiKeyEnv && rm.provider !== "gateway" && !savedEnv[pc.apiKeyEnv]) {
+      return {
+        error: `API key not set for provider "${rm.provider}" (used by the ${role} role)`,
+        fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(rm.provider)}`,
+      };
+    }
+    if (!rm.model) {
+      return { error: `no model chosen for the ${role} role`, fix: "Choose one in Settings → AI models → Model roles" };
+    }
+  }
+  return null;
+}
+
+/** The plan job that is writing now, if any (one at a time: the writer is the expensive step). */
+function busyPlan() {
+  return getAllJobs().find((j) => j.engine === "plan" && (j.status === "running" || j.status === "queued"));
+}
+
 app.post("/api/plan", async (req, res) => {
-  const body = req.body as { input?: string; premise?: string; provider?: string; model?: string; audio?: unknown; settings?: unknown };
-  const premise = (body.input ?? body.premise ?? "").trim();
+  const body = req.body as {
+    input?: string;
+    premise?: string;
+    provider?: string;
+    model?: string;
+    audio?: unknown;
+    settings?: unknown;
+    /** false: plan straight through, without stopping for the story's approval. Unset: the channel decides (on). */
+    storyGate?: boolean;
+    /** false: never stop at the shopping list (gate 2). Unset: the channel decides (on). */
+    shopGate?: boolean;
+    /** The sources gate 2 searches (acquire/sources ids; [] searches none). Unset: every default source. */
+    shopSources?: string[];
+    /** A run whose story this plan reuses. */
+    storyFrom?: string;
+    /** The channel (channels/<id>.json); unset: what-if. */
+    channel?: string;
+    /** The user's own story or script, and how to use it: adapt or as-written (unset: the channel's script mode). */
+    script?: string;
+    mode?: string;
+  };
+  // The channel and the story mode, checked before anything starts.
+  let profile: ChannelProfile;
+  try {
+    profile = loadChannel(typeof body.channel === "string" && body.channel ? body.channel : DEFAULT_CHANNEL);
+  } catch (e) {
+    return res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "Pick a channel from the list" });
+  }
+  const script = typeof body.script === "string" && body.script.trim() ? body.script : undefined;
+  if (script && script.length > 60_000) {
+    return res.status(400).json({ error: "the story is too long (over 60,000 characters)", fix: "Paste a shorter story; 16:9 videos hold about 10 minutes" });
+  }
+  const mode = typeof body.mode === "string" && body.mode ? body.mode : script ? profile.writer.scriptMode : "premise";
+  if (!(STORY_MODES as readonly string[]).includes(mode) || !profile.writer.modes.includes(mode as StoryMode)) {
+    return res.status(400).json({ error: `the ${profile.name} channel does not use the "${mode}" story mode`, fix: `Choose one of: ${profile.writer.modes.join(", ")}` });
+  }
+  if (mode !== "premise" && !script) {
+    return res.status(400).json({ error: "this story mode needs your story", fix: "Paste your story, or write an idea instead" });
+  }
+  // A pasted story names itself when no idea was typed.
+  const typed = (body.input ?? body.premise ?? "").trim();
+  const premise = typed.length >= 6 || !script ? typed : scriptPremise(script);
   if (premise.length < 6) {
     return res.status(400).json({
       error: "the idea is missing or too short",
@@ -304,8 +397,8 @@ app.post("/api/plan", async (req, res) => {
 
   // Fail fast BEFORE spawning: validate provider + key + resolution.
   const savedEnv = loadEnv();
-  for (const [k, v] of Object.entries(savedEnv)) process.env[k] = v;
-  const config = loadAiConfig();
+  applyEnv();
+  const config = loadConfig();
   const provName = provider ?? config.defaultProvider ?? "gateway";
   // Test mode: recorded fixtures stand in for every model, so no key or model is needed.
   const fixtures = !!process.env.FACTORY_LLM_FIXTURES;
@@ -361,7 +454,7 @@ app.post("/api/plan", async (req, res) => {
   }
 
   // One plan job at a time (the writer is the expensive step).
-  const busy = getAllJobs().find((j) => j.engine === "plan" && (j.status === "running" || j.status === "queued"));
+  const busy = busyPlan();
   if (busy) {
     return res.status(409).json({
       error: `A plan is already being written (job ${busy.id}) — wait for it to finish`,
@@ -371,25 +464,25 @@ app.post("/api/plan", async (req, res) => {
   // Every pipeline role must have a working key (roles without their own
   // model use the writer's).
   if (!fixtures && provName !== "offline") {
-    const roleModels = resolveRoleModels(["writer", "director", "sound", "critic"], {
-      provider: typeof body.provider === "string" ? body.provider : undefined,
-      model: typeof body.model === "string" ? body.model : undefined,
-    });
-    for (const [role, rm] of Object.entries(roleModels)) {
-      const pc = config.providers?.[rm.provider];
-      if (!pc) {
-        return res.status(400).json({ error: `the ${role} role uses provider "${rm.provider}", which is not configured`, fix: "Fix it in Settings → AI models → Model roles" });
-      }
-      if (pc.apiKeyEnv && rm.provider !== "gateway" && !savedEnv[pc.apiKeyEnv]) {
-        return res.status(400).json({
-          error: `API key not set for provider "${rm.provider}" (used by the ${role} role)`,
-          fix: `Save your key in Settings → AI models — create one at ${keyUrlFor(rm.provider)}`,
-        });
-      }
-      if (!rm.model) {
-        return res.status(400).json({ error: `no model chosen for the ${role} role`, fix: "Choose one in Settings → AI models → Model roles" });
-      }
-    }
+    const problem = rolesProblem(
+      {
+        provider: typeof body.provider === "string" ? body.provider : undefined,
+        model: typeof body.model === "string" ? body.model : undefined,
+      },
+      mode === "as-written",
+    );
+    if (problem) return res.status(400).json(problem);
+  }
+  // A story of an earlier run to plan with again (no writer call).
+  // The sources gate 2 may search, when the request limits them.
+  const shopSources = Array.isArray(body.shopSources) ? body.shopSources.map(String) : undefined;
+  const strange = (shopSources ?? []).filter((s) => !sourceStatus().some((x) => x.id === s));
+  if (strange.length) {
+    return res.status(400).json({ error: `no source called ${strange.join(", ")}`, fix: `Use some of: ${sourceStatus().map((x) => x.id).join(", ")}` });
+  }
+  const storyFrom = typeof body.storyFrom === "string" && body.storyFrom ? body.storyFrom : undefined;
+  if (storyFrom && (!/^[a-z0-9-]+$/.test(storyFrom) || !fs.existsSync(join(ROOT, "output", storyFrom, "story.json")))) {
+    return res.status(400).json({ error: `no saved story for "${storyFrom}"`, fix: "Write the idea again from Step 1" });
   }
 
   // Under fixtures no configured model writes anything: say so in the job
@@ -397,6 +490,21 @@ app.post("/api/plan", async (req, res) => {
   const job = fixtures ? createJob(premise, "fixtures", process.env.FACTORY_LLM_FIXTURES) : createJob(premise, provName, model);
   job.engine = "plan";
   job.explicitModel = !fixtures && (typeof body.provider === "string" || typeof body.model === "string");
+  // The story gate: as the request says, else as the channel says (on).
+  job.storyGate = body.storyGate === undefined ? profile.gates.story : body.storyGate !== false;
+  // Gate 2 likewise: stop at the shopping list when the library is missing something.
+  job.shopGate = body.shopGate === undefined ? profile.gates.shop : body.shopGate !== false;
+  if (shopSources) job.shopSources = shopSources;
+  if (storyFrom) job.storyFrom = storyFrom;
+  if (profile.id !== DEFAULT_CHANNEL) job.channel = profile.id;
+  if (script) {
+    // The CLI reads the story from a file (a long one would pass Windows' command-line limit).
+    const rel = `output/plan-${job.id}-script.txt`;
+    fs.mkdirSync(join(ROOT, "output"), { recursive: true });
+    fs.writeFileSync(join(ROOT, rel), script);
+    job.scriptFile = rel;
+    job.mode = mode;
+  }
   if (body.audio) {
     job.audio = body.audio;
     // Voice comes first in the pipeline, so the plan needs the voice settings too.
@@ -408,6 +516,282 @@ app.post("/api/plan", async (req, res) => {
   if (settings) job.settings = settings;
   runJob(job, { noRender: true });
   res.json({ jobId: job.id });
+});
+
+/**
+ * The critic's notes that were kept as proposals (the approved story is
+ * locked, so they were not applied), or undefined.
+ */
+function criticNotes(runId: string): Array<{ beat: string; problem: string; fix: string }> | undefined {
+  const run = readRun(runId);
+  if (run?.stages.critic.state !== "done" || run.stages.critic.facts?.applied !== false) return undefined;
+  try {
+    const issues = JSON.parse(fs.readFileSync(join(ROOT, "output", runId, "critique.json"), "utf8"));
+    return Array.isArray(issues) && issues.length ? issues : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What the story needs and what the library has for it (needs.json, P3), as
+ * the plan review shows it: read-only until gate 2. Undefined when the run
+ * has no breakdown.
+ */
+function storyNeeds(runId: string): Array<{ status: string; title: string; items: Array<{ id: string; kind: string; what: string; must: boolean; beats: string[]; use?: string; then?: string }> }> | undefined {
+  try {
+    const file = JSON.parse(fs.readFileSync(join(ROOT, "output", runId, "needs.json"), "utf8")) as NeedsFile;
+    const groups = shoppingList(file);
+    return SECTIONS.filter((s) => groups[s.status].length).map((s) => ({
+      status: s.status,
+      title: s.title,
+      items: groups[s.status].map((n) => ({
+        id: n.id,
+        kind: n.kind,
+        what: n.what,
+        must: n.must,
+        beats: n.beats,
+        ...(n.use ? { use: n.use.name } : {}),
+        ...(n.then ? { then: n.then } : {}),
+      })),
+    }));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Gate 2's shopping list as the dashboard shows it: the needs that wait for a
+ * choice (shopping.json), each with its beats and the name of its stand-in
+ * (needs.json), the sources and what went wrong searching. Undefined when
+ * the files are missing.
+ */
+function shoppingFor(runId: string) {
+  try {
+    const dir = join(ROOT, "output", runId);
+    const shopping = JSON.parse(fs.readFileSync(join(dir, "shopping.json"), "utf8")) as Shopping;
+    const needs = JSON.parse(fs.readFileSync(join(dir, "needs.json"), "utf8")) as NeedsFile;
+    const run = readRun(runId);
+    const waiting = run?.gates.shop.needs;
+    const byId = new Map(needs.needs.map((n) => [n.id, n]));
+    return {
+      inventory: shopping.inventory,
+      waiting: !!run && waitsForShopping(run),
+      needs: shopping.needs
+        .filter((n) => !waiting || waiting.includes(n.need))
+        .map((n) => {
+          const m = byId.get(n.need);
+          return { ...n, beats: m?.beats ?? [], ...(m?.use ? { useName: m.use.name } : {}) };
+        }),
+      sources: shopping.sources,
+      ...(shopping.searched ? { searched: shopping.searched } : {}),
+      warnings: shopping.warnings,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Continue a run in a new plan job: approve the story that waits at the gate
+ * (as it is on disk now), or go on from the stage a crash or a restart
+ * stopped. Finished stages are kept and saved model replies are replayed.
+ * At gate 2 the body carries the choices: `approvals` as the CLI writes them
+ * ("n6=bigsoundbank:1048", "n2=close", "n3=build", "n9=skip") and `allFree`
+ * for "Approve every CC0 pick"; the needs not named keep their stand-ins.
+ */
+app.post("/api/plan/:runId/resume", (req, res) => {
+  const { runId } = req.params;
+  if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
+  const body = (req.body ?? {}) as { approvals?: unknown; allFree?: unknown };
+  const approvals = Array.isArray(body.approvals) ? body.approvals.filter((a): a is string => typeof a === "string") : [];
+  try {
+    parseApprovals(approvals);
+  } catch (e) {
+    return res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "For each need choose an offer, keep the stand-in, ask for it to be built, or skip it" });
+  }
+  const run = readRun(runId);
+  const brief = readBrief(runId);
+  if (!run || !brief) {
+    return res.status(404).json({ error: `no saved run "${runId}" on the server`, fix: "Write the idea again from Step 1" });
+  }
+  if (isComplete(run)) {
+    return res.status(409).json({ error: "this plan is already written", fix: "Open it in the editor, or approve it from its review" });
+  }
+  const busy = busyPlan();
+  if (busy) {
+    return res.status(409).json({ error: `A plan is already being written (job ${busy.id}) — wait for it to finish`, jobId: busy.id });
+  }
+  applyEnv();
+  const fixtures = !!process.env.FACTORY_LLM_FIXTURES;
+  if (!fixtures) {
+    const problem = rolesProblem(brief.cli ?? {}, brief.mode === "as-written");
+    if (problem) return res.status(400).json(problem);
+  }
+  const writer = pickRoleModel(loadConfig().roles, "writer", brief.cli?.provider, brief.cli?.model);
+  const job = fixtures
+    ? createJob(brief.premise, "fixtures", process.env.FACTORY_LLM_FIXTURES)
+    : createJob(brief.premise, writer.provider ?? loadConfig().defaultProvider, writer.model);
+  job.engine = "plan";
+  job.resume = true;
+  job.runId = runId;
+  const choices = [...(approvals.length ? ["--approve", approvals.join(",")] : []), ...(body.allFree === true ? ["--all-cc0"] : [])];
+  runJob(job, { extraArgs: ["--resume", runId, "--no-render", ...choices] });
+  res.json({ jobId: job.id });
+});
+
+/**
+ * Gate 2, from a need's card: the sources asked again for that need alone,
+ * up to 20 offers from each (the run's own sources), saved in shopping.json.
+ * Nothing is downloaded.
+ */
+app.post("/api/runs/:runId/offers", async (req, res) => {
+  const { runId } = req.params;
+  if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
+  const need = typeof req.body?.need === "string" ? req.body.need : "";
+  const dir = join(ROOT, "output", runId);
+  try {
+    const needs = JSON.parse(fs.readFileSync(join(dir, "needs.json"), "utf8")) as NeedsFile;
+    const shopping = JSON.parse(fs.readFileSync(join(dir, "shopping.json"), "utf8")) as Shopping;
+    if (!shopping.needs.some((n) => n.need === need)) return res.status(404).json({ error: `${need || "that need"} is not on this shopping list` });
+    const sources = readBrief(runId)?.shopSources as SourceId[] | undefined;
+    const found = await findOffers(needs, { ...(sources ? { sources } : {}), only: [need], more: true, run: runId });
+    const fresh = found.needs.find((n) => n.need === need);
+    if (!fresh) return res.status(404).json({ error: `${need} has nothing to download any more` });
+    const next: Shopping = { ...shopping, needs: shopping.needs.map((n) => (n.need === need ? fresh : n)), warnings: [...new Set([...shopping.warnings, ...found.warnings])] };
+    fs.writeFileSync(join(dir, "shopping.json"), JSON.stringify(next, null, 2));
+    const m = needs.needs.find((n) => n.id === need);
+    res.json({ need: { ...fresh, beats: m?.beats ?? [], ...(m?.use ? { useName: m.use.name } : {}) } });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e), fix: "Try again; a source may be down" });
+  }
+});
+
+/** Gate 2: a link pasted on a need's card, read by its source as an offer (nothing is downloaded; approve it as nN=<link>). */
+app.post("/api/runs/:runId/link", async (req, res) => {
+  const { runId } = req.params;
+  if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
+  const body = (req.body ?? {}) as { need?: unknown; url?: unknown };
+  try {
+    const needs = JSON.parse(fs.readFileSync(join(ROOT, "output", runId, "needs.json"), "utf8")) as NeedsFile;
+    const offer = await offerFromLink(needs, String(body.need ?? ""), String(body.url ?? "").trim());
+    res.json({ offer });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "Paste the link of the item's own page" });
+  }
+});
+
+/** The channels a video can be made for: what each makes, its story modes and the choices it starts with. */
+app.get("/api/channels", (_req, res) => {
+  res.json(
+    listChannels().map((c) => ({
+      id: c.id,
+      name: c.name,
+      genre: c.genre,
+      description: c.description,
+      modes: c.writer.modes,
+      scriptMode: c.writer.scriptMode,
+      structure: c.writer.structure,
+      formats: c.formats,
+      captions: c.captions ?? null,
+      voices: c.voices,
+      storyGate: c.gates.story,
+      shopGate: c.gates.shop,
+      version: c.version,
+    })),
+  );
+});
+
+/**
+ * The channel profiles settings page: one profile as its file holds it, a
+ * saved edit (checked as a plan checks it; the version goes up when it
+ * changed), and a new channel copied from another.
+ */
+app.get("/api/channels/:id", (req, res) => {
+  const raw = readChannelFile(req.params.id);
+  if (!raw) return res.status(404).json({ error: `no channel "${req.params.id}"` });
+  res.json({ profile: raw, moods: Object.keys(MOOD_TAGS), modes: STORY_MODES });
+});
+
+app.put("/api/channels/:id", (req, res) => {
+  const body = (req.body ?? {}) as { profile?: unknown };
+  const profile = body.profile && typeof body.profile === "object" && !Array.isArray(body.profile) ? (body.profile as Record<string, unknown>) : null;
+  if (!profile) return res.status(400).json({ error: "the profile is missing", fix: "Send { profile: { ... } }" });
+  if (profile.id !== req.params.id) return res.status(400).json({ error: `the profile's id is "${String(profile.id)}", not "${req.params.id}"`, fix: "A channel keeps its id; copy it to make a new one" });
+  try {
+    const saved = saveChannel(profile);
+    res.json({ ok: true, changed: saved.changed, version: saved.profile.version, profile: readChannelFile(req.params.id) });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "Fix the fields named, then save again" });
+  }
+});
+
+app.post("/api/channels", (req, res) => {
+  const body = (req.body ?? {}) as { from?: unknown; id?: unknown; name?: unknown };
+  const from = typeof body.from === "string" ? readChannelFile(body.from) : null;
+  if (!from) return res.status(400).json({ error: "pick a channel to start from" });
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : id;
+  try {
+    const saved = saveChannel({ ...from, id, name }, { create: true });
+    res.json({ ok: true, id: saved.profile.id, profile: readChannelFile(saved.profile.id) });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "Use lower-case letters, digits and dashes, and a name no channel has" });
+  }
+});
+
+app.get("/api/runs/:runId", (req, res) => {
+  const { runId } = req.params;
+  if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
+  const run = readRun(runId);
+  if (!run) return res.status(404).json({ error: `no saved run "${runId}"` });
+  const next = nextStage(run);
+  res.json({
+    id: run.id,
+    premise: run.premise,
+    stages: STAGES.map((name) => ({ name, state: run.stages[name].state, model: run.stages[name].model, error: run.stages[name].error })),
+    gate: run.gates.story,
+    shopGate: run.gates.shop,
+    next,
+    nextLabel: next ? STAGE_LABELS[next] : null,
+    complete: !next,
+    waitsForStory: waitsForStory(run),
+    waitsForShopping: waitsForShopping(run),
+  });
+});
+
+/**
+ * The Assets page: each source and its state (with the keys saved in .env),
+ * the build-request queue in the order to take it (most asked first), and
+ * what acquisition took in (acquired.catalog.json), with whether its files
+ * are on this machine.
+ */
+app.get("/api/assets", (_req, res) => {
+  const paths = acquirePaths(ROOT);
+  const { requests, bad } = readRequests(paths.requestsDir);
+  const cat = readAcquired(paths.catalogFile);
+  res.json({
+    sources: sourceStatus({ ...process.env, ...loadEnv() }),
+    requests: rankRequests(requests),
+    unreadable: bad,
+    acquired: cat.items.map((i) => ({
+      id: i.id,
+      kind: i.kind,
+      ref: i.ref,
+      source: i.source,
+      title: i.title,
+      author: i.author,
+      page: i.page,
+      licence: i.licence,
+      tier: i.tier,
+      ...(i.credit ? { credit: i.credit } : {}),
+      fetchedAt: i.fetchedAt,
+      ...(i.need ? { need: i.need } : {}),
+      notes: i.notes,
+      ...(i.held ? { held: i.held } : {}),
+      onDisk: i.files.every((f) => fs.existsSync(join(paths.publicDir, f.file))),
+    })),
+  });
 });
 
 /** Read the spec a finished plan job produced. */
@@ -424,13 +808,56 @@ app.get("/api/spec/:jobId", (req, res) => {
   if (job.status === "failed") {
     return res.status(500).json({ error: job.error ?? "plan failed — see the job logs" });
   }
+  // The story gate: the plan stopped after the story, which waits for approval.
+  if (job.gate === "story" && job.runId && !job.specId) {
+    const dir = join(ROOT, "output", job.runId);
+    try {
+      const story = JSON.parse(fs.readFileSync(join(dir, "story.json"), "utf8"));
+      const timeline = JSON.parse(fs.readFileSync(join(dir, "timeline.json"), "utf8")) as { duration?: number; target?: number };
+      const run = readRun(job.runId);
+      // The story checker's notes, claims and lost plot points, when it was asked (it changes nothing).
+      let check: unknown;
+      try {
+        check = run?.stages.check.state === "done" ? JSON.parse(fs.readFileSync(join(dir, "story.check.json"), "utf8")) : undefined;
+      } catch {
+        check = undefined;
+      }
+      // The claims check (claims.ts), when it ran: each factual claim and its verdict.
+      let claims: unknown;
+      try {
+        claims = run?.stages.claims?.state === "done" ? JSON.parse(fs.readFileSync(join(dir, "story.claims.json"), "utf8")) : undefined;
+      } catch {
+        claims = undefined;
+      }
+      return res.json({
+        ready: true,
+        gate: "story",
+        runId: job.runId,
+        story,
+        ...(check ? { check } : {}),
+        ...(claims ? { claims } : {}),
+        length: { duration: timeline.duration ?? 0, target: timeline.target ?? 0, revised: !!run?.stages.story.facts?.revised },
+        approved: run?.gates.story.state === "approved",
+        provider: job.provider,
+        model: job.model,
+      });
+    } catch {
+      return res.status(500).json({ error: `the story of "${job.runId}" is missing on disk`, fix: "Write the idea again from Step 1" });
+    }
+  }
+  // Gate 2: the plan stopped at the shopping list, which waits for the user's choices.
+  if (job.gate === "shop" && job.runId && !job.specId) {
+    const shopping = shoppingFor(job.runId);
+    if (!shopping) return res.status(500).json({ error: `the shopping list of "${job.runId}" is missing on disk`, fix: "Write the idea again from Step 1" });
+    return res.json({ ready: true, gate: "shop", runId: job.runId, shopping, provider: job.provider, model: job.model });
+  }
   if (!job.specId) {
     return res.status(404).json({ error: "this job produced no plan — write the idea again" });
   }
   const p = join(ROOT, "output", job.specId, "spec.json");
   try {
     const spec = JSON.parse(fs.readFileSync(p, "utf8"));
-    res.json({ ready: true, specId: job.specId, spec, provider: job.provider, model: job.model });
+    res.json({ ready: true, specId: job.specId, spec, provider: job.provider, model: job.model, notes: criticNotes(job.specId), needs: storyNeeds(job.specId) });
   } catch {
     res.status(500).json({
       error: `the plan file for "${job.specId}" is missing on disk`,
@@ -492,7 +919,14 @@ app.post("/api/plan/:specId/recast", async (req, res) => {
   }
 });
 
-/** Render an approved plan's spec (never renders without this call). */
+/**
+ * Render an approved plan's spec (never renders without this call). The
+ * dashboard's three render buttons (Approve, the editor's Make the video, Try
+ * again) send only the plan's id, so they render alike: with the plan's own
+ * voices (plan.json, with any recast) and through the chunked, cached
+ * renderer, which a later render after an edit reuses. `audio` overrides the
+ * voices and `chunked: false` renders in one pass, for other callers.
+ */
 app.post("/api/render-spec", (req, res) => {
   const { specId, audio, chunked } = req.body as { specId?: string; audio?: unknown; chunked?: boolean };
   if (!specId || !/^[a-z0-9-]+$/.test(specId)) {
@@ -533,8 +967,8 @@ app.post("/api/render-spec", (req, res) => {
   }
   const extra = ["--from-spec", specPathRel.replace(/\\/g, "/")];
   if (audio) extra.push("--audio-file", `output/${specId}/audio.json`);
-  // The editor's Make-the-video button renders through the chunked, cached renderer.
-  if (chunked) extra.push("--chunked");
+  // The chunked, cached renderer unless asked otherwise: a render after an edit reuses the unchanged chunks.
+  if (chunked !== false) extra.push("--chunked");
   runJob(job, { extraArgs: extra });
   res.json({ jobId: job.id });
 });
@@ -546,6 +980,8 @@ app.get("/api/jobs", (_req, res) => {
       status: j.status,
       premise: j.premise,
       createdAt: j.createdAt,
+      // A plan job that stopped at a gate: its story, or its shopping list, waits for you.
+      ...(j.gate ? { gate: j.gate } : {}),
     })),
   );
 });
@@ -564,8 +1000,8 @@ app.post("/api/generate", async (req, res) => {
 
   // Fail fast BEFORE spawning the CLI: validate provider + key + resolution.
   const savedEnv = loadEnv();
-  for (const [k, v] of Object.entries(savedEnv)) process.env[k] = v;
-  const config = loadAiConfig();
+  applyEnv();
+  const config = loadConfig();
   const provName = provider ?? config.defaultProvider ?? "gateway";
 
   if (provName === "offline") {
@@ -645,6 +1081,8 @@ app.post("/api/generate", async (req, res) => {
   }
 
   const job = createJob(trimmed, provName, model);
+  // One call, one video: this route has no review screen, so no story gate.
+  job.storyGate = false;
   runJob(job);
   res.json({ jobId: job.id });
 });
@@ -731,7 +1169,7 @@ app.post("/api/voice-previews/warm", async (req, res) => {
   if (!resolveTtsPython(engine)) return res.status(400).json({ error: "engine not installed" });
   const list = engine === "voxcpm2" ? VOXCPM_VOICE_DESCRIPTIONS : KNOWN_VOICES;
   const requested = (body.voices ?? []).filter(Boolean);
-  const voices = requested.length ? requested : list.map((v: any) => v.id);
+  const voices = requested.length ? requested : (list as ReadonlyArray<{ id: string }>).map((v) => v.id);
   const results: Array<{ voice: string; ok: boolean; url?: string; error?: string }> = [];
   for (const voice of voices) {
     const key = voicePreviewKey(engine, voice);
@@ -789,7 +1227,7 @@ app.get("/api/videos", (_req, res) => {
     if (f.endsWith("-report.json")) found.push({ id: f.replace("-report.json", ""), reportFile: p, base: "" });
     else if (fs.statSync(p).isDirectory() && fs.existsSync(join(p, "report.json"))) found.push({ id: f, reportFile: join(p, "report.json"), base: `${f}/` });
   }
-  type Report = { id?: string; output?: string; spec?: string; generatedAt?: number; [key: string]: unknown };
+  type Report = { id?: string; output?: string; spec?: string; generatedAt?: unknown; [key: string]: unknown };
   const videos: Report[] = found.flatMap(({ id, reportFile, base }) => {
     let report: Report;
     try {
@@ -803,9 +1241,12 @@ app.get("/api/videos", (_req, res) => {
     const thumbPath = join(dir, thumbRel);
     if (!fs.existsSync(thumbPath) && report.output) {
       const mp4Abs = join(dir, `${base}${basename(report.output)}`);
-      if (fs.existsSync(mp4Abs) && fs.existsSync(FFMPEG)) {
+      if (fs.existsSync(mp4Abs)) {
         try {
-          spawn(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbPath], { stdio: "ignore", detached: true }).unref();
+          const thumb = spawn(FFMPEG, ["-y", "-i", mp4Abs, "-ss", "00:00:01", "-vframes", "1", "-q:v", "3", thumbPath], { stdio: "ignore", detached: true });
+          // No ffmpeg at all: no thumbnail (an unhandled spawn error would stop the server).
+          thumb.on("error", () => undefined);
+          thumb.unref();
         } catch { /* ignore */ }
       }
     }
@@ -818,7 +1259,8 @@ app.get("/api/videos", (_req, res) => {
       thumbnail: fs.existsSync(thumbPath) ? thumbRel : undefined,
     }];
   });
-  videos.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
+  // generatedAt is an ISO date: newest first.
+  videos.sort((a, b) => reportTime(b.generatedAt) - reportTime(a.generatedAt));
   res.json(videos);
 });
 
@@ -934,10 +1376,10 @@ app.post("/api/voice-references/:id/audition", async (req, res) => {
   const body = (req.body ?? {}) as { engine?: string; text?: string };
   const engine: "kitten2" | "voxcpm2" = body.engine === "voxcpm2" ? "voxcpm2" : "voxcpm2";
   const voice = meta.label || id;
-  const line = { id: "sample", text: body.text || AUDITION_TEXT, at: 0, engine, voice, voiceDesc: undefined, referenceWav: join(REF_ROOT, id, "reference.wav"), referenceText: meta.transcript, kind: "narration" as const };
+  const line: VoiceLine = { id: "sample", text: body.text || AUDITION_TEXT, at: 0, engine, voice, voiceDesc: undefined, referenceWav: join(REF_ROOT, id, "reference.wav"), referenceText: meta.transcript, kind: "narration" };
   try {
     const nId = `_ref-audition-${id}`;
-    const m = await synthesizeLines([line as any], nId, { publish: false });
+    const m = await synthesizeLines([line], nId, { publish: false });
     const wav = m.lines[0]?.file;
     if (!wav || !fs.existsSync(wav)) throw new Error("no file");
     res.setHeader("Content-Type", "audio/wav");
@@ -1033,23 +1475,31 @@ app.delete("/api/videos/:id", (req, res) => {
       errors.push(`${f}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  // The per-video folder (output/<id>/: spec, stage files, video, report).
-  const videoDir = join(dir, id);
-  if (fs.existsSync(videoDir) && fs.statSync(videoDir).isDirectory()) {
+  // The per-video folder (output/<id>/: spec, stage files, video, report),
+  // its self-review, and the voice files its plan and render made. A folder
+  // that is a link (a junction) is never deleted through.
+  const folders: Array<[string, string]> = [
+    [join(dir, id), `${id}/`],
+    [join(dir, `${id}-review`), `${id}-review`],
+    [join(dir, `${id}-voice`), `${id}-voice`],
+    [join(ROOT, "public", "voice", id), `public/voice/${id}`],
+  ];
+  for (const [p, label] of folders) {
     try {
-      fs.rmSync(videoDir, { recursive: true, force: true });
+      const st = fs.lstatSync(p, { throwIfNoEntry: false });
+      if (!st?.isDirectory() || st.isSymbolicLink()) continue;
+      fs.rmSync(p, { recursive: true, force: true });
       deleted += 1;
     } catch (e) {
-      errors.push(`${id}/: ${e instanceof Error ? e.message : String(e)}`);
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  const reviewDir = join(dir, `${id}-review`);
-  if (fs.existsSync(reviewDir)) {
+  const voiceManifest = join(dir, `${id}-voice.json`);
+  if (fs.existsSync(voiceManifest)) {
     try {
-      fs.rmSync(reviewDir, { recursive: true, force: true });
-      deleted += 1;
+      fs.unlinkSync(voiceManifest);
     } catch (e) {
-      errors.push(`${id}-review: ${e instanceof Error ? e.message : String(e)}`);
+      errors.push(`${id}-voice.json: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (deleted === 0) {

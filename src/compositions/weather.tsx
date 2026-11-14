@@ -18,8 +18,8 @@
  * dependence on whether a stage's camera rig runs before or after this
  * layer's useFrame.
  */
-import { useEffect, useMemo, useRef } from "react";
-import { useCurrentFrame, random } from "remotion";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec } from "../generator/spec.schema";
@@ -139,7 +139,8 @@ export function WeatherLayer({ weather, tod, specId }: WeatherLayerProps) {
   const raining = weather === "rain" || storm;
   const snowing = weather === "snow";
   const frame = useCurrentFrame();
-  const { camera } = useThree();
+  const { fps } = useVideoConfig();
+  const scene = useThree((s) => s.scene);
 
   const flakeCount = snowing ? 200 : 0;
 
@@ -239,8 +240,29 @@ export function WeatherLayer({ weather, tod, specId }: WeatherLayerProps) {
 
   // ---- Storm lightning: screen-facing flash quad in front of the camera ----
   const flashRef = useRef<THREE.Mesh>(null);
+  // The quad faces the RENDER camera: placed in scene.onBeforeRender, after
+  // every frame callback and before three sorts and draws. Placed in this
+  // layer's own callback it took whatever camera the callbacks had reached
+  // (when a director's shot starts mid-tab the solver subscribes after this
+  // layer: the previous frame's camera).
+  useLayoutEffect(() => {
+    if (!storm) return;
+    const prev = scene.onBeforeRender;
+    const dir = new THREE.Vector3();
+    scene.onBeforeRender = (_gl, _scene, cam) => {
+      const flash = flashRef.current;
+      if (!flash?.visible) return;
+      cam.getWorldDirection(dir);
+      flash.position.copy(cam.position).addScaledVector(dir, 34);
+      flash.quaternion.copy(cam.quaternion);
+      flash.updateMatrixWorld();
+    };
+    return () => {
+      scene.onBeforeRender = prev;
+    };
+  }, [scene, storm]);
   useFrame(() => {
-    const tt = frame / 30;
+    const tt = frame / fps;
     if (rain) rain.mat.uniforms.uTime.value = tt;
 
     const snowPos = snowMesh.mesh.geometry.attributes.position as THREE.BufferAttribute;
@@ -256,12 +278,10 @@ export function WeatherLayer({ weather, tod, specId }: WeatherLayerProps) {
       const flash = lightningAt(tt);
       const mat = flashRef.current.material as THREE.Material;
       if (!Array.isArray(mat)) mat.opacity = flash;
-      if (flash > 0) {
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        flashRef.current.position.copy(camera.position).addScaledVector(dir, 34);
-        flashRef.current.quaternion.copy(camera.quaternion);
-      }
+      // Drawn only while it flashes: unlit, the quad still wrote depth
+      // wherever an earlier flash in the tab had left it (or across the
+      // world's origin in a tab that had none).
+      flashRef.current.visible = flash > 0;
     }
   });
 

@@ -174,9 +174,10 @@ export interface ReactionParticlesProps {
   params?: Partial<ParticleParams>;
   receiveShadow?: boolean;
   /** Extra material patches (height fog, mood palette), applied once per
-   *  layer: change `patchKey` to apply a different one. */
+   *  layer; a new patch rebuilds the layer, so pass a memoized one (GroundWorld's
+   *  is one per scene: its fog and palette uniforms are that scene's). */
   patch?: (m: THREE.Material) => void;
-  /** Names the extra patches (the program cache key; a change rebuilds the layer). */
+  /** Names the extra patches in the program cache key (the shader's code). */
   patchKey?: string;
 }
 
@@ -200,13 +201,13 @@ export function ReactionParticles({
   // paramsKey stands for params.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const look = useMemo((): ParticleParams => ({ ...PARTICLE_KINDS[kind], ...params }), [kind, paramsKey]);
-  // The patch is applied once per layer; patchKey (not the function's
-  // identity) says when it changed.
-  const patchRef = useRef(patch);
-  patchRef.current = patch;
+  // The patch is applied once per layer, so a new patch is a new layer: the
+  // uniforms it binds are the current scene's (a GroundWorld kept through two
+  // scenes of a place gives the second its own fog; keeping the first scene's
+  // drew this layer one way after it and another in a fresh tab).
   const layer = useMemo(
-    () => buildParticleLayer(kind, placeId, look, { receiveShadow, patch: patchRef.current, patchKey }),
-    [kind, placeId, look, receiveShadow, patchKey],
+    () => buildParticleLayer(kind, placeId, look, { receiveShadow, patch, patchKey }),
+    [kind, placeId, look, receiveShadow, patch, patchKey],
   );
   useEffect(() => () => layer.dispose(), [layer]);
   // Chips: release times per scene, from the track (static within it).

@@ -7,7 +7,9 @@
  *     --props '{"preset":"golden-hour"}' --gl=angle --scale 0.5
  *
  * Props: preset ("none" = no look, R3F default rendering), quality, mood
- * ("auto" picks a lighting mood that suits the preset).
+ * ("auto" picks a lighting mood that suits the preset), and a time-lapse's
+ * blend (blendFrom, blend: CinematicLook's, e.g. to check that a lapse at
+ * blend 0 grades exactly as its starting preset).
  */
 import { useThree } from "@react-three/fiber";
 import { ThreeCanvas } from "@remotion/three";
@@ -24,6 +26,8 @@ export type LookTestProps = {
   mood?: Mood | "auto";
   grain?: number;
   grainSize?: number;
+  blendFrom?: LookPresetId;
+  blend?: number;
 };
 
 const AUTO_MOOD: Record<LookPresetId | "none", Mood> = {
@@ -212,7 +216,7 @@ const LookScene: React.FC<{ mood: Mood }> = ({ mood }) => {
   );
 };
 
-export const LookTest: React.FC<LookTestProps> = ({ preset, quality = "final", mood = "auto", grain = 1, grainSize = 1 }) => {
+export const LookTest: React.FC<LookTestProps> = ({ preset, quality = "final", mood = "auto", grain = 1, grainSize = 1, blendFrom, blend }) => {
   const { width, height } = useVideoConfig();
   const portrait = height > width;
   const resolvedMood: Mood = mood === "auto" ? AUTO_MOOD[preset] : mood;
@@ -227,7 +231,13 @@ export const LookTest: React.FC<LookTestProps> = ({ preset, quality = "final", m
       <CameraRig portrait={portrait} />
       <LookScene mood={resolvedMood} />
       {isLookPresetId(preset) ? (
-        <CinematicLook preset={preset} quality={quality} grain={grain} grainSize={grainSize} />
+        <CinematicLook
+          preset={preset}
+          quality={quality}
+          grain={grain}
+          grainSize={grainSize}
+          {...(isLookPresetId(blendFrom) ? { blendFrom, blend } : {})}
+        />
       ) : null}
     </ThreeCanvas>
   );

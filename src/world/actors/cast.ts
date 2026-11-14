@@ -8,8 +8,8 @@
  * different actors where possible. Deterministic.
  */
 import { allAssets, assetById, type CatalogAsset } from "../catalog";
-import { unsupported } from "./rigs";
-import type { ActorPlan, ActorScriptInput } from "./script";
+import { DEVICE_KEYS, mapClips, unsupported } from "./rigs";
+import type { ActorPlan, ActorScriptInput, ClipKey } from "./script";
 
 /** Look families of the character packs on disk. */
 export type CastStyle = "people" | "mini" | "blocky" | "animal-folk";
@@ -51,8 +51,18 @@ export function castableModels(): CatalogAsset[] {
   return allAssets().filter((a) => a.category === "character" && a.animations.length > 0 && unsupported(a.animations, ["idle", "walk"]).length === 0);
 }
 
-function score(a: CatalogAsset, role: string, used: Map<string, number>): number {
-  let s = 0;
+/** A plan that aims, shoots or rolls (a bullet time's) prefers a model with
+ *  those clips (the Quaternius people have Gun_Shoot and Roll) over the
+ *  procedural stand-ins. Plans without them score as they always did. */
+function deviceBonus(a: CatalogAsset, keys: readonly ClipKey[]): number {
+  const device = keys.filter((k) => DEVICE_KEYS.has(k));
+  if (!device.length) return 0;
+  const { clips } = mapClips(a.animations, device);
+  return device.filter((k) => clips[k]).length * 3;
+}
+
+function score(a: CatalogAsset, role: string, used: Map<string, number>, keys: readonly ClipKey[] = []): number {
+  let s = deviceBonus(a, keys);
   const female = FEMALE.test(role);
   const male = MALE.test(role) && !female;
   if (female) s += isFemale(a) ? 4 : -4;
@@ -103,7 +113,7 @@ export function castActors(scripts: readonly ActorScriptInput[], plans: Readonly
       // Children stay in the scene's look, just shorter (mixing packs looks wrong).
       const inStyle = candidates.filter((a) => styleOf(a) === style);
       const list = (inStyle.length ? inStyle : candidates)
-        .map((a) => ({ a, sc: score(a, role, used) }))
+        .map((a) => ({ a, sc: score(a, role, used, plans.get(s.id)?.clips) }))
         .sort((x, y) => y.sc - x.sc || x.a.id.localeCompare(y.a.id));
       if (!list.length) {
         warnings.push(`${s.id}: no model can play ${(plans.get(s.id)?.clips ?? []).join(", ")}`);

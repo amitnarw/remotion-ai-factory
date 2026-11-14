@@ -3,8 +3,9 @@
  *
  * `bundle()` rebuilds every time and copies public/ (885 MB, ~36 s here). This
  * builds into out/phase4-bundles/<hash>/ only when the source hash is new:
- *   - hash = src/** (tests left out) + package-lock.json + tsconfig.json + the
- *     bundler options below (remotion.config.ts does not apply to the Node APIs);
+ *   - hash = src/** (tests left out) + package-lock.json + tsconfig.json +
+ *     acquired.catalog.json (src/ imports it) + the bundler options below
+ *     (remotion.config.ts does not apply to the Node APIs);
  *   - rspack, with publicDir pointed at a folder that does not exist, so
  *     nothing is copied;
  *   - <bundle>/public is then a directory JUNCTION to the project's public/
@@ -20,8 +21,9 @@ import { join } from "path";
 import { bundle } from "@remotion/bundler";
 import { VERSION } from "remotion/version";
 import { treeHash } from "./hash";
+import { canonicalPath, projectRoot } from "./root";
 
-export const BUNDLES_DIR = join(process.cwd(), "out", "phase4-bundles");
+export const BUNDLES_DIR = join(projectRoot(), "out", "phase4-bundles");
 const KEEP_BUNDLES = 4;
 const MARKER = "phase4-bundle.json";
 /** Options that change the bundle's output, part of its hash. */
@@ -36,9 +38,10 @@ export interface BundleInfo {
 }
 
 /** Hash of everything that goes into the bundle. */
-export function sourceHash(root = process.cwd()): string {
+export function sourceHash(root = projectRoot()): string {
   const skip = (abs: string, isDir: boolean) => !isDir && /\.test\.tsx?$/.test(abs);
-  const files = treeHash(root, ["src", "package-lock.json", "tsconfig.json"], skip);
+  // acquired.catalog.json is imported by src/ (world/catalog.ts, audio-resolve.ts), so an acquisition changes the bundle.
+  const files = treeHash(root, ["src", "package-lock.json", "tsconfig.json", "acquired.catalog.json"], skip);
   return createHash("sha1").update(files).update(JSON.stringify(BUNDLE_OPTIONS)).digest("hex");
 }
 
@@ -108,7 +111,7 @@ function prune(keep: string): void {
 
 /** The bundle for the current source tree, built if it is not cached yet. */
 export async function ensureBundle(opts: { root?: string; log?: (line: string) => void } = {}): Promise<BundleInfo> {
-  const root = opts.root ?? process.cwd();
+  const root = canonicalPath(opts.root ?? process.cwd());
   const log = opts.log ?? ((l: string) => console.log(l));
   const t0 = Date.now();
   const hash = sourceHash(root);

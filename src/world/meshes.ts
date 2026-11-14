@@ -72,11 +72,15 @@ function box(
   color: string, topColor: string,
   win?: { cell: number; floor: number },
   rot = 0,
+  taper = 1,
 ) {
   const hw = w / 2;
   const hd = d / 2;
   const y1 = y0 + h;
   const at = placer(x, z, rot);
+  // A tapered box's top corners (a spire): the top face shrinks about the centre.
+  const tw = hw * taper;
+  const td = hd * taper;
   const wallUv = (width: number): [number, number][] | undefined => {
     if (!win) return undefined;
     const cols = width / win.cell;
@@ -85,11 +89,11 @@ function box(
     const v1 = (h - 1.2) / win.floor;
     return [[u0, v0], [u0 + cols, v0], [u0 + cols, v1], [u0, v1]];
   };
-  b.quad(at(-hw, y0, hd), at(hw, y0, hd), at(hw, y1, hd), at(-hw, y1, hd), color, wallUv(w));
-  b.quad(at(hw, y0, -hd), at(-hw, y0, -hd), at(-hw, y1, -hd), at(hw, y1, -hd), color, wallUv(w));
-  b.quad(at(hw, y0, hd), at(hw, y0, -hd), at(hw, y1, -hd), at(hw, y1, hd), color, wallUv(d));
-  b.quad(at(-hw, y0, -hd), at(-hw, y0, hd), at(-hw, y1, hd), at(-hw, y1, -hd), color, wallUv(d));
-  b.quad(at(-hw, y1, hd), at(hw, y1, hd), at(hw, y1, -hd), at(-hw, y1, -hd), topColor);
+  b.quad(at(-hw, y0, hd), at(hw, y0, hd), at(tw, y1, td), at(-tw, y1, td), color, wallUv(w));
+  b.quad(at(hw, y0, -hd), at(-hw, y0, -hd), at(-tw, y1, -td), at(tw, y1, -td), color, wallUv(w));
+  b.quad(at(hw, y0, hd), at(hw, y0, -hd), at(tw, y1, -td), at(tw, y1, td), color, wallUv(d));
+  b.quad(at(-hw, y0, -hd), at(-hw, y0, hd), at(-tw, y1, td), at(-tw, y1, -td), color, wallUv(d));
+  b.quad(at(-tw, y1, td), at(tw, y1, td), at(tw, y1, -td), at(-tw, y1, -td), topColor);
 }
 
 export function buildingsGeometry(list: Building[], style: RegionStyle): THREE.BufferGeometry {
@@ -130,11 +134,21 @@ export function mansardGeometry(list: Building[]): THREE.BufferGeometry {
   return b.build();
 }
 
+/** Props are boxes, or (taper < 1) boxes whose top narrows to `taper` of
+ *  the base: a spire. Either way four walls and a top, 30 vertices a prop
+ *  (react/buildingsShader.ts tags them by triangle). */
 export function propsGeometry(list: Prop[]): THREE.BufferGeometry {
   const b = new Builder();
-  for (const p of list) box(b, p.x, p.y, p.z, p.w, p.h, p.d, p.color, p.color, undefined, p.rotY);
+  for (const p of list) box(b, p.x, p.y, p.z, p.w, p.h, p.d, p.color, p.color, undefined, p.rotY, p.taper);
   return b.build();
 }
+
+/** The asphalt's height, and an alley's paving: just under the roads and the
+ *  avenue (city.ts, also at ROAD_Y), so where an alley runs onto one the
+ *  road is drawn. At the same height the two z-fought, a pale strip of
+ *  alley paving coming and going across Cairo's avenue frame by frame. */
+const ROAD_Y = 0.12;
+const ALLEY_Y = 0.1;
 
 /** Street surfaces: each road is asphalt over a sidewalk band, as strips
  *  per segment, stretched past both ends so bends and joins have no gaps. */
@@ -161,7 +175,7 @@ export function roadsGeometry(roads: Road[], style: RegionStyle): THREE.BufferGe
     const color = alley ? mixHexColor(style.sidewalkColor, style.roadColor, 0.35) : style.roadColor;
     for (let i = 0; i + 1 < r.points.length; i++) {
       strip(r.points[i], r.points[i + 1], r.width, 0.08, style.sidewalkColor);
-      strip(r.points[i], r.points[i + 1], asphalt, 0.12, color);
+      strip(r.points[i], r.points[i + 1], asphalt, alley ? ALLEY_Y : ROAD_Y, color);
     }
   }
   return b.build();

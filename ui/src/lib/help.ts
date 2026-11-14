@@ -47,7 +47,78 @@ export const HELP: HelpEntry[] = [
     group: "Create",
     body:
       "A second AI reads the story, points out weak moments and the writer " +
-      "rewrites them before you see the plan. It costs one extra AI call.",
+      "rewrites them before you see the plan. It costs one extra AI call. " +
+      "When you read and approved the story first, it is kept as you approved " +
+      "it: the notes are listed on the plan for you to act on in the editor.",
+  },
+  {
+    id: "channels",
+    title: "Channels",
+    group: "Create",
+    body:
+      "Each channel is one kind of video, for one of your YouTube channels: " +
+      "\"what if\" explainers, action shorts, dramas or documentaries. The " +
+      "channel decides how the story is built, which music moods and devices " +
+      "it uses, and the format, caption look and voices it starts with. You " +
+      "can still change the format, voices and captions on the next steps. " +
+      "Channels are the files in the channels folder.",
+  },
+  {
+    id: "own-story",
+    title: "Your own story",
+    group: "Create",
+    body:
+      "Paste a story or a script you wrote. \"Rewrite it into beats\" keeps " +
+      "your plot and characters and lets the AI cut and rephrase. \"Keep my " +
+      "words\" keeps every word you wrote: the AI only adds what each beat " +
+      "shows and how the characters look, and the video is as long as your " +
+      "script when read aloud. Put a character's name before their line " +
+      "(Ana: Where were you?), what the camera shows in [brackets], and a " +
+      "line of --- between acts.",
+  },
+  {
+    id: "story-check",
+    title: "Read the story first",
+    group: "Create",
+    body:
+      "The AI writes the story, times it, and stops. You read the hook, the " +
+      "lines and the characters before anything else is planned. Approve it " +
+      "and the AI plans the scenes, the camera and the sound around it; write " +
+      "it again if it is not right. The story is saved, so it is never written " +
+      "twice. Turn this off to go straight to the full plan.",
+  },
+  {
+    id: "story-review",
+    title: "Checking the story",
+    group: "Create",
+    body:
+      "This is the story the AI wrote, with its length when read aloud. " +
+      "Nothing else is planned yet. Approve it and the AI goes on with the " +
+      "scenes, the camera and the sound, then shows you the whole plan. If a " +
+      "plan stops on the way (a crash or a restart), it can resume from the " +
+      "step that stopped: the finished steps are kept.",
+  },
+  {
+    id: "shopping-list",
+    title: "The shopping list",
+    group: "Create",
+    body:
+      "After the story, the AI lists everything it needs and checks the library. " +
+      "When something is missing, it stops here. For each thing, get one of the " +
+      "offers, keep what stands in for it now, ask for it to be built, or leave " +
+      "it out. Nothing is downloaded until you choose, and each licence is read " +
+      "again first: free (CC0) items, and models that only ask for a credit. " +
+      "Approve every CC0 pick gets the best free offer of everything you did not change.",
+  },
+  {
+    id: "assets",
+    title: "Assets",
+    group: "Library",
+    body:
+      "Where the factory gets models, sounds and music, and whether each source " +
+      "works without a key; the build requests (things only new code can make), " +
+      "most asked first; and every item downloaded so far, with its licence and " +
+      "where it came from.",
   },
   {
     id: "voices",

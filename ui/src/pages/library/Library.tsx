@@ -44,6 +44,8 @@ import {
 } from "../../components/ui/alert-dialog";
 import { EmptyState, ErrorBanner, InfoRow, PageHeader } from "../../components/shared";
 import { InfoTip } from "../../components/InfoTip";
+import { VariantsPanel } from "../../components/VariantsPanel";
+import { PublishPanel } from "../../components/PublishPanel";
 import {
   FORMATS,
   formatClock,
@@ -507,6 +509,11 @@ function VideoDetail({ id, videos, onDeleted }: { id: string; videos: Video[] | 
           </AlertDialog>
         </div>
       </div>
+
+      {/* A planned run (its stage files are there) can have other versions. */}
+      {editable ? <VariantsPanel runId={video.id} /> : null}
+      {/* Titles, description, tags and a thumbnail to copy into YouTube (20-publish.md). */}
+      <PublishPanel videoId={video.id} />
 
       <Dialog open={framesOpen} onOpenChange={setFramesOpen}>
         <DialogContent className="max-w-[min(820px,94vw)]">

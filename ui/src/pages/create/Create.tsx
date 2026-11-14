@@ -19,8 +19,8 @@ import { CaptionsStep, FormatStep, IdeaStep, SummaryStep, VoiceStep } from "./Se
 import { PlanStep } from "./PlanStep";
 import { RunStep } from "./RunStep";
 import {
-  MIN_IDEA_LENGTH,
   getWizard,
+  hasIdea,
   lengthProblem,
   sceneProblem,
   updateWizard,
@@ -44,14 +44,14 @@ export default function Create() {
   const go = useCallback((s: SetupStep) => navigate({ tab: "create", step: s }), []);
 
   const canLeave = (s: string): boolean => {
-    if (s === "idea") return wizard.idea.trim().length >= MIN_IDEA_LENGTH;
+    if (s === "idea") return hasIdea(wizard);
     if (s === "format") return !lengthProblem(wizard.video) && !sceneProblem(wizard.video);
     return true;
   };
 
   const write = useCallback(async () => {
     const w = getWizard();
-    if (w.idea.trim().length < MIN_IDEA_LENGTH) {
+    if (!hasIdea(w)) {
       go("idea");
       return;
     }
@@ -62,6 +62,13 @@ export default function Create() {
         premise: w.idea.trim(),
         audio: voiceConfigToAudio(w.voice),
         settings: { ...videoSettingsToPayload(w.video), captions: w.captions },
+        // The story gate is on unless it was turned off on the Format step.
+        storyGate: w.video.storyGate !== false,
+        // Gate 2 likewise: on unless turned off on the Format step.
+        shopGate: w.video.shopGate !== false,
+        ...(w.channel !== "what-if" ? { channel: w.channel } : {}),
+        // Your own story, rewritten into beats or kept word for word.
+        ...(w.story.on && w.story.text.trim() ? { script: w.story.text, mode: w.story.mode } : {}),
       });
       refreshJobs();
       navigate({ tab: "create", step: "writing", plan: jobId });

@@ -6,9 +6,12 @@ import { resolvePlace } from "../places";
 import { debrisScatter, reactionSite, type ReactionSite } from "./debris";
 import {
   BOUNCE_MIN_SPEED,
+  DROP_LAND_MAX,
+  DROP_SPEED_MAX,
   fallHeight,
   fallPlan,
   G,
+  heldLand,
   liftPose,
   liftSchedule,
   liftSeeds,
@@ -226,6 +229,59 @@ test("lift: a fall's bounces follow eᵏ and end below the minimum speed", () =>
   });
   assert.ok(f.bounces.length > 0 && f.vLand * RESTITUTION ** (f.bounces.length + 1) < BOUNCE_MIN_SPEED);
   assert.equal(fallHeight(f, f.settle + 1), 0);
+});
+
+test("lift: a held fall touches down by maxLand (later only to keep under maxSpeed); a short fall is the plain one", () => {
+  // Short: exactly the plain fall, under G.
+  assert.deepEqual(fallPlan(2, 0.5, RESTITUTION, DROP_LAND_MAX, DROP_SPEED_MAX), fallPlan(2, 0.5));
+  assert.equal(fallPlan(2, 0.5).g, G);
+  for (const [h, v0] of [[6, 1.5], [10, 0], [14, 3], [20, 0.5], [35, 4]] as const) {
+    const plain = fallPlan(h, v0);
+    const f = fallPlan(h, v0, RESTITUTION, DROP_LAND_MAX, DROP_SPEED_MAX);
+    assert.ok(plain.land > DROP_LAND_MAX, `${h} m falls longer than ${DROP_LAND_MAX} s freely`);
+    assert.ok(Math.abs(f.land - heldLand(h, v0, DROP_LAND_MAX, DROP_SPEED_MAX)) < 1e-12 && f.land < plain.land);
+    assert.ok(f.land >= DROP_LAND_MAX - 1e-12 && f.g > G);
+    assert.ok(f.vLand <= DROP_SPEED_MAX + 1e-9, `${h} m lands at ${f.vLand.toFixed(1)} m/s`);
+    if (h + v0 * DROP_LAND_MAX <= 0.5 * (DROP_SPEED_MAX - v0) * DROP_LAND_MAX) assert.equal(f.land, DROP_LAND_MAX, `${h} m lands in ${DROP_LAND_MAX} s`);
+    // Down at touch-down, never below rest, falling all the way after its apex.
+    assert.ok(Math.abs(fallHeight(f, f.land)) < 1e-9);
+    let prev = Infinity;
+    for (let s = Math.max(0, v0 / f.g); s < f.land; s += 0.01) {
+      const y = fallHeight(f, s);
+      assert.ok(y >= 0 && y <= prev + 1e-12);
+      prev = y;
+    }
+    // A short bounce: no higher than one off a free fall of DROP_LAND_MAX, under G.
+    assert.ok(f.bounces[0].speed <= RESTITUTION * G * DROP_LAND_MAX + 1e-12);
+    assert.ok(f.settle - f.land <= (2 * RESTITUTION * G * DROP_LAND_MAX) / (G * (1 - RESTITUTION)) + 1e-9);
+  }
+});
+
+test("lift: gravity on after a long lift brings every piece down soon (within 1.5 s from up to 12 m), no faster than DROP_SPEED_MAX", () => {
+  const pieces = piecesOf("paris");
+  // Six seconds weightless, then gravity back (the bullet test's b8 and a plain gravity-off/on scene).
+  const track = levelTrack(syntheticLevel([{ t: 1, level: 1 }, { t: 7, level: 0 }]), 0, 16);
+  const plan = rigidPlan(pieces, track);
+  let low = 0;
+  let bounce = 0;
+  for (let i = 0; i < pieces.length; i++) {
+    const sched = plan.lifts[i]!;
+    const ep = sched.episodes.find((e) => e.drop > 7);
+    assert.ok(ep && ep.fall, "every lifted piece comes down");
+    const f = ep.fall;
+    assert.ok(f.land <= heldLand(f.h0, f.v0, DROP_LAND_MAX, DROP_SPEED_MAX) + 1e-9);
+    assert.ok(f.vLand <= Math.max(DROP_SPEED_MAX, Math.sqrt(f.v0 * f.v0 + 2 * G * f.h0)) + 1e-9);
+    const down = ep.drop + f.land - 7;
+    assert.ok(ep.drop - 7 <= 0.65, `lets go ${(ep.drop - 7).toFixed(2)} s after gravity-on`);
+    if (f.h0 <= 12) {
+      assert.ok(down <= 1.5, `from ${f.h0.toFixed(1)} m: down ${down.toFixed(2)} s after gravity-on`);
+      low += 1;
+    }
+    // A short bounce after it: as off a free fall of DROP_LAND_MAX at most.
+    bounce = Math.max(bounce, ep.settle - (ep.drop + f.land));
+  }
+  assert.ok(low > 20, `${low} pieces checked from up to 12 m`);
+  assert.ok(bounce <= (2 * RESTITUTION * G * DROP_LAND_MAX) / (G * (1 - RESTITUTION)) + 1e-9, `bounces for ${bounce.toFixed(2)} s`);
 });
 
 test("lift: seeds come from the place and the kind; bigger pieces let go later on average", () => {

@@ -19,9 +19,11 @@ interface HookProps {
   style?: CaptionLook;
   /** The HUD's kind: with the text HUD the hook sits high, as in the references. */
   hud?: "text" | "card";
+  /** A channel brand's title weight (400 for a single-weight display font); unset: the look's, at least 700. */
+  weight?: number;
 }
 
-export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style, hud = "card" }) => {
+export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFrame, endFrame, style, hud = "card", weight }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   if (frame < startFrame || frame > endFrame) return null;
@@ -58,7 +60,7 @@ export const Hook: React.FC<HookProps> = ({ text, keywordHighlight = [], startFr
           boxSizing: "border-box",
           maxWidth: "100%",
           fontFamily: FONT_STACKS[look.font],
-          fontWeight: look.font === "archivo-black" ? 400 : Math.max(look.weight, 700),
+          fontWeight: weight ?? (look.font === "archivo-black" ? 400 : Math.max(look.weight, 700)),
           fontStyle: look.italic ? "italic" : "normal",
           fontSize,
           color: look.color,

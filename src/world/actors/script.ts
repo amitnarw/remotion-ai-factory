@@ -14,6 +14,7 @@
  * Subject.facing), yaw = atan2(dx, dz); times are seconds of the video.
  */
 import { z } from "zod";
+import { DODGES, type Dodge } from "../warp";
 
 export type V3 = [number, number, number];
 
@@ -33,8 +34,23 @@ export const ACTOR_ACTIONS = [
   "cheer",
   "clap",
   "jump",
+  // Bullet time's (docs/factory/14-bullet-time.md): only in a scene with one.
+  "aim",
+  "shoot",
+  "dodge",
+  // From clips already on disk (P6, docs/factory/19-model-sets.md §1): a
+  // model without the punch or kick clip is not cast for a plan that uses it;
+  // crouch and pick-up have procedural stand-ins.
+  "punch",
+  "kick",
+  "crouch",
+  "stand",
+  "pickup",
+  "putdown",
 ] as const;
 export type ActorAction = (typeof ACTOR_ACTIONS)[number];
+/** The actions only a bullet-time scene uses (the shooter's and the hero's). */
+export const BULLET_ACTIONS: readonly ActorAction[] = ["aim", "shoot", "dodge"];
 
 /** One line per action, for the director's prompt. */
 export const ACTION_HELP: Record<ActorAction, string> = {
@@ -52,6 +68,15 @@ export const ACTION_HELP: Record<ActorAction, string> = {
   cheer: "cheer / celebrate (default 2.6 s)",
   clap: "clap (default 2.6 s)",
   jump: "jump once",
+  aim: 'raise a pistol at "target" and hold the aim until the next step',
+  shoot: 'fire at "target" (from the aim; the shot always misses)',
+  dodge: "lean back out of the way (\"how\": lean, duck or roll), on the hero's faster clock",
+  punch: 'throw a punch at "target" (0.9 s; it never lands: the target reacts if you give it a react)',
+  kick: 'kick at "target" (1 s)',
+  crouch: 'crouch down low (to hide, or to look at something on the ground) and stay down until the next step, or "for" seconds',
+  stand: "stand up (from a seat, the ground or a crouch) and stay standing",
+  pickup: 'bend down and pick up a "prop" (bag, box or briefcase) from the ground in front, then carry it (1.2 s)',
+  putdown: "bend down and put the carried prop on the ground in front (1.2 s)",
 };
 
 /** Animation clips the renderer needs, by meaning. A model maps each to one
@@ -69,6 +94,15 @@ export const CLIP_KEYS = [
   "cheer",
   "clap",
   "jump",
+  // Bullet time's: rigs.ts maps them only for an actor whose plan uses them.
+  "aim",
+  "shoot",
+  "roll",
+  // The fights' and the props' (P6): mapped only for a plan that uses them too.
+  "punch",
+  "kick",
+  "crouch",
+  "pickup",
 ] as const;
 export type ClipKey = (typeof CLIP_KEYS)[number];
 
@@ -77,6 +111,9 @@ const PlaceSchema = z.union([z.string().min(1), z.tuple([z.number(), z.number()]
 /** An anchor or actor name, or a point [x, y, z]. */
 const TargetSchema = z.union([z.string().min(1), z.tuple([z.number(), z.number(), z.number()])]);
 const ColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "colour must be #rrggbb");
+/** Props an actor can hold (rig.ts draws them). */
+export const CARRY_KINDS = ["bag", "box", "briefcase"] as const;
+export type CarryKind = (typeof CARRY_KINDS)[number];
 
 export const ActorStepSchema = z.object({
   /** Seconds into the video. A step that is still busy (a walk not arrived)
@@ -88,6 +125,10 @@ export const ActorStepSchema = z.object({
   target: TargetSchema.optional(),
   /** Seconds, for gestures and overlays. */
   for: z.number().positive().max(120).optional(),
+  /** A dodge's way: lean back (default), duck or roll. */
+  how: z.enum(DODGES).optional(),
+  /** What a pickup picks up (it lies on the ground in front until then). */
+  prop: z.enum(CARRY_KINDS).optional(),
 });
 export type ActorStep = z.infer<typeof ActorStepSchema>;
 
@@ -108,7 +149,7 @@ export const ActorScriptSchema = z.object({
     .optional(),
   /** A background prop held in the right hand (crowds walking with their
    *  shopping, a briefcase): nothing to do with the action timeline. */
-  carry: z.enum(["bag", "box", "briefcase"]).optional(),
+  carry: z.enum(CARRY_KINDS).optional(),
   steps: z.array(ActorStepSchema).max(60).default([]),
 });
 export type ActorScript = z.infer<typeof ActorScriptSchema>;
@@ -126,6 +167,9 @@ export interface StageAnchors {
   spot(name: string): Spot | undefined;
   /** Ground height; y = 0 when absent. */
   groundAt?(x: number, z: number): number;
+  /** A walk round what stands in the way (a model set's deck: its masts and
+   *  hatches): the points between a and b. Only a walk with no "via" asks. */
+  route?(a: V3, b: V3): V3[];
   /** Names, for error messages. */
   names(): string[];
 }
@@ -156,7 +200,19 @@ const GESTURE_SECONDS: Partial<Record<ActorAction, number>> = {
   talk: 3,
 };
 /** One-shot clips: they play once and the actor returns to its posture. */
-const ONCE_SECONDS = { react: 1.0, jump: 1.1, fall: 1.4 } as const;
+const ONCE_SECONDS = { react: 1.0, jump: 1.1, fall: 1.4, shoot: 0.58, roll: 1.33, punch: 0.9, kick: 1.0, pickup: 1.2 } as const;
+/** When the hands reach the ground in a pickup or a putdown (the prop
+ *  changes hands then). */
+export const GRAB_AT = 0.55;
+/** How far in front of the feet a prop lies on the ground, metres (1.75 m adult). */
+const PROP_REACH = 0.42;
+/** A dodge's shape (seconds of the actor's own clock): into it, held, out of
+ *  it. A lean's default lasts 1.6 s; a longer "for" holds it longer. */
+export const DODGE_SECONDS: Record<Dodge, { in: number; out: number; total: number }> = {
+  lean: { in: 0.5, out: 0.6, total: 1.6 },
+  duck: { in: 0.3, out: 0.5, total: 1.4 },
+  roll: { in: 0.15, out: 0.25, total: ONCE_SECONDS.roll },
+};
 /** Getting up from the ground: the fall clip played backwards. */
 export const GETUP_SECONDS = 1.2;
 /** Standing up from a seat: the sit clip's sitting down played backwards. */
@@ -168,7 +224,7 @@ const OVERLAY_FADE = 0.35;
 
 // --- plan --------------------------------------------------------------------
 
-type Posture = "stand" | "sit" | "down";
+type Posture = "stand" | "sit" | "down" | "aim";
 
 /** Where a look, point or talk aims: a fixed point or another actor. */
 export type Aim = { kind: "point"; p: V3 } | { kind: "actor"; id: string };
@@ -238,11 +294,24 @@ export interface ClipSeg extends SegBase {
 export type Segment = HoldSeg | MoveSeg | ClipSeg;
 
 export interface Overlay {
-  kind: "look" | "talk" | "point" | "wave";
+  kind: "look" | "talk" | "point" | "wave" | "aim" | "dodge";
   from: number;
   to: number;
   aim?: Aim;
+  /** Its own fades (seconds), inside [from, to): a dodge's way in and out. */
+  fadeIn?: number;
+  fadeOut?: number;
+  /** A dodge's way. */
+  how?: Dodge;
 }
+
+/** A prop an actor picks up and puts down (pickup, putdown): in the hand
+ *  over some spans, lying on the ground over the others. */
+export interface PropPlan {
+  kind: CarryKind;
+  spans: PropSpan[];
+}
+export type PropSpan = { from: number; to: number; held: true } | { from: number; to: number; held: false; at: V3; yaw: number };
 
 export interface ActorPlan {
   id: string;
@@ -253,6 +322,8 @@ export interface ActorPlan {
   overlays: Overlay[];
   /** Clip keys the plan uses (for casting a model that has them). */
   clips: ClipKey[];
+  /** Only for a plan that picks something up or puts it down. */
+  prop?: PropPlan;
   warnings: string[];
 }
 
@@ -310,7 +381,13 @@ const leadSeconds = (from: number, to: number) => {
 export function planActor(
   input: ActorScriptInput,
   anchors: StageAnchors,
-  opts: { actorIds?: string[]; height?: number } = {},
+  opts: {
+    actorIds?: string[];
+    height?: number;
+    /** Where another actor stands at a time (the cast's draft plans): an
+     *  actor aimed at is faced as the step starts. */
+    where?: (id: string, t: number) => V3 | undefined;
+  } = {},
 ): ActorPlan {
   const script = ActorScriptSchema.parse(input);
   const others = new Set((opts.actorIds ?? []).filter((id) => id !== script.id));
@@ -351,8 +428,10 @@ export function planActor(
   let seat: Seat | undefined;
   /** When the actor is free for the next step. */
   let free = 0;
+  /** A pickup's or putdown's prop: where it is from `since` on. */
+  let prop: { kind: CarryKind; spans: PropSpan[]; held: boolean; since: number; at?: V3; yaw?: number } | undefined;
 
-  const holdClip = (): ClipKey => (posture === "sit" ? "sit" : posture === "down" ? "fall" : "idle");
+  const holdClip = (): ClipKey => (posture === "sit" ? "sit" : posture === "down" ? "fall" : posture === "aim" ? "aim" : "idle");
   const push = (seg: Segment) => {
     // A hold that never got any time (the next step starts the moment it
     // begins) is dropped; its turn carries over into the new segment.
@@ -407,17 +486,21 @@ export function planActor(
     });
     yaw = to;
   };
-  /** Yaw toward an aim, if it is a fixed point (actors move; face them via overlays). */
-  const yawToward = (a: Aim | undefined): number | undefined => {
-    if (!a || a.kind !== "point") return undefined;
-    const dx = a.p[0] - pos[0];
-    const dz = a.p[2] - pos[2];
+  /** Yaw toward an aim, if it is a fixed point (actors move; face them via
+   *  overlays), or an actor where the caller knows where it stands at `t`. */
+  const yawToward = (a: Aim | undefined, t?: number): number | undefined => {
+    if (!a) return undefined;
+    const p = a.kind === "point" ? a.p : t !== undefined ? opts.where?.(a.id, t) : undefined;
+    if (!p) return undefined;
+    const dx = p[0] - pos[0];
+    const dz = p[2] - pos[2];
     return Math.hypot(dx, dz) < 0.05 ? undefined : headingOf(dx, dz);
   };
 
   const travel = (start: number, to: string | [number, number] | Spot, via: (string | [number, number])[] | undefined, gait: "walk" | "run" | "flee"): number => {
     const dest = typeof to === "object" && !Array.isArray(to) ? to : place(to, "destination");
-    const pts: V3[] = [[...pos], ...(via ?? []).map((v) => [...place(v, "via point").pos] as V3), [...dest.pos]];
+    const between = via?.length ? via.map((v) => [...place(v, "via point").pos] as V3) : anchors.route ? anchors.route(pos, dest.pos) : [];
+    const pts: V3[] = [[...pos], ...between, [...dest.pos]];
     // Drop zero-length legs.
     const path: V3[] = [pts[0]];
     for (const p of pts.slice(1)) if (Math.hypot(p[0] - path[path.length - 1][0], p[2] - path[path.length - 1][2]) > 0.05) path.push(p);
@@ -498,6 +581,11 @@ export function planActor(
 
     const start = Math.max(step.at, free);
     if (start - step.at > 0.5) warnings.push(`${script.id}: "${a}" at ${step.at.toFixed(1)} s starts at ${start.toFixed(1)} s (still busy with the step before)`);
+    // Any other step lowers an aim (the next posture fades in from it).
+    if (posture === "aim" && a !== "aim" && a !== "shoot" && a !== "idle") {
+      posture = "stand";
+      for (const o of overlays) if (o.kind === "aim" && o.to > start) o.to = start;
+    }
 
     // Getting up first, unless the action works from this posture.
     const seatedOk = a === "idle" || a === "sit" || a === "wave" || a === "point" || a === "clap" || a === "cheer";
@@ -598,9 +686,12 @@ export function planActor(
         break;
       }
       case "react":
-      case "jump": {
+      case "jump":
+      case "punch":
+      case "kick": {
         const target = step.target === undefined ? undefined : aim(step.target, "target");
-        const turnTo = yawToward(target) ?? yaw;
+        // A punch or a kick faces its target, another actor too (where it stands then).
+        const turnTo = (a === "punch" || a === "kick" ? yawToward(target, start) : yawToward(target)) ?? yaw;
         push({ kind: "clip", from: start, to: Infinity, fade, yawFrom: yaw, yaw: turnTo, turn: turnSeconds(yaw, turnTo), pos: [...pos], clip: a, loop: false });
         yaw = turnTo;
         free = start + ONCE_SECONDS[a];
@@ -614,12 +705,112 @@ export function planActor(
         hold(free, { fade: 0 });
         break;
       }
+      case "aim":
+      case "shoot": {
+        // Aim: the gun raised at the target, held until the next step that
+        // isn't a shot (an "aim" overlay turns the head and, without an aim
+        // clip, the arm). Shoot: one shot from the aim, then the aim again.
+        const target = step.target === undefined ? undefined : aim(step.target, "target");
+        const turnTo = yawToward(target, start) ?? yaw;
+        const wasAiming = posture === "aim";
+        posture = "aim";
+        if (!wasAiming || a === "aim") {
+          for (const o of overlays) if (o.kind === "aim" && o.to > start) o.to = start;
+          overlays.push({ kind: "aim", from: start, to: Infinity, aim: target });
+        }
+        if (a === "aim") {
+          hold(start, { fade, yawTo: turnTo });
+          free = start + (step.for ?? 0);
+          if (step.for !== undefined) {
+            posture = "stand";
+            for (const o of overlays) if (o.kind === "aim" && o.to > free) o.to = free;
+            hold(free);
+          }
+          break;
+        }
+        push({ kind: "clip", from: start, to: Infinity, fade: wasAiming ? 0.08 : fade, yawFrom: yaw, yaw: turnTo, turn: turnSeconds(yaw, turnTo), pos: [...pos], clip: "shoot", loop: false });
+        yaw = turnTo;
+        free = start + ONCE_SECONDS.shoot;
+        hold(free, { fade: 0.15 });
+        break;
+      }
+      case "crouch": {
+        // Down low on the crouch clip (or the rig's procedural crouch), held
+        // until the next step or for "for" seconds.
+        const dur = step.for ?? Infinity;
+        push({ kind: "clip", from: start, to: Infinity, fade: POSTURE_FADE, yawFrom: yaw, yaw, turn: 0, pos: [...pos], clip: "crouch", loop: true });
+        free = start + (Number.isFinite(dur) ? dur : 0);
+        if (Number.isFinite(dur)) hold(start + dur, { fade: POSTURE_FADE });
+        break;
+      }
+      case "stand": {
+        // Up from a seat or the ground is done above; up from a crouch is a
+        // slower fade; standing already, it is an idle.
+        const prev = segments[segments.length - 1];
+        const fromCrouch = prev.kind === "clip" && prev.clip === "crouch";
+        hold(start, { fade: fromCrouch ? POSTURE_FADE : fade });
+        free = start;
+        break;
+      }
+      case "pickup":
+      case "putdown": {
+        // Bend down to the ground in front and up again; the prop changes
+        // hands as the hands reach the ground.
+        push({ kind: "clip", from: start, to: Infinity, fade, yawFrom: yaw, yaw, turn: 0, pos: [...pos], clip: "pickup", loop: false });
+        const grab = start + GRAB_AT;
+        const reach = PROP_REACH * (height / 1.75);
+        const x = pos[0] + Math.sin(yaw) * reach;
+        const z = pos[2] + Math.cos(yaw) * reach;
+        const front: V3 = [x, ground(x, z), z];
+        const kind = step.prop ?? prop?.kind ?? script.carry ?? "box";
+        if (!prop) {
+          // Before the first pickup the prop lies where it is picked up; before
+          // a first putdown it is in the hand (a carry from the start).
+          prop = { kind, spans: [], held: a === "putdown", since: 0, ...(a === "pickup" ? { at: front, yaw } : {}) };
+        } else if (step.prop && step.prop !== prop.kind) {
+          warnings.push(`${script.id}: one prop per actor; "${a}" at ${step.at} s keeps the ${prop.kind}`);
+        }
+        const wantHeld = a === "pickup";
+        if (prop.held === wantHeld) {
+          warnings.push(`${script.id}: "${a}" at ${step.at} s with ${prop.held ? "the prop already in hand" : "nothing in hand"}; the prop stays where it is`);
+        } else {
+          const done: PropSpan = prop.held ? { from: prop.since, to: grab, held: true } : { from: prop.since, to: grab, held: false, at: prop.at ?? front, yaw: prop.yaw ?? yaw };
+          prop.spans.push(done);
+          prop.held = wantHeld;
+          prop.since = grab;
+          prop.at = wantHeld ? undefined : front;
+          prop.yaw = wantHeld ? undefined : yaw;
+        }
+        free = start + ONCE_SECONDS.pickup;
+        hold(free);
+        break;
+      }
+      case "dodge": {
+        // The hero's dodge, on its own clock: a lean back (an overlay the rig
+        // draws on the spine, hips and legs), a duck, or the roll clip. The
+        // body is busy for the whole of it.
+        const how = step.how ?? "lean";
+        const shape = DODGE_SECONDS[how];
+        const dur = how === "roll" ? shape.total : Math.max(shape.in + shape.out + 0.1, step.for ?? shape.total);
+        const target = step.target === undefined ? undefined : aim(step.target, "target");
+        overlays.push({ kind: "dodge", from: start, to: start + dur, fadeIn: shape.in, fadeOut: shape.out, how, ...(target ? { aim: target } : {}) });
+        if (how === "roll") {
+          push({ kind: "clip", from: start, to: Infinity, fade: 0.12, yawFrom: yaw, yaw, turn: 0, pos: [...pos], clip: "roll", loop: false });
+        }
+        free = start + dur;
+        hold(free, { fade: how === "roll" ? 0.2 : FADE });
+        break;
+      }
     }
   }
 
   const clips = new Set<ClipKey>();
   for (const s of segments) clips.add(s.kind === "move" ? s.gait : s.clip);
-  return { id: script.id, height, phase, segments, overlays, clips: [...clips], warnings };
+  const p = prop as typeof prop;
+  const propPlan: PropPlan | undefined = p
+    ? { kind: p.kind, spans: [...p.spans, p.held ? { from: p.since, to: Infinity, held: true } : { from: p.since, to: Infinity, held: false, at: p.at!, yaw: p.yaw! }] }
+    : undefined;
+  return { id: script.id, height, phase, segments, overlays, clips: [...clips], ...(propPlan ? { prop: propPlan } : {}), warnings };
 }
 
 /** Seconds a move takes: accelerate, cruise, decelerate (a triangle when short). */
@@ -778,13 +969,15 @@ export interface ActorPose {
    *  1 (more than one while cross-fading). */
   layers: ClipLayer[];
   /** Overlays active now, with their fade weight. */
-  overlays: { kind: Overlay["kind"]; weight: number; aim?: Aim; time: number }[];
+  overlays: { kind: Overlay["kind"]; weight: number; aim?: Aim; time: number; how?: Dodge }[];
   /** Moving speed, m/s (for the camera's lead room). */
   speed: number;
   /** Turning on the spot (not walking): the turn's start and end yaw and how
    *  far through it the actor is (0..1); the renderer steps the feet round
    *  instead of pivoting them under the body. */
   pivot?: { from: number; to: number; u: number };
+  /** A pickup's prop now: in the hand, or on the ground (world point, yaw). */
+  prop?: { kind: CarryKind; held: true } | { kind: CarryKind; held: false; at: V3; yaw: number };
 }
 
 /** A hold's or clip's turns smaller than this pivot on the feet; bigger ones
@@ -844,11 +1037,13 @@ export function poseAt(plan: ActorPlan, t: number): ActorPose {
   }
   const overlays: ActorPose["overlays"] = [];
   for (const o of plan.overlays) {
-    if (t < o.from || t >= o.to + OVERLAY_FADE) continue;
-    const fadeIn = smooth((t - o.from) / OVERLAY_FADE);
-    const fadeOut = Number.isFinite(o.to) ? 1 - smooth((t - o.to) / OVERLAY_FADE) : 1;
+    // An overlay with its own fades (a dodge) fades inside [from, to).
+    const own = o.fadeIn !== undefined || o.fadeOut !== undefined;
+    if (t < o.from || t >= o.to + (own ? 0 : OVERLAY_FADE)) continue;
+    const fadeIn = smooth((t - o.from) / (own ? Math.max(1e-3, o.fadeIn ?? 0) : OVERLAY_FADE));
+    const fadeOut = !Number.isFinite(o.to) ? 1 : own ? smooth((o.to - t) / Math.max(1e-3, o.fadeOut ?? 0)) : 1 - smooth((t - o.to) / OVERLAY_FADE);
     const weight = Math.min(fadeIn, fadeOut);
-    if (weight > 0) overlays.push({ kind: o.kind, weight, aim: o.aim, time: t - o.from });
+    if (weight > 0) overlays.push({ kind: o.kind, weight, aim: o.aim, time: t - o.from, ...(o.how ? { how: o.how } : {}) });
   }
   const cur = plan.segments[i];
   let pivot: ActorPose["pivot"];
@@ -860,7 +1055,14 @@ export function poseAt(plan: ActorPlan, t: number): ActorPose {
     const u = (t - (cur.turnStart ?? cur.from)) / cur.turn;
     if (u > 0 && u < 1) pivot = { from: cur.yawFrom, to: cur.yaw, u };
   }
-  return { pos: now.pos, yaw: now.yaw, layers, overlays, speed: now.speed, ...(pivot ? { pivot } : {}) };
+  const prop = plan.prop ? propAt(plan.prop, t) : undefined;
+  return { pos: now.pos, yaw: now.yaw, layers, overlays, speed: now.speed, ...(pivot ? { pivot } : {}), ...(prop ? { prop } : {}) };
+}
+
+/** Where a pickup's prop is at t. */
+function propAt(p: PropPlan, t: number): ActorPose["prop"] {
+  const s = p.spans.find((x) => t >= x.from && t < x.to) ?? p.spans[p.spans.length - 1];
+  return s.held ? { kind: p.kind, held: true } : { kind: p.kind, held: false, at: s.at, yaw: s.yaw };
 }
 
 /** Where an aim points at time t: a fixed point, or another actor's head. */
@@ -878,7 +1080,8 @@ export function actorSubject(plan: ActorPlan, t: number): { center: V3; radius: 
   const p = poseAt(plan, t);
   const sitting = p.layers[p.layers.length - 1].clip === "sit";
   const down = p.layers[p.layers.length - 1].clip === "fall";
-  const h = plan.height * (down ? 0.35 : sitting ? 0.7 : 1);
+  const low = p.layers[p.layers.length - 1].clip === "crouch";
+  const h = plan.height * (down ? 0.35 : sitting ? 0.7 : low ? 0.62 : 1);
   return { center: [p.pos[0], p.pos[1] + h / 2, p.pos[2]], radius: Math.max(0.45, h / 2), height: h, facing: p.yaw, ground: p.pos[1] };
 }
 

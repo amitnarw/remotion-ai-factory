@@ -8,8 +8,9 @@
  * a parent re-render never restarts the 3D scene.
  */
 import { Player, type PlayerRef } from "@remotion/player";
-import { ShotSpec, formatDims, videoSeconds } from "@/generator/spec.schema";
+import { ShotSpec, formatDims } from "@/generator/spec.schema";
 import { secToFrame } from "@/generator/timing";
+import { videoFrames } from "@/compositions/brand/length";
 import { WhatIfVideo } from "@/compositions/WhatIfVideo/index";
 import { forwardRef, memo, useMemo, type CSSProperties } from "react";
 
@@ -20,12 +21,12 @@ export interface SpecTiming {
   height: number;
 }
 
-/** Frame rate, length and pixel size of a spec, as the render reads them. */
+/** Frame rate, length and pixel size of a spec, as the render reads them (a channel brand's bumpers included). */
 export function specTiming(spec: ShotSpec): SpecTiming {
   const fps = spec.fps ?? 30;
-  const seconds = spec.scenes?.length ? videoSeconds(spec) : 1;
+  const frames = spec.scenes?.length ? videoFrames(spec, fps) : secToFrame(1, fps);
   const dims = spec.settings ? formatDims(spec.settings.format) : { width: spec.width ?? 1080, height: spec.height ?? 1920 };
-  return { fps, durationInFrames: Math.max(1, secToFrame(seconds, fps)), ...dims };
+  return { fps, durationInFrames: Math.max(1, frames), ...dims };
 }
 
 export interface SpecPlayerProps {
@@ -67,21 +68,4 @@ export const SpecPlayer = memo(
       />
     );
   }),
-);
-
-const previewStyle: CSSProperties = { maxHeight: 700 };
-
-export const PlayerPreview = ({ spec }: { spec: unknown }) => (
-  <div
-    style={{
-      width: "100%",
-      height: "100%",
-      background: "#000",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-    }}
-  >
-    <SpecPlayer spec={spec as ShotSpec} style={previewStyle} />
-  </div>
 );

@@ -16,8 +16,18 @@
  *
  * Any OpenAI-compatible endpoint (LM Studio, local models, etc.) can be added
  * by editing ai.config.json with package: "openai" and a baseUrl.
+ *
+ * Two files, one reader (16-code-map-pipeline.md §7.5 items 6 and 7):
+ *   ai.config.json        tracked: the shared defaults (the providers and their model lists)
+ *   ai.config.local.json  git-ignored: this machine's choices, which the dashboard
+ *                         writes (model roles, the default provider, keys' providers
+ *                         added or removed, live model lists)
+ * The local file is laid over the tracked one, provider by provider and role by
+ * role (null removes one). The dashboard never rewrites the tracked file, so a
+ * commit never carries one machine's choices to the other by accident. A file
+ * that fails its check is named in a warning, never silently read as empty.
  */
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { z } from "zod";
 import { gateway } from "ai";
@@ -27,7 +37,10 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
 import { createOllama } from "ai-sdk-ollama";
 
-const CONFIG_PATH = join(process.cwd(), "ai.config.json");
+/** The tracked file: the shared defaults. */
+export const AI_CONFIG_FILE = "ai.config.json";
+/** This machine's choices, laid over the defaults (git-ignored; the dashboard writes it). */
+export const AI_LOCAL_FILE = "ai.config.local.json";
 
 /** Type of an AI SDK model reference returned by any provider function. */
 export type ModelReference =
@@ -44,27 +57,111 @@ const ProviderConfigSchema = z.object({
   models: z.array(z.string()).optional(),
 });
 
+const RoleSchema = z.object({ provider: z.string().optional(), model: z.string().optional() });
+
 export const AiConfigSchema = z.object({
   defaultProvider: z.string().optional(),
   defaultModel: z.string().optional(),
   providers: z.record(z.string(), ProviderConfigSchema),
   /** Per-role model choice (see roles.ts). Missing role = the default provider/model. */
-  roles: z
-    .record(z.string(), z.object({ provider: z.string().optional(), model: z.string().optional() }))
-    .optional(),
+  roles: z.record(z.string(), RoleSchema).optional(),
 });
 
 export type AiConfig = z.infer<typeof AiConfigSchema>;
 
-/** Load ai.config.json (lenient — missing file = empty config). */
-export function loadAiConfig(): AiConfig {
+/** The local file: only what differs from the tracked one; null removes a provider, a role or a default. */
+const LocalConfigSchema = z.object({
+  defaultProvider: z.string().nullable().optional(),
+  defaultModel: z.string().nullable().optional(),
+  providers: z.record(z.string(), ProviderConfigSchema.nullable()).optional(),
+  roles: z.record(z.string(), RoleSchema.nullable()).optional(),
+});
+type LocalConfig = z.infer<typeof LocalConfigSchema>;
+
+function readChecked<T>(root: string, file: string, schema: z.ZodType<T>, problems: string[]): T | null {
+  const path = join(root, file);
+  if (!existsSync(path)) return null;
   try {
-    if (!existsSync(CONFIG_PATH)) return { providers: {} };
-    const raw = readFileSync(CONFIG_PATH, "utf8");
-    return AiConfigSchema.parse(JSON.parse(raw));
-  } catch {
-    return { providers: {} };
+    const parsed = schema.safeParse(JSON.parse(readFileSync(path, "utf8")));
+    if (parsed.success) return parsed.data;
+    problems.push(`${file} is not a valid config, so it is not used: ${parsed.error.issues.slice(0, 4).map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
+  } catch (e) {
+    problems.push(`${file} could not be read, so it is not used: ${(e as Error).message.slice(0, 160)}`);
   }
+  return null;
+}
+
+/** The tracked defaults with this machine's choices laid over them. */
+function layered(base: AiConfig, local: LocalConfig | null): AiConfig {
+  if (!local) return base;
+  const providers = { ...base.providers };
+  for (const [k, v] of Object.entries(local.providers ?? {})) {
+    if (v === null) delete providers[k];
+    else providers[k] = { ...(providers[k] ?? {}), ...v };
+  }
+  const roles = { ...(base.roles ?? {}) };
+  for (const [k, v] of Object.entries(local.roles ?? {})) {
+    if (v === null) delete roles[k];
+    else roles[k] = v;
+  }
+  const out: AiConfig = { ...base, providers, ...(base.roles || local.roles ? { roles } : {}) };
+  for (const k of ["defaultProvider", "defaultModel"] as const) {
+    if (local[k] === null) delete out[k];
+    else if (local[k] !== undefined) out[k] = local[k];
+  }
+  return out;
+}
+
+/** The AI config of this machine: the tracked file, this machine's choices over it, and what was wrong with either. */
+export function readAiConfig(root = process.cwd()): { config: AiConfig; problems: string[] } {
+  const problems: string[] = [];
+  const base = readChecked(root, AI_CONFIG_FILE, AiConfigSchema, problems) ?? { providers: {} };
+  const local = readChecked(root, AI_LOCAL_FILE, LocalConfigSchema, problems);
+  return { config: layered(base, local), problems };
+}
+
+const warned = new Set<string>();
+
+/** Load the AI config (a missing file = an empty config; a broken one is named in a warning, once). */
+export function loadAiConfig(root = process.cwd()): AiConfig {
+  const { config, problems } = readAiConfig(root);
+  for (const p of problems) {
+    if (warned.has(p)) continue;
+    warned.add(p);
+    console.warn(`[ai] ${p}`);
+  }
+  return config;
+}
+
+/** JSON with sorted keys: the same value always compares the same. */
+const sortedJson = (v: unknown) =>
+  JSON.stringify(v, (_k, x: unknown) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+
+/**
+ * Save the dashboard's changes. Only what differs from the tracked file is
+ * written, to ai.config.local.json; with nothing different the local file
+ * goes. The tracked file is never written.
+ */
+export function saveAiConfig(next: AiConfig, root = process.cwd()): void {
+  const problems: string[] = [];
+  const base = readChecked(root, AI_CONFIG_FILE, AiConfigSchema, problems) ?? { providers: {} };
+  const local: LocalConfig = {};
+  for (const k of ["defaultProvider", "defaultModel"] as const) {
+    if ((next[k] ?? null) !== (base[k] ?? null)) local[k] = next[k] ?? null;
+  }
+  const diff = <T>(a: Record<string, T>, b: Record<string, T>) => {
+    const out: Record<string, T | null> = {};
+    for (const [k, v] of Object.entries(b)) if (sortedJson(v) !== sortedJson(a[k])) out[k] = v;
+    for (const k of Object.keys(a)) if (!(k in b)) out[k] = null;
+    return Object.keys(out).length ? out : undefined;
+  };
+  const providers = diff(base.providers, next.providers);
+  const roles = diff(base.roles ?? {}, next.roles ?? {});
+  if (providers) local.providers = providers;
+  if (roles) local.roles = roles;
+  const path = join(root, AI_LOCAL_FILE);
+  if (Object.keys(local).length) writeFileSync(path, `${JSON.stringify(local, null, 2)}\n`);
+  else if (existsSync(path)) rmSync(path);
 }
 
 /** Provider instances keyed by name. Only built when their key is present. */

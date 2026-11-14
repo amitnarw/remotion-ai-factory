@@ -6,7 +6,11 @@
  *   kenney      Kenney.nl audio packs, CC0 (zip link is scraped from the asset page)
  *   oga         OpenGameArt "100 CC0 SFX" pack, CC0
  *   bigsoundbank  Curated IDs in scripts/audio-library.bigsoundbank.json. A file is
- *               only kept when its page says "Free and Royalty Free".
+ *               only kept when the "License" section of its own page says CC0
+ *               (library/acquire/sources/bigsoundbank.ts bsbLicenceDecision, the
+ *               policy acquisition uses). Every page's footer says "Free and
+ *               Royalty Free", so that phrase proves nothing. One request at a
+ *               time, 1.2 s apart.
  *   freepd      Public-domain music from the archive.org `freepd` mirror, category
  *               folders only (FreePD.com itself has closed).
  *
@@ -22,6 +26,10 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs
 import { basename, extname, join } from "path";
 import AdmZip from "adm-zip";
 import { runFfmpeg, measureLoudness, FFMPEG } from "../src/generator/ffmpeg";
+import { MAX_ENTRY_BYTES } from "../src/generator/library/acquire/archive";
+import { Http } from "../src/generator/library/acquire/http";
+import { licenceLabel } from "../src/generator/library/acquire/policy";
+import { bsbLicenceDecision } from "../src/generator/library/acquire/sources/bigsoundbank";
 
 const ROOT = process.cwd();
 const LIB = join(ROOT, "public", "library");
@@ -192,19 +200,27 @@ async function oga(): Promise<void> {
 async function bigsoundbank(): Promise<void> {
   if (!ONLY.has("bigsoundbank") || !existsSync(MANIFEST_BSB)) return;
   const list = JSON.parse(readFileSync(MANIFEST_BSB, "utf8")) as Array<{ id: string; page: string; kind: Kind; tags: string[] }>;
+  // Polite: one request at a time, 1.2 s apart; the site's pages need a browser's User-Agent.
+  const http = new Http({ userAgent: UA });
   for (const item of list) {
     const id = `bsb-${item.id}`;
     try {
-      const page = await getText(item.page);
-      if (!/Free and Royalty Free/i.test(page)) throw new Error("page is not marked 'Free and Royalty Free'");
-      const src = await cachedDownload(`https://bigsoundbank.com/UPLOAD/mp3/${item.id}.mp3`, `${id}.mp3`);
+      const page = await http.text(item.page);
+      const type = item.kind === "ambience" ? "ambience" : item.kind === "music" ? "music" : "sound";
+      const licence = bsbLicenceDecision(page, type, { title: id, page: item.page });
+      if (!licence.allow || !licence.licence) throw new Error(`licence refused: ${licence.reason}`);
+      const src = join(CACHE, `${id}.mp3`);
+      if (FORCE || !existsSync(src) || statSync(src).size === 0) {
+        mkdirSync(CACHE, { recursive: true });
+        await http.file(`https://bigsoundbank.com/UPLOAD/mp3/${item.id}.mp3`, src, MAX_ENTRY_BYTES);
+      }
       // Folder and format follow the kind: beds and music as mp3, one-shots as wav.
       const long = item.kind === "music" || item.kind === "ambience";
       const dest = join(LIB, item.kind, `${id}.${long ? "mp3" : "wav"}`);
       if (FORCE || !existsSync(dest)) {
         if (!convert(src, dest, item.kind)) throw new Error("conversion failed");
       }
-      addEntry({ id, kind: item.kind, tags: item.tags, pack: "bigsoundbank", source: "BigSoundBank", license: "CC0 1.0 (page: Free and Royalty Free)", url: item.page }, dest);
+      addEntry({ id, kind: item.kind, tags: item.tags, pack: "bigsoundbank", source: "BigSoundBank", license: `${licenceLabel(licence.licence)} (the page's License section)`, url: item.page }, dest);
       console.log(`[bigsoundbank] ${id} ok`);
     } catch (e) {
       console.warn(`[bigsoundbank] ${id} skipped: ${(e as Error).message}`);

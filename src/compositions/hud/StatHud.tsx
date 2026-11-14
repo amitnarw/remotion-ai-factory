@@ -18,7 +18,8 @@ import * as React from "react";
 import "./fonts";
 import type { StatPanelSpec } from "../../generator/spec.schema";
 import { statIndexAt, statBpmAt, statSubAt, statUnitAt, statValueAt, statZoomAt } from "../../generator/statPanel";
-import { FONT_STACKS, type HudLook } from "../../generator/caption-style";
+import { FONT_STACKS } from "../../generator/caption-style";
+import type { BrandedHudLook } from "../brand/brand";
 import {
   SAFE_AREA,
   TEXT_HUD_LINE,
@@ -73,8 +74,8 @@ export function hasPulseRow(panel?: StatPanelSpec): boolean {
 interface StatHudProps {
   panel?: StatPanelSpec;
   fps?: number;
-  /** Card or text over the picture (from the caption look). Omit for the card. */
-  hud?: HudLook;
+  /** Card or text over the picture (from the caption look), with a channel brand's colours and font. Omit for the card. */
+  hud?: BrandedHudLook;
   /** 0..1: the flight's cloud veil, for the text HUD's dark glow (as the captions). */
   glow?: number;
   /** Text HUD: design px to move up (negative) from the column's base, e.g. above a timer. */
@@ -122,7 +123,7 @@ export const StatHud: React.FC<StatHudProps> = ({ panel, fps = 30, hud, glow = 0
           opacity,
           zIndex: 20,
           pointerEvents: "none",
-          color: "#ffffff",
+          color: hud.text ?? "#ffffff",
           fontFamily: FONT_STACKS.inter,
           textShadow: textHudShadow(glow),
           whiteSpace: "nowrap",
@@ -227,7 +228,7 @@ export const StatHud: React.FC<StatHudProps> = ({ panel, fps = 30, hud, glow = 0
           fontSize: 21,
           fontWeight: 900,
           letterSpacing: 2.2,
-          color: "#e0342b",
+          color: hud?.cardAccent ?? "#e0342b",
           textTransform: "uppercase",
         }}
       >

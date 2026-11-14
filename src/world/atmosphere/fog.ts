@@ -10,7 +10,9 @@
  * in-scatter toward the sun.
  *
  * Pure per frame: the uniforms are set once per scene from the sky look;
- * nothing reads the wall clock.
+ * nothing reads the wall clock. A time lapse (docs/factory/13-light-and-time.md)
+ * shares one set of the light's uniforms (heightFogLive) across the scene's
+ * materials and writes it every frame from the clock (setHeightFogLive).
  */
 import * as THREE from "three";
 import { patchMaterial } from "./patch";
@@ -35,17 +37,52 @@ export interface HeightFogOptions {
    *  toward a night sky by `amount` (0 .. 1, a shared uniform the caller
    *  writes per frame). Without it the haze never changes. */
   night?: { amount: { value: number }; horizon: string; zenith: string };
+  /** A time lapse: the colours, sun in-scatter and sun direction as shared
+   *  uniforms (heightFogLive), written per frame by the caller; the values
+   *  above are then only their first. Without it each material keeps its
+   *  own, set once. */
+  live?: HeightFogLive;
+}
+
+/** The height fog's light as shared uniforms (one set per scene). */
+export interface HeightFogLive {
+  uHFogLo: { value: THREE.Color };
+  uHFogHi: { value: THREE.Color };
+  uHFogSun: { value: THREE.Color };
+  uHFogSunDir: { value: THREE.Vector3 };
+}
+
+/** Shared uniforms holding the light of `opts` (as applyHeightFog sets it). */
+export function heightFogLive(opts: Pick<HeightFogOptions, "horizon" | "zenith" | "sunColor" | "sunDir" | "sunStrength">): HeightFogLive {
+  const live: HeightFogLive = {
+    uHFogLo: { value: new THREE.Color() },
+    uHFogHi: { value: new THREE.Color() },
+    uHFogSun: { value: new THREE.Color() },
+    uHFogSunDir: { value: new THREE.Vector3() },
+  };
+  setHeightFogLive(live, opts);
+  return live;
+}
+
+/** Writes a frame's light into the shared uniforms: the same values
+ *  applyHeightFog gives a material built with these options. */
+export function setHeightFogLive(live: HeightFogLive, opts: Pick<HeightFogOptions, "horizon" | "zenith" | "sunColor" | "sunDir" | "sunStrength">): void {
+  live.uHFogLo.value.set(opts.horizon);
+  live.uHFogHi.value.set(opts.zenith);
+  live.uHFogSun.value.set(opts.sunColor ?? "#000000").multiplyScalar(opts.sunStrength ?? 0);
+  live.uHFogSunDir.value.set(...(opts.sunDir ?? [0, 1, 0]));
 }
 
 export function applyHeightFog(mat: THREE.Material, opts: HeightFogOptions): void {
   patchMaterial(mat, (shader) => {
-    shader.uniforms.uHFogLo = { value: new THREE.Color(opts.horizon) };
-    shader.uniforms.uHFogHi = { value: new THREE.Color(opts.zenith) };
+    const live = opts.live;
+    shader.uniforms.uHFogLo = live ? live.uHFogLo : { value: new THREE.Color(opts.horizon) };
+    shader.uniforms.uHFogHi = live ? live.uHFogHi : { value: new THREE.Color(opts.zenith) };
     shader.uniforms.uHFogK = { value: opts.density ?? 0.0012 };
     shader.uniforms.uHFogL = { value: opts.lambda ?? 700 };
     shader.uniforms.uHFogMax = { value: opts.max ?? 0.85 };
-    shader.uniforms.uHFogSun = { value: new THREE.Color(opts.sunColor ?? "#000000").multiplyScalar(opts.sunStrength ?? 0) };
-    shader.uniforms.uHFogSunDir = { value: new THREE.Vector3(...(opts.sunDir ?? [0, 1, 0])) };
+    shader.uniforms.uHFogSun = live ? live.uHFogSun : { value: new THREE.Color(opts.sunColor ?? "#000000").multiplyScalar(opts.sunStrength ?? 0) };
+    shader.uniforms.uHFogSunDir = live ? live.uHFogSunDir : { value: new THREE.Vector3(...(opts.sunDir ?? [0, 1, 0])) };
     shader.uniforms.uHFogN = opts.night?.amount ?? { value: 0 };
     shader.uniforms.uHFogNLo = { value: new THREE.Color(opts.night?.horizon ?? "#000000") };
     shader.uniforms.uHFogNHi = { value: new THREE.Color(opts.night?.zenith ?? "#000000") };

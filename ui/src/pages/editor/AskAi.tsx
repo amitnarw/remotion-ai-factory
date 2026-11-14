@@ -1,10 +1,11 @@
 /**
  * AskAi: ask the Editor model for a change to the selected beat (or the whole
  * video). The answer is only a proposal: nothing is saved until Apply sends
- * its edits through the normal edit route.
+ * its edits through the normal edit route. In an as-written run the script's
+ * words are locked: the model may change them only to words typed in quotes.
  */
 import { useState } from "react";
-import { Check, Sparkles, X } from "lucide-react";
+import { Check, Lock, Sparkles, X } from "lucide-react";
 import { askFilm, type FilmProposal, type FilmTarget } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -14,12 +15,15 @@ export function AskAi({
   filmId,
   beat,
   busy,
+  wordsLocked,
   onApply,
 }: {
   filmId: string;
   /** Beat to work on, or null for the whole video. */
   beat: string | null;
   busy: boolean;
+  /** An as-written run: the script's words change only to words typed in the request. */
+  wordsLocked: boolean;
   /** Saves the proposal; resolves to the server's message on failure, null on success. */
   onApply: (proposal: FilmProposal) => Promise<string | null>;
 }) {
@@ -68,6 +72,15 @@ export function AskAi({
           About {targetLabel(target)}
         </Badge>
       </div>
+      {wordsLocked ? (
+        <p className="flex items-start gap-2 rounded-xl bg-input/50 px-3 py-2 text-xs text-muted-foreground">
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Your words are kept as written. Ask AI changes what the camera shows, the shots and the sound. To change a line, type the new words in quotes, for
+            example: say "The tide never came back."
+          </span>
+        </p>
+      ) : null}
       <Textarea
         className="min-h-20 text-sm"
         placeholder={beat ? "Make this beat more dramatic" : "Make the ending calmer"}

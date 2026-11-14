@@ -20,8 +20,9 @@ import {
   Users,
   Wand2,
 } from "lucide-react";
-import { getTtsStatus, getVoices, type TtsStatus, type VoicesResponse } from "../../api";
+import { getChannels, getTtsStatus, getVoices, type ChannelInfo, type TtsStatus, type VoicesResponse } from "../../api";
 import { Badge } from "../../components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "../../components/ui/tooltip";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
@@ -42,10 +43,13 @@ import { ReferencesPanel } from "./ReferencesPanel";
 import {
   DEFAULT_VOICES,
   MIN_IDEA_LENGTH,
+  getWizard,
+  hasIdea,
   lengthProblem,
   sceneProblem,
   updateWizard,
   useWizard,
+  type OwnStory,
   type VideoSettingsForm,
   type VoiceConfig,
 } from "./wizard";
@@ -62,40 +66,162 @@ const EXAMPLES = [
   "What if the sun never set?",
 ];
 
+/** The channels, read once per page load (they change only with channels/*.json). */
+let channelList: Promise<ChannelInfo[]> | null = null;
+function useChannels(): ChannelInfo[] {
+  const [list, setList] = useState<ChannelInfo[]>([]);
+  useEffect(() => {
+    let alive = true;
+    channelList ??= getChannels().catch(() => {
+      channelList = null;
+      return [];
+    });
+    void channelList.then((l) => alive && setList(l));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return list;
+}
+
+/** The channel's name, or its id while the list loads. */
+export function useChannelName(id: string): string {
+  return useChannels().find((c) => c.id === id)?.name ?? id;
+}
+
 export function IdeaStep({ onNext }: { onNext: () => void }) {
-  const { idea } = useWizard();
-  const tooShort = idea.trim().length > 0 && idea.trim().length < MIN_IDEA_LENGTH;
+  const w = useWizard();
+  const { idea, story, channel } = w;
+  const channels = useChannels();
+  const current = channels.find((c) => c.id === channel);
+  // The ways this channel can use a story of yours.
+  const storyModes = (current?.modes ?? ["premise", "adapt"]).filter((m): m is OwnStory["mode"] => m !== "premise");
+  const tooShort = !story.on && idea.trim().length > 0 && idea.trim().length < MIN_IDEA_LENGTH;
+  const whatIf = channel === "what-if";
+
+  /** A new channel brings its own format, caption look and voices; each can still be changed on its step. */
+  const pickChannel = (id: string) => {
+    const c = channels.find((x) => x.id === id);
+    if (!c) return;
+    const modes = c.modes.filter((m): m is OwnStory["mode"] => m !== "premise");
+    updateWizard({
+      channel: id,
+      video: c.formats.default ? { ...w.video, format: c.formats.default } : w.video,
+      captions: c.captions ?? w.captions,
+      voice: { ...w.voice, narrationOn: !!c.voices.narration?.enabled, charactersOn: !!c.voices.dialogs?.enabled },
+      story: { ...story, on: story.on && modes.length > 0, mode: modes.includes(story.mode) ? story.mode : c.scriptMode },
+    });
+  };
+
   return (
     <StepFrame
       icon={<Lightbulb />}
       title="What is your video about?"
-      description={<>Write one &ldquo;what if&rdquo; question. The AI turns it into a story with scenes, voices and sound.</>}
+      description={
+        whatIf ? (
+          <>Write one &ldquo;what if&rdquo; question. The AI turns it into a story with scenes, voices and sound.</>
+        ) : (
+          <>Write your idea in one line, or paste a story of your own. The AI makes it into scenes, voices and sound.</>
+        )
+      }
     >
       <Card className="p-4 sm:p-6">
-        <label htmlFor="idea" className="sr-only">
-          Your idea
+        <div className="mb-5">
+          <div className="mb-2 flex items-center gap-1 text-[15px] font-semibold">
+            Channel <InfoTip helpId="channels" />
+          </div>
+          <Select value={channel} onValueChange={pickChannel} disabled={channels.length === 0}>
+            <SelectTrigger className="h-12" aria-label="Channel">
+              <SelectValue placeholder="What if" />
+            </SelectTrigger>
+            <SelectContent>
+              {channels.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {current ? <p className="mt-2 text-sm text-muted-foreground">{current.description}</p> : null}
+        </div>
+
+        <label htmlFor="idea" className="mb-2 block text-[15px] font-semibold">
+          {story.on ? "A title or one line about it (optional)" : "Your idea"}
         </label>
         <Textarea
           id="idea"
           autoFocus
-          rows={3}
+          rows={story.on ? 1 : 3}
           value={idea}
-          placeholder="What if money doubled every 3 seconds?"
+          placeholder={whatIf ? "What if money doubled every 3 seconds?" : "The keeper's last night"}
           onChange={(e) => updateWizard({ idea: e.target.value })}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              if (idea.trim().length >= MIN_IDEA_LENGTH) onNext();
+              if (hasIdea(getWizard())) onNext();
             }
           }}
-          className="min-h-32 resize-none bg-input/70 text-xl font-semibold leading-snug sm:text-2xl"
+          className={cn("resize-none bg-input/70 font-semibold leading-snug", story.on ? "min-h-12 text-lg" : "min-h-32 text-xl sm:text-2xl")}
         />
         <p className={cn("mt-2 text-sm", tooShort ? "text-accent" : "text-muted-foreground")} aria-live="polite">
           {tooShort ? "A few more words, please." : "One sentence is enough. You will check the plan before anything is made."}
         </p>
+
+        <div className="mt-5 rounded-2xl bg-input/50 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-1 text-[15px] font-semibold">
+                Use my own story <InfoTip helpId="own-story" />
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {storyModes.length ? "Paste a story or a script you wrote. The video is made from it." : "This channel writes every story from an idea."}
+              </div>
+            </div>
+            <Switch
+              className="mt-1"
+              checked={story.on}
+              disabled={storyModes.length === 0}
+              onCheckedChange={(on) => updateWizard({ story: { ...story, on, mode: storyModes.includes(story.mode) ? story.mode : current?.scriptMode ?? "adapt" } })}
+              aria-label="Use my own story"
+            />
+          </div>
+          {story.on ? (
+            <div className="mt-4 space-y-4">
+              <Textarea
+                rows={10}
+                value={story.text}
+                aria-label="Your story"
+                placeholder={"The keeper had kept the light for forty years.\n\n[A lighthouse on a rocky coast at night]\n\nMARA: Dad, come down."}
+                onChange={(e) => updateWizard({ story: { ...story, text: e.target.value } })}
+                className="min-h-56 bg-input/70 text-[15px] leading-relaxed"
+              />
+              <p className="text-sm text-muted-foreground">
+                Write a character&rsquo;s name before their line (&ldquo;Ana: Where were you?&rdquo;), what the camera shows in [brackets], and a line of --- between acts.
+              </p>
+              <div role="radiogroup" aria-label="How to use your story" className="grid gap-3 sm:grid-cols-2">
+                {storyModes.includes("adapt") ? (
+                  <ChoiceCard
+                    selected={story.mode === "adapt"}
+                    onSelect={() => updateWizard({ story: { ...story, mode: "adapt" } })}
+                    title="Rewrite it into beats"
+                    description="The AI keeps your plot and characters, and may cut and rephrase."
+                  />
+                ) : null}
+                {storyModes.includes("as-written") ? (
+                  <ChoiceCard
+                    selected={story.mode === "as-written"}
+                    onSelect={() => updateWizard({ story: { ...story, mode: "as-written" } })}
+                    title="Keep my words"
+                    description="Every word stays as you wrote it. The AI adds only what each beat shows."
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </Card>
 
-      <div className="mt-6">
+      <div className={cn("mt-6", (!whatIf || story.on) && "hidden")}>
         <div className="mb-3 text-sm font-semibold text-muted-foreground">Need a spark? Try one of these</div>
         <div className="flex flex-wrap gap-2">
           {EXAMPLES.map((ex) => (
@@ -334,10 +460,44 @@ export function FormatStep() {
         <div className="flex items-start justify-between gap-4 rounded-2xl bg-input/50 p-4">
           <div>
             <div className="flex items-center gap-1 text-[15px] font-semibold">
+              Read the story first <InfoTip helpId="story-check" />
+            </div>
+            <div className="text-sm text-muted-foreground">
+              The AI stops after the story so you can read it before it plans the scenes and the sound.
+            </div>
+          </div>
+          <Switch
+            className="mt-1"
+            checked={video.storyGate !== false}
+            onCheckedChange={(on) => set({ storyGate: on })}
+            aria-label="Read the story first"
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-2xl bg-input/50 p-4">
+          <div>
+            <div className="flex items-center gap-1 text-[15px] font-semibold">
+              Show me the shopping list <InfoTip helpId="shopping-list" />
+            </div>
+            <div className="text-sm text-muted-foreground">
+              When the story needs something the library does not have, the AI stops so you can choose what to get. Off: it plans with what the library has.
+            </div>
+          </div>
+          <Switch
+            className="mt-1"
+            checked={video.shopGate !== false}
+            onCheckedChange={(on) => set({ shopGate: on })}
+            aria-label="Show me the shopping list"
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-2xl bg-input/50 p-4">
+          <div>
+            <div className="flex items-center gap-1 text-[15px] font-semibold">
               AI review pass <InfoTip helpId="review-pass" />
             </div>
             <div className="text-sm text-muted-foreground">
-              A second AI points out weak moments and the writer rewrites them. One extra AI call.
+              A second AI points out weak moments. One extra AI call. A story you read and approved is kept; its notes are listed for you.
             </div>
           </div>
           <Switch
@@ -651,7 +811,9 @@ export function SummaryStep({
   error: string | null;
   errorAction?: React.ReactNode;
 }) {
-  const { idea, video, voice, captions } = useWizard();
+  const wizard = useWizard();
+  const { idea, video, voice, captions, story } = wizard;
+  const channelName = useChannelName(wizard.channel);
   const info = FORMATS[video.format];
   const look = resolveCaptionStyle(captions);
   const adjusted = Object.keys(captions).some((k) => k !== "preset");
@@ -664,15 +826,21 @@ export function SummaryStep({
       {error ? <ErrorBanner error={error} action={errorAction} /> : null}
       <div className="space-y-3">
         <SummaryRow icon={<Lightbulb />} label="Idea" onChange={() => go("idea")}>
-          <span className="font-semibold">{idea.trim() || "No idea yet"}</span>
+          <span className="font-semibold">{idea.trim() || (story.on ? "Your own story" : "No idea yet")}</span>
+          <span className="block text-sm text-muted-foreground">
+            Channel: {channelName}.
+            {story.on
+              ? ` Your story (${story.text.trim().split(/\s+/).filter(Boolean).length} words), ${story.mode === "as-written" ? "kept word for word" : "rewritten into beats"}.`
+              : ""}
+          </span>
         </SummaryRow>
         <SummaryRow icon={<Ratio />} label="Format and length" onChange={() => go("format")}>
           <span className="font-semibold">
             {info.name} {video.format}, {describeLength(video)}
           </span>
           <span className="block text-sm text-muted-foreground">
-            Scenes: {video.sceneCount.trim() ? video.sceneCount : "automatic"}. Quality: {video.quality}. AI review pass:{" "}
-            {video.critic ? "on" : "off"}.
+            Scenes: {video.sceneCount.trim() ? video.sceneCount : "automatic"}. Quality: {video.quality}. Read the story first:{" "}
+            {video.storyGate !== false ? "on" : "off"}. Shopping list: {video.shopGate !== false ? "on" : "off"}. AI review pass: {video.critic ? "on" : "off"}.
           </span>
         </SummaryRow>
         <SummaryRow icon={<Mic />} label="Voices" onChange={() => go("voice")}>
@@ -701,13 +869,15 @@ export function SummaryStep({
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
         <span className="hidden text-sm text-muted-foreground sm:ml-auto sm:block">Press Enter to start</span>
-        <Button variant="amber" size="lg" onClick={onWrite} disabled={writing || idea.trim().length < MIN_IDEA_LENGTH}>
+        <Button variant="amber" size="lg" onClick={onWrite} disabled={writing || !hasIdea(wizard)}>
           {writing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Wand2 className="h-5 w-5" />}
           {writing ? "Starting..." : "Write the plan"}
         </Button>
       </div>
       <p className="mt-4 text-sm text-muted-foreground">
-        Writing a plan usually takes a minute or two. You can leave this screen while it runs.
+        {video.storyGate !== false
+          ? "The AI writes the story first and stops so you can read it. You can leave this screen while it runs."
+          : "Writing a plan usually takes a minute or two. You can leave this screen while it runs."}
       </p>
     </StepFrame>
   );

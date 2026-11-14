@@ -119,8 +119,8 @@ export const KIT_RECIPES: KitRecipe[] = [FANTASY_TOWN, BUILDING_KIT];
 
 type Bounds = [string, [number, number, number], [number, number, number]];
 
-const complete = (dir: string, scale: number, front: Axis, tags: string[], rows: Bounds[]): CompleteModel[] =>
-  rows.map(([name, min, max]) => ({ file: `${dir}/${name}.glb`, scale, min, max, front, tags }));
+const complete = (dir: string, scale: number, front: Axis, tags: string[], rows: Bounds[], ext = "glb"): CompleteModel[] =>
+  rows.map(([name, min, max]) => ({ file: `${dir}/${name}.${ext}`, scale, min, max, front, tags }));
 
 /**
  * Kenney City Kit (Suburban): detached houses. The front (door, planters,
@@ -216,6 +216,48 @@ export const INDUSTRIAL_BUILDINGS: CompleteModel[] = complete("assets/world/kenn
   ["building-t", [-0.861, 0, -0.695], [0.861, 1.015, 0.695]],
 ]);
 
+/**
+ * KayKit City Builder Bits: brick walk-ups with shop fronts, cornices and
+ * white-framed windows (New York). The "without base" models, so they stand
+ * on our sidewalks, not their own tile; their bottom is 0.1 unit up (the
+ * tile's thickness), which placeCompleteBuilding stands on the ground.
+ * Fronts (shop windows, awnings, stoops) on +z. Storeys are ~0.7 unit:
+ * 1 unit = 5 m (the catalog's scale), two to four storeys, 6-10 m wide.
+ * glTF text files with a .bin each (kits.test.ts measures them).
+ */
+export const KAYKIT_WALKUPS: CompleteModel[] = complete("assets/world/kaykit/city-builder-bits", 5, "+z", ["walk-up", "brick"], [
+  ["building_A_withoutBase", [-0.603, 0.1, -0.65], [0.603, 1.65, 0.8]],
+  ["building_B_withoutBase", [-0.803, 0.1, -0.65], [0.803, 1.65, 0.65]],
+  ["building_C_withoutBase", [-0.603, 0.1, -0.65], [0.603, 2.35, 0.65]],
+  ["building_D_withoutBase", [-0.803, 0.1, -0.65], [0.803, 2.35, 0.65]],
+  ["building_E_withoutBase", [-1.003, 0.1, -0.65], [1.003, 2.35, 0.8]],
+  ["building_F_withoutBase", [-1.003, 0.1, -0.65], [1.003, 2.35, 0.65]],
+  ["building_G_withoutBase", [-1.003, 0.1, -0.65], [1.003, 2.35, 0.8]],
+  ["building_H_withoutBase", [-1.003, 0.1, -0.65], [1.003, 3.05, 0.65]],
+], "gltf");
+
+/** KayKit's wooden water tank on legs (glTF; 0.498 units wide, 0.67 tall),
+ *  at 5.5: a 2.7 m tank standing 3.7 m, as on New York's roofs. */
+export const WATER_TOWER = { file: "assets/world/kaykit/city-builder-bits/watertower.gltf", scale: 5.5, radius: 0.249, height: 0.67 } as const;
+
+/**
+ * Where a walk-up's water tank stands (model units: x, roof y, z), measured
+ * from the models (towns.test.ts): on the flat roof inside the cornice,
+ * toward the back (fronts are +z), clear of the roof's stair house and
+ * vents (E, G, H have them on the right).
+ */
+export const WALKUP_TANK_SPOTS: Record<string, [number, number, number]> = {
+  building_A_withoutBase: [0, 1.607, -0.2],
+  building_B_withoutBase: [-0.25, 1.607, -0.2],
+  building_C_withoutBase: [0, 2.307, -0.2],
+  building_D_withoutBase: [-0.25, 2.307, -0.2],
+  building_E_withoutBase: [-0.45, 2.307, -0.2],
+  building_F_withoutBase: [-0.45, 2.307, -0.2],
+  building_G_withoutBase: [-0.45, 2.307, -0.2],
+  building_H_withoutBase: [-0.45, 3.007, -0.2],
+};
+
+/** The binary-glTF complete models (assembler.test.ts re-measures them). */
 export const COMPLETE_MODELS: CompleteModel[] = [...SUBURBAN_HOUSES, ...COMMERCIAL_BUILDINGS, ...COMMERCIAL_TOWERS, ...MODULAR_SAMPLES, ...INDUSTRIAL_BUILDINGS];
 
 /* ------------------------------------------------------------------ */
@@ -223,7 +265,7 @@ export const COMPLETE_MODELS: CompleteModel[] = [...SUBURBAN_HOUSES, ...COMMERCI
 /* ------------------------------------------------------------------ */
 
 /** Names a region style (places.ts RegionStyle.kit) uses to ask for kits. */
-export type KitSetId = "fantasy-town" | "building-kit" | "commercial" | "commercial-towers" | "suburban-houses";
+export type KitSetId = "fantasy-town" | "building-kit" | "commercial" | "commercial-towers" | "suburban-houses" | "walkups";
 
 /**
  * How a set is built on a lot. Modular kits are assembled to fill the lot's
@@ -244,4 +286,5 @@ export const KIT_SETS: Record<KitSetId, KitSet> = {
   commercial: { kind: "complete", models: COMMERCIAL_BUILDINGS, setback: 0.4, gap: 0.15 },
   "commercial-towers": { kind: "complete", models: COMMERCIAL_TOWERS, setback: 0.4, gap: 0.15 },
   "suburban-houses": { kind: "complete", models: SUBURBAN_HOUSES, setback: 4, gap: 1.8 },
+  walkups: { kind: "complete", models: KAYKIT_WALKUPS, setback: 0.4, gap: 0.15 },
 };

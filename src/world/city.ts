@@ -46,7 +46,9 @@ export interface Building {
   rotY: number;
 }
 
-/** Plain box (rooftop rooms, water tanks, chimneys). `y` is its base. */
+/** Plain box (rooftop rooms, water tanks, chimneys, a bell tower's parts).
+ *  `y` is its base. `taper` narrows its top to that fraction of the base
+ *  (a spire; default 1, a box). */
 export interface Prop {
   x: number;
   y: number;
@@ -56,6 +58,7 @@ export interface Prop {
   d: number;
   color: string;
   rotY: number;
+  taper?: number;
 }
 
 /** A filled ground polygon (park, plaza), points [x, z]. */
@@ -93,6 +96,21 @@ export interface Landmark {
   dome: { x: number; y: number; z: number; r: number };
 }
 
+/** The main plaza's bell tower (style.belfry): its base stands in
+ *  `buildings` (no windows, so it never lifts), the rest in `props`. */
+export interface Belfry {
+  /** Centre of its square footprint, its turn (the front faces the plaza). */
+  x: number;
+  z: number;
+  rotY: number;
+  /** Width of the shaft (m). */
+  w: number;
+  /** Height of the cross's top (m). */
+  top: number;
+  /** The clock's rim to the cornice's top (m): the belfry stage a close shot frames. */
+  stage: [number, number];
+}
+
 export interface Cloud {
   x: number;
   y: number;
@@ -112,6 +130,10 @@ export interface KitBuilding {
   seed: string;
   /** Complete-building sets: index of the model in the set, sized to the lot. */
   model?: number;
+  /** Modular sets: the paint its walls wear (kitPaint.ts), if any. */
+  paint?: string;
+  /** A water tank on its roof (kitTown.ts places it). */
+  tank?: boolean;
 }
 
 export interface CityLayout {
@@ -125,6 +147,8 @@ export interface CityLayout {
   roads: Road[];
   areas: Area[];
   landmarks: Landmark[];
+  /** The main plaza's bell tower, when the style has one and there is a plaza. */
+  belfry: Belfry | null;
   clouds: Cloud[];
   coreHalf: number;
   outerHalf: number;
@@ -378,6 +402,10 @@ function planKitTown(
     }
     return entries[entries.length - 1][0];
   };
+  // A water tank on a roof of the style's tank sets: the building's own draw
+  // (not the town's), so the town is laid out as without tanks.
+  const tankOf = (id: KitSetId, seed: string): { tank?: true } =>
+    kit.tanks?.sets.includes(id) && makeRng(`tank:${seed}`)() < kit.tanks.chance ? { tank: true } : {};
   // Taller toward the centre: the draw skews up near it and down at the edge.
   const floorsAt = ([lo, hi]: [number, number], dist: number) => {
     const lean = 1.3 - 0.75 * Math.min(1, dist / opts.coreHalf);
@@ -402,11 +430,15 @@ function planKitTown(
     let u = u0 + (width - modules * unit) / 2;
     let left = modules;
     let k = 0;
+    const paints = kit.paints?.[id];
     while (left > 0) {
       let take = Math.min(left, per(zone.houseWidth[0] + r() * (zone.houseWidth[1] - zone.houseWidth[0])));
       if (left - take === 1 && take > 1 && r() < 0.6) take--; // no one-module stub at the end
       const w = take * unit;
-      buildings.push({ set: id, lot: rectLot(rc, u, u + w), floors: floorsAt(zone.floors, dist), seed: `${opts.seed}:${tag}:${k++}` });
+      const seed = `${opts.seed}:${tag}:${k++}`;
+      // Its own draw (not the town's), so the town is laid out as without paints.
+      const paint = paints?.length ? paints[Math.floor(makeRng(`paint:${seed}`)() * paints.length)] : "";
+      buildings.push({ set: id, lot: rectLot(rc, u, u + w), floors: floorsAt(zone.floors, dist), seed, ...(paint ? { paint } : {}), ...tankOf(id, seed) });
       u += w;
       left -= take;
     }
@@ -432,8 +464,12 @@ function planKitTown(
         });
         if (!fits.length) continue;
         const { i, w } = fits[Math.floor(r() * fits.length)];
-        const span = w + 2 * set.gap;
-        buildings.push({ set: id, lot: rectLot(rc, u, u + span), floors: 1, seed: `${opts.seed}:${tag}:${k++}`, model: i });
+        // A hair over the model and its gaps: the placer's own fit test
+        // (assembler.ts placeCompleteBuilding, width <= lot - 2 gaps) failed
+        // on the rounding of the exact sum, and half the models were dropped.
+        const span = w + 2 * set.gap + 1e-6;
+        const seed = `${opts.seed}:${tag}:${k++}`;
+        buildings.push({ set: id, lot: rectLot(rc, u, u + span), floors: 1, seed, model: i, ...tankOf(id, seed) });
         u += span;
         placed = true;
         break;
@@ -494,10 +530,112 @@ function planKitTown(
   return { buildings, yards, trees };
 }
 
+/** Bearing (x = sin, z = cos) of the plaza side the bell tower stands on:
+ *  south by south-west. The plaza's wide and eye-level shots look across
+ *  the market from its north-east (bearing about -30 degrees, camera/world.ts
+ *  marketBearing, in Paris and Colmar alike), so the tower rises a little
+ *  left of their centre, as in the reference frame. */
+const BELFRY_SIDE: XZ = [Math.sin(-Math.PI / 9), Math.cos(-Math.PI / 9)];
+
+/**
+ * Where the main plaza's bell tower stands: a lot within `reach` of the
+ * plaza (across its street, or across the avenue) with frontage for the
+ * tower, best on the BELFRY_SIDE, then close to the plaza and facing it
+ * (some plazas are ringed by side streets); the tower takes the middle of
+ * the lot's street edge. Null when no lot fits.
+ */
+function belfrySite(network: RoadNetwork, plaza: number, w: number, reach: number, skip: (lot: Lot) => boolean): { lot: number; x: number; z: number; rotY: number } | null {
+  const poly = network.blocks[plaza];
+  let px = 0;
+  let pz = 0;
+  for (const p of poly) {
+    px += p[0] / poly.length;
+    pz += p[1] / poly.length;
+  }
+  let best: { lot: number; x: number; z: number; rotY: number } | null = null;
+  let bestScore = -Infinity;
+  network.lots.forEach((lot, li) => {
+    if (skip(lot)) return;
+    let cx = 0;
+    let cz = 0;
+    for (const p of lot.polygon) {
+      cx += p[0] / lot.polygon.length;
+      cz += p[1] / lot.polygon.length;
+    }
+    const dx = px - cx;
+    const dz = pz - cz;
+    const len = Math.hypot(dx, dz) || 1;
+    const facing = (lot.front[0] * dx + lot.front[1] * dz) / len;
+    if (facing < -0.3) return;
+    let edge = Infinity;
+    for (let i = 0; i < poly.length; i++) edge = Math.min(edge, pointSegDist(cx, cz, poly[i], poly[(i + 1) % poly.length]));
+    if (edge > reach) return;
+    const rc = frontRect(lot, w + 1);
+    if (!rc || rc.u1 - rc.u0 < w + 1 || rc.d < w) return;
+    const score = (-dx * BELFRY_SIDE[0] - dz * BELFRY_SIDE[1]) / len + 0.5 * facing - edge / reach;
+    if (score <= bestScore) return;
+    bestScore = score;
+    const [x, z] = rc.toWorld((rc.u0 + rc.u1) / 2, rc.top - w / 2);
+    best = { lot: li, x, z, rotY: rc.rotY };
+  });
+  return best;
+}
+
+/**
+ * A bell tower's parts at a site: the base (a windowless building up to the
+ * lowest eaves around it) and, as props, the plinth, the shaft, two string
+ * courses, the belfry's openings and a clock on each face, the cornice, the
+ * spire and its cross. No randomness: the city's draws stay as they were.
+ */
+function belfryParts(site: { x: number; z: number; rotY: number }, spec: NonNullable<RegionStyle["belfry"]>, baseH: number): { base: Building; props: Prop[]; belfry: Belfry } {
+  const { x, z, rotY } = site;
+  const w = spec.width;
+  const c = Math.cos(rotY);
+  const s = Math.sin(rotY);
+  const at = (lu: number, lv: number): XZ => [x + lu * c + lv * s, z - lu * s + lv * c];
+  const props: Prop[] = [];
+  const box = (lu: number, lv: number, y: number, bw: number, h: number, bd: number, color: string, taper?: number) => {
+    const [px, pz] = at(lu, lv);
+    props.push({ x: px, y, z: pz, w: bw, h, d: bd, color, rotY, ...(taper !== undefined ? { taper } : {}) });
+  };
+  // Something on each face, `out` metres proud of it: `along` across the
+  // face from its middle, `width` wide, `h` tall from `y`.
+  const onFaces = (along: number, y: number, width: number, h: number, out: number, color: string) => {
+    const r = w / 2 + out / 2;
+    box(along, r, y, width, h, out, color);
+    box(-along, -r, y, width, h, out, color);
+    box(r, -along, y, out, h, width, color);
+    box(-r, along, y, out, h, width, color);
+  };
+  const stage = Math.max(4, spec.shaft * 0.18);
+  const bells = spec.shaft - stage;
+  box(0, 0, 0, w + 0.5, 1.4, w + 0.5, spec.trim);
+  box(0, 0, baseH, w, spec.shaft - baseH, w, spec.walls);
+  for (const y of [bells * 0.45, bells]) box(0, 0, y, w + 0.3, 0.35, w + 0.3, spec.trim);
+  // Two tall openings a face in the belfry, dark against the walls.
+  const gap = w * 0.22;
+  for (const u of [-gap, gap]) onFaces(u, bells + stage * 0.2, w * 0.2, stage * 0.62, 0.08, "#2b2622");
+  // The clock under the belfry: a dark rim, the dial, hands at three o'clock.
+  const dial = w * 0.36;
+  const cy = bells - 0.8 - dial;
+  onFaces(0, cy - 0.15, dial + 0.3, dial + 0.3, 0.06, "#3b3530");
+  onFaces(0, cy, dial, dial, 0.12, spec.clock);
+  onFaces(0, cy + dial / 2 - 0.06, 0.12, dial * 0.42, 0.18, "#2b2622");
+  onFaces(dial * 0.15, cy + dial / 2 - 0.06, dial * 0.3, 0.12, 0.18, "#2b2622");
+  box(0, 0, spec.shaft, w + 0.7, 0.5, w + 0.7, spec.trim);
+  const foot = spec.shaft + 0.5;
+  box(0, 0, foot, w + 0.4, spec.spireHeight, w + 0.4, spec.spire, 0.04);
+  const apex = foot + spec.spireHeight;
+  box(0, 0, apex - 0.4, 0.22, 2.6, 0.22, "#3a3633");
+  box(0, 0, apex + 1.3, 1.3, 0.22, 0.22, "#3a3633");
+  const base: Building = { x, z, w, d: w, h: baseH, color: spec.walls, roof: "flat", roofColor: spec.walls, windows: false, rotY };
+  return { base, props, belfry: { x, z, rotY, w, top: apex + 2.2, stage: [cy - 0.15, spec.shaft + 0.5] } };
+}
+
 export function generateCity(style: RegionStyle, opts: CityOptions): CityLayout {
   const r = makeRng(`city:${opts.seed}`);
   const coreHalf = 600;
-  const outerHalf = 2600;
+  const outerHalf = style.outerHalf ?? 2600;
   const leaves = BROADLEAF[opts.season];
   const grass = style.trees.kind === "palm" ? "#8a9a5a" : GRASS[opts.season];
 
@@ -681,13 +819,35 @@ export function generateCity(style: RegionStyle, opts: CityOptions): CityLayout 
   const clearings = opts.clearings ?? [];
   const cleared = (x: number, z: number) => clearings.some(([cx, cz, cr]) => Math.hypot(x - cx, z - cz) < cr);
 
+  // The bell tower on the main plaza (the largest, as cityAnchors.openBlocks
+  // orders them), on a lot of its own.
+  let belfry: Belfry | null = null;
+  let belfryLot = -1;
+  const mainPlaza = [...plazas].sort((a, b) => polygonArea(network.blocks[b]) - polygonArea(network.blocks[a]) || network.blocks[a][0][0] - network.blocks[b][0][0])[0];
+  if (style.belfry && mainPlaza !== undefined) {
+    const site = belfrySite(
+      network,
+      mainPlaza,
+      style.belfry.width,
+      Math.max(style.street, style.avenue) + style.lotDepth * 1.5 + 10,
+      (lot) => parks.has(lot.blockIndex) || plazas.has(lot.blockIndex) || cleared(...centroid(lot)),
+    );
+    if (site) {
+      const parts = belfryParts(site, style.belfry, style.floors[0] * style.floorHeight);
+      buildings.push(parts.base);
+      props.push(...parts.props);
+      belfry = parts.belfry;
+      belfryLot = site.lot;
+    }
+  }
+
   // Kit styles: the core's lots get kit buildings instead of boxes.
   let kitBuildings: KitBuilding[] = [];
   if (style.kit) {
     const town = planKitTown(
       style,
       network,
-      (lot) => parks.has(lot.blockIndex) || plazas.has(lot.blockIndex) || cleared(...centroid(lot)),
+      (lot) => parks.has(lot.blockIndex) || plazas.has(lot.blockIndex) || cleared(...centroid(lot)) || lot === network.lots[belfryLot],
       { seed: opts.seed, coreHalf, garden: grass, leaves },
     );
     kitBuildings = town.buildings;
@@ -697,7 +857,7 @@ export function generateCity(style: RegionStyle, opts: CityOptions): CityLayout 
 
   if (!style.kit) network.lots.forEach((lot, i) => {
     if (parks.has(lot.blockIndex) || plazas.has(lot.blockIndex)) return;
-    if (cleared(...centroid(lot))) return;
+    if (cleared(...centroid(lot)) || i === belfryLot) return;
     const f = lotFrame(lot);
     let w = f.width * f.fill * 0.94 - 0.4;
     const depthAvailable = f.depth * f.fill * 0.94 - 0.4;
@@ -782,5 +942,5 @@ export function generateCity(style: RegionStyle, opts: CityOptions): CityLayout 
     for (let i = 0; i < 5; i++) cluster(px + (r() - 0.5) * 500, pz + (r() - 0.5) * 500, between(r, [1100, 1500]), between(r, [110, 200]));
   }
 
-  return { buildings, kitBuildings, props, trees, rects, roads, areas, landmarks, clouds, coreHalf, outerHalf };
+  return { buildings, kitBuildings, props, trees, rects, roads, areas, landmarks, belfry, clouds, coreHalf, outerHalf };
 }

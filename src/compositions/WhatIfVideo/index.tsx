@@ -9,8 +9,13 @@
  *
  * The timeline is driven by the same `t` values as the spec, so picture,
  * caption, timer and audio are frame-locked by construction.
+ *
+ * A channel brand (spec.brand, src/compositions/brand/) adds an intro bumper
+ * before the video and an outro after it, a corner watermark, and its colours
+ * and fonts on the captions and the HUD. Without one, the tree is exactly the
+ * one of before (VideoBody alone), so an unbranded video renders byte-identical.
  */
-import { useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
 import * as React from "react";
 import { Hook } from "../hud/Hook";
 import { TimerHUD } from "../hud/TimerHUD";
@@ -18,7 +23,7 @@ import { Captions } from "../hud/Captions";
 import { StatHud, ZoomVignette, hasPulseRow } from "../hud/StatHud";
 import { CompositionAudio } from "./audio";
 import { secToFrame } from "../../generator/timing";
-import { ShotSpec } from "../../generator/spec.schema";
+import { ShotSpec, videoSeconds } from "../../generator/spec.schema";
 import { resolveCaptionStyle, resolveHudStyle } from "../../generator/caption-style";
 import { hudStack, textHudMeetsHook } from "../../generator/layout";
 import { AssetStage } from "../AssetStage";
@@ -29,15 +34,19 @@ import { CountrysideStage } from "../CountrysideStage";
 import { ForestStage } from "../ForestStage";
 import { RiverStage } from "../RiverStage";
 import { InteriorStage } from "../InteriorStage";
+import { ModelSetStage } from "../ModelSetStage";
 import { ThreeCanvas } from "@remotion/three";
 import { CityScene } from "../scenes/CityScene";
 import { TransitionOverlay, whipBlur } from "../TransitionOverlay";
 import { CinematicLook } from "../look/CinematicLook";
-import { lookFor } from "../../generator/look-choice";
+import { lapseLookFor, lookFor } from "../../generator/look-choice";
+import { holdDepth, sceneClock } from "../../world/warp";
 import { FirstPersonScene } from "../scenes/FirstPersonScene";
 import { WorldStage } from "./WorldStage";
 import { FlightView, flightScenes } from "./FlightView";
 import { TIMING, veilAt } from "../../world/flight";
+import { brandCaptionLook, brandHudLook, brandOf, brandTitleLook, brandTitleWeight, bumperFrames, type Brand } from "../brand/brand";
+import { BrandIntro, BrandOutro, Watermark } from "../brand/Bumpers";
 
 type SceneKey = "city" | "first-person";
 
@@ -70,9 +79,44 @@ interface WhatIfVideoProps {
   previewFrame?: number;
 }
 
-export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
+export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({ spec, previewFrame }) => {
+  const brand = React.useMemo(() => brandOf(spec), [spec]);
+  if (!brand) return <VideoBody spec={spec} previewFrame={previewFrame} />;
+  return <BrandedVideo spec={spec} brand={brand} previewFrame={previewFrame} />;
+};
+
+/**
+ * A branded video: the intro bumper, the video shifted by the intro's length
+ * (its picture, HUD and sound together, as one Sequence), then the outro. The
+ * composition's length must hold all three (brand.ts brandedFrames).
+ */
+const BrandedVideo: React.FC<WhatIfVideoProps & { brand: Brand }> = ({ spec, brand, previewFrame }) => {
+  const fps = spec.fps ?? 30;
+  const { intro, outro } = bumperFrames(brand, fps);
+  const body = secToFrame(videoSeconds(spec), fps);
+  return (
+    <AbsoluteFill style={{ background: brand.colors.background }}>
+      {intro > 0 && (
+        <Sequence durationInFrames={intro} name="Brand intro">
+          <BrandIntro brand={brand} frames={intro} />
+        </Sequence>
+      )}
+      <Sequence from={intro} durationInFrames={body} name="Video">
+        <VideoBody spec={spec} brand={brand} previewFrame={previewFrame} />
+      </Sequence>
+      {outro > 0 && (
+        <Sequence from={intro + body} durationInFrames={outro} name="Brand outro">
+          <BrandOutro brand={brand} frames={outro} />
+        </Sequence>
+      )}
+    </AbsoluteFill>
+  );
+};
+
+const VideoBody: React.FC<WhatIfVideoProps & { brand?: Brand }> = ({
   spec,
   previewFrame,
+  brand,
 }) => {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
@@ -84,11 +128,12 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const { scene, gravityOff, gravityOn } = resolvePhysicsAt(spec, timeSec);
   const SceneComp = sceneComponents[scene.scene as SceneKey];
   const activeScene = scene; // SceneSchema entry — kit/cast present when asset-driven
-  const captionLook = resolveCaptionStyle(spec.settings?.captions);
+  // A brand's colours and caption font; without one, the look itself.
+  const captionLook = brandCaptionLook(resolveCaptionStyle(spec.settings?.captions), brand);
   // The HUD follows the caption look: text over the picture on the serif
   // looks (the reference default), white cards on the others. When a video
   // has a counter and a timer, hudStack says where each one goes.
-  const hudLook = resolveHudStyle(spec.settings?.captions);
+  const hudLook = brandHudLook(resolveHudStyle(spec.settings?.captions), brand);
   const hudSlots = hudStack(hudLook.kind, { counter: !!spec.statPanel, pulse: hasPulseRow(spec.statPanel), timer: !!spec.timer });
   const hookFrames = { from: secToFrame(spec.hook.t, fps), to: secToFrame(spec.hook.t + spec.hook.duration, fps) };
   // With the text HUD the hook sits high; the HUD waits for it only when its
@@ -107,6 +152,18 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
   const veil = flightWindow
     ? veilAt(((displayFrame - Math.round(flightWindow.from * fps)) / fps) * (TIMING.end / (flightWindow.to - flightWindow.from)))
     : 0;
+  // A world scene with a time-lapse grades by its light: the start's look
+  // blended into the end's by how far the sun has gone at this frame (their
+  // two tone maps too, both in the grade from the first frame). Memoised per
+  // scene: the clock and the two looks are worked out once.
+  const mood = spec.story?.mood;
+  const lapseLook = React.useMemo(() => lapseLookFor(activeScene, mood), [activeScene, mood]);
+  // Bullet time's grade shift (docs/factory/14-bullet-time.md decision 10):
+  // with the hold's depth, a little less colour and a little more contrast.
+  // Only a video with a bullet time passes it to the grade.
+  const bulletScene = React.useMemo(() => spec.scenes.find((s) => s.bulletTime), [spec.scenes]);
+  const bulletClock = React.useMemo(() => (bulletScene ? sceneClock(bulletScene) : null), [bulletScene]);
+  const hold = bulletClock ? holdDepth(bulletClock, timeSec) : undefined;
 
   return (
     <div
@@ -159,6 +216,9 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
         ) : activeScene.kit === "interior" ? (
           // The interior world: room with window light shaft, furniture, lamp
           <InteriorStage spec={spec} scene={activeScene} />
+        ) : activeScene.kit === "model-set" ? (
+          // One catalog model staged as the whole set: a ship at sea, a lighthouse on its islet
+          <ModelSetStage spec={spec} scene={activeScene} />
         ) : activeScene.kit ? (
           // Asset-driven stage (GLB kits: park / pier / boardwalk / interior)
           <AssetStage scenes={[activeScene]} spec={spec} />
@@ -175,9 +235,12 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
             kept light: per-frame grain makes the H.264 file far larger. */}
         {!flightCovers && (
           <CinematicLook
-            preset={lookFor(activeScene, spec.story?.mood)}
+            preset={lapseLook ? lapseLook.to : lookFor(activeScene, mood)}
+            blendFrom={lapseLook?.from}
+            blend={lapseLook?.mix(timeSec)}
             quality={spec.settings?.quality === "draft" ? "draft" : "final"}
             grain={0.3}
+            hold={hold}
           />
         )}
       </ThreeCanvas>
@@ -203,11 +266,12 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       {/* Hook card */}
       <Hook
         text={spec.hook.text}
-        style={captionLook}
+        style={brandTitleLook(captionLook, brand)}
         keywordHighlight={spec.hook.keywordHighlight}
         startFrame={hookFrames.from}
         endFrame={hookFrames.to}
         hud={hudLook.kind}
+        weight={brand?.fonts.title ? brandTitleWeight(brand) : undefined}
       />
 
       {/* Timer HUD */}
@@ -227,7 +291,10 @@ export const WhatIfVideo: React.FC<WhatIfVideoProps> = ({
       )}
 
       {/* Captions */}
-      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} />
+      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} plateFont={brand?.fonts.caption} />
+
+      {/* The channel's corner mark, once the hook has gone */}
+      {brand?.watermark && <Watermark brand={brand} after={hookFrames.to} />}
 
       {/* Audio cues */}
       <CompositionAudio spec={spec} fps={fps} />

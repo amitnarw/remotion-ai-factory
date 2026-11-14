@@ -1,6 +1,7 @@
 /**
  * Settings, AI models: the providers (keys, models, the default) and which
- * model does each job (model roles).
+ * model does each job (model roles). Changes are saved for this computer in
+ * ai.config.local.json, over the shared ai.config.json.
  *
  *   ?tab=settings&section=models&view=providers|roles&provider=<name>
  */
@@ -88,6 +89,7 @@ function Providers({ selected }: { selected?: string }) {
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
   const [defaultProvider, setDefaultProvider] = useState<string | undefined>();
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [problems, setProblems] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
 
   const load = () =>
@@ -95,6 +97,7 @@ function Providers({ selected }: { selected?: string }) {
       .then((d) => {
         setProviders(d.providers || []);
         setDefaultProvider(d.defaultProvider);
+        setProblems(d.problems ?? []);
         setLoadError(null);
       })
       .catch((e) => {
@@ -124,6 +127,9 @@ function Providers({ selected }: { selected?: string }) {
       </div>
 
       {loadError ? <ErrorBanner error={loadError} fix='Start the app with "npm run server" and reload the page.' /> : null}
+      {problems.map((p) => (
+        <ErrorBanner key={p} error={p} fix="Fix the file named (or delete ai.config.local.json to go back to the shared settings), then reload the page." />
+      ))}
 
       {providers === null ? (
         <LoadingState title="Loading providers..." />

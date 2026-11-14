@@ -2,6 +2,7 @@
  * Settings: one section at a time.
  *
  *   ?tab=settings&section=models     AI models (providers, keys, model roles)
+ *   ?tab=settings&section=channels   Channels (each channel's profile: its story, look, sound and gates)
  *   ?tab=settings&section=voice      Voice engines (download and status)
  *   ?tab=settings&section=checklist  Getting started (what this computer needs)
  */
@@ -11,6 +12,7 @@ import {
   BrainCircuit,
   CircleCheck,
   CircleDashed,
+  Clapperboard,
   Info,
   ListChecks,
   type LucideIcon,
@@ -23,10 +25,12 @@ import { navigate, useQuery } from "../../lib/navigation";
 import type { SettingsSection } from "../../lib/routes";
 import { cn } from "../../lib/utils";
 import AiModels from "./AiModels";
+import Channels from "./Channels";
 import VoiceEngines from "./VoiceEngines";
 
 const SECTIONS: Array<{ key: SettingsSection; label: string; note: string; icon: LucideIcon }> = [
   { key: "models", label: "AI models", note: "Providers, keys and roles", icon: BrainCircuit },
+  { key: "channels", label: "Channels", note: "How each channel's videos are made", icon: Clapperboard },
   { key: "voice", label: "Voice engines", note: "Narration and character voices", icon: AudioLines },
   { key: "checklist", label: "Getting started", note: "What this computer needs", icon: ListChecks },
 ];
@@ -41,7 +45,7 @@ export default function Settings() {
       <PageHeader title="Settings" description="Set things up once. Everything is saved on this computer." />
       <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
         <nav aria-label="Settings sections">
-          <ul className="grid grid-cols-3 gap-2 lg:flex lg:flex-col">
+          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:flex-col">
             {SECTIONS.map((s) => {
               const active = s.key === current.key;
               const Icon = s.icon;
@@ -75,6 +79,7 @@ export default function Settings() {
             {current.label}
           </h2>
           {current.key === "models" ? <AiModels /> : null}
+          {current.key === "channels" ? <Channels /> : null}
           {current.key === "voice" ? <VoiceEngines /> : null}
           {current.key === "checklist" ? <Checklist /> : null}
         </section>

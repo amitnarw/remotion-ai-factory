@@ -53,15 +53,6 @@ export function navigate(next: Record<string, string | undefined>, opts: { repla
   if (!opts.replace) window.scrollTo({ top: 0 });
 }
 
-/** The query string a set of params would produce (for real links). */
-export function hrefFor(next: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [key, value] of Object.entries(next)) {
-    if (value !== undefined && value !== "") sp.set(key, value);
-  }
-  return `?${sp.toString()}`;
-}
-
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);

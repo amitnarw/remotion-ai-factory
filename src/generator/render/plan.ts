@@ -32,7 +32,7 @@
  *     plus content hashes of the files those elements name (cast GLBs).
  *
  * Time-sliced allow-list (checked against how the composition reads them):
- *   interval  captions[from,to], hook[t,t+duration], transitions[t±dur/2],
+ *   interval  captions[from,to], hook[t,t+duration] (with story.hook, its words), transitions[t±dur/2],
  *             scenes[from,to] (the last scene also covers the tail),
  *             story.beats[from,to], audio.voiceFiles[at,at+dur]
  *   flights   spec.flights itself is global; a chunk that overlaps a flight
@@ -46,12 +46,20 @@
  * Audio-only fields (audio.ambient/music/transitions/narration/dialogs and
  * events[].sfx) are left out of the video key entirely: the video chunks are
  * rendered muted, and they are covered by the audio key instead.
+ *
+ * A CHANNEL BRAND's bumpers (spec.brand, compositions/brand/): the story plays
+ * after the intro. The chunks are planned on the story's own frames as above,
+ * then moved by the intro; the first chunk also takes the intro and the last
+ * the outro. Each key slices the spec on the story's times and names the
+ * video's frames. The brand itself is a global field. Without bumpers the plan
+ * and the keys are the ones of before.
  */
 import { createHash } from "crypto";
 import type { ShotSpec, SpecShot } from "../spec.schema";
+import { brandOf, bumperFrames } from "../../compositions/brand/brand";
 
 /** Bump to invalidate every cached chunk after a change to this module's rules. */
-export const PLAN_VERSION = 2;
+export const PLAN_VERSION = 3;
 export const MIN_CHUNK_SEC = 4;
 export const MAX_CHUNK_SEC = 20;
 export const MIN_PAD_SEC = 1;
@@ -245,7 +253,8 @@ export function localSlice(spec: ShotSpec, aSec: number, bSec: number, padSec: n
     flights: (spec.flights ?? []).filter((f) => overlaps(f.from, f.to, wa, wb)).map((f) => flightEnds(spec, f)),
     scenes: spec.scenes.filter((s, i) => overlaps(s.from, i === last ? Infinity : s.to, wa, wb)),
     captions: (spec.captions ?? []).filter((c) => overlaps(c.from, c.to, wa, wb)),
-    hook: hook && overlaps(hook.t, hook.t + hook.duration, wa, wb) ? hook : null,
+    // The story's hook line goes with the hook card's window (no composition reads it elsewhere), so a hook variant keeps the other chunks.
+    hook: hook && overlaps(hook.t, hook.t + hook.duration, wa, wb) ? { ...hook, story: spec.story?.hook ?? null } : null,
     transitions: (spec.transitions ?? []).filter((tr) => overlaps(tr.t - tr.dur / 2, tr.t + tr.dur / 2, wa, wb)),
     shots: shotSlice(spec.shots ?? [], wa, wb),
     events: (spec.events ?? []).filter((e) => e.t <= wb).map((e) => ({ ...e, sfx: undefined })),
@@ -273,7 +282,7 @@ export function globalPart(spec: ShotSpec): Record<string, unknown> {
     ...omit(spec, [...TIME_SLICED, "statPanel", "story", "audio"]),
     hasShots: (spec.shots?.length ?? 0) > 0,
     statPanel: spec.statPanel ? omit(spec.statPanel, ["beats"]) : null,
-    story: spec.story ? omit(spec.story, ["beats"]) : null,
+    story: spec.story ? omit(spec.story, ["beats", "hook"]) : null,
     audio: spec.audio ? omit(spec.audio, [...AUDIO_ONLY, "voiceFiles"]) : null,
   };
 }
@@ -298,10 +307,16 @@ export function planRender(
     stableStringify({ v: PLAN_VERSION, salt: opts.salt, durationInFrames, fps, spec: globalPart(spec) }),
   );
   const hashOf = opts.fileHash ?? (() => null);
-  const chunks = planChunks(spec, fps, durationInFrames, opts).map((c) => {
+  // The story's frames: the whole video less a brand's bumpers (none: the whole video).
+  const bump = bumperFrames(brandOf(spec), fps);
+  const story = durationInFrames - bump.intro - bump.outro;
+  const ranges = planChunks(spec, fps, story, opts);
+  const chunks = ranges.map((c) => {
     const local = localSlice(spec, c.start / fps, c.end / fps, padSec);
     const files = Object.fromEntries(sliceFiles(local).map((f) => [f, hashOf(f)]));
-    return { ...c, key: sha1(stableStringify({ g: globalKey, frames: [c.start, c.end], local, files })) };
+    const start = c.index === 0 ? 0 : c.start + bump.intro;
+    const end = c.index === ranges.length - 1 ? durationInFrames : c.end + bump.intro;
+    return { index: c.index, start, end, key: sha1(stableStringify({ g: globalKey, frames: [start, end], local, files })) };
   });
   return { chunks, globalKey, padSec, durationInFrames, fps };
 }

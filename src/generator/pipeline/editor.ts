@@ -7,11 +7,17 @@
  * the reply format allows, so a model cannot wander off to another beat.
  * Every reply must apply cleanly; if not, the problem goes back to the model
  * (callRole's repair loop) and nothing is saved.
+ *
+ * In an as-written run the words are the user's own script (15-producer.md
+ * §2, "Story modes"): with `lockWords`, an edit may change the hook, a beat's
+ * narration or its lines (their words or speakers) only to words the user
+ * typed in the request (wordLockProblem).
  */
 import { z } from "zod";
 import { applyEdits, beatOfEdit, type Edit, type EditResult, type Film } from "../film/edits";
 import { BEAT_FIELDS, sceneFields, shotFields, soundChoices } from "../film/fields";
 import { asArray, callRole, type RoleModel } from "./llm";
+import { normalizeWords } from "./script";
 
 export type EditTarget = { kind: "beat"; beat: string } | { kind: "video" };
 
@@ -154,8 +160,12 @@ function replySchema(film: Film, target: EditTarget) {
   return z.object({ summary: z.string(), edits: z.array(z.union(variants as unknown as [z.ZodTypeAny, z.ZodTypeAny])).min(1).max(12) });
 }
 
-/** Problems that make the edits unusable, worded for the model to fix. */
-export function checkEdits(film: Film, target: EditTarget, edits: Edit[]): string | null {
+/**
+ * Problems that make the edits unusable, worded for the model to fix: they do
+ * not apply, or (asked about one beat) they touch another. Not film/edits.ts
+ * checkEdits, which checks the edits' shape before an edit waits on a film.
+ */
+export function editProblem(film: Film, target: EditTarget, edits: Edit[]): string | null {
   try {
     applyEdits(film, edits);
   } catch (e) {
@@ -168,15 +178,89 @@ export function checkEdits(film: Film, target: EditTarget, edits: Edit[]): strin
   return null;
 }
 
+/** The spoken parts of the hook and of each beat, keyed "hook" or the beat id. */
+function spokenParts(film: Film): Map<string, Array<{ who: string; text: string }>> {
+  const out = new Map<string, Array<{ who: string; text: string }>>();
+  out.set("hook", film.story.hook ? [{ who: "narrator", text: normalizeWords(film.story.hook) }] : []);
+  for (const b of film.story.beats) {
+    out.set(b.id, [
+      ...(b.say ? [{ who: "narrator", text: normalizeWords(b.say) }] : []),
+      ...b.lines.map((l) => ({ who: l.who, text: normalizeWords(l.text) })),
+    ]);
+  }
+  return out;
+}
+
+/**
+ * The words the user typed in a request: its quoted parts when it has any
+ * ("..." or curly quotes), else the whole request, with whitespace and quotes
+ * made uniform as the as-written word check does.
+ */
+export function typedWords(request: string): string[] {
+  const quoted = [...request.matchAll(/"([^"]+)"|“([^”]+)”/g)].map((m) => normalizeWords(m[1] ?? m[2] ?? "")).filter(Boolean);
+  return quoted.length ? quoted : [normalizeWords(request)];
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The word lock of an as-written run: the script's spoken words (the hook, a
+ * beat's narration, its characters' lines and who speaks them) change only to
+ * words the user typed in the request. A part that is new after the edits
+ * must be typed there; a line moved to another speaker needs that speaker
+ * named; words removed with nothing typed in their place are refused. The
+ * problem, worded for the model, or null. (Edits that do not apply are left
+ * to editProblem.)
+ */
+export function wordLockProblem(film: Film, edits: Edit[], request: string): string | null {
+  let after: Film;
+  try {
+    after = applyEdits(film, edits).film;
+  } catch {
+    return null;
+  }
+  const typed = typedWords(request);
+  const before = spokenParts(film);
+  const now = spokenParts(after);
+  const problems: string[] = [];
+  for (const key of new Set([...before.keys(), ...now.keys()])) {
+    const was = before.get(key) ?? [];
+    const is = now.get(key) ?? [];
+    if (JSON.stringify(was) === JSON.stringify(is)) continue;
+    const added = is.filter((p) => !was.some((w) => w.who === p.who && w.text === p.text));
+    const where = key === "hook" ? "the hook" : `beat ${key}`;
+    if (added.length === 0) {
+      problems.push(`${where}: removes the script's words`);
+      continue;
+    }
+    for (const p of added) {
+      const moved = was.some((w) => w.text === p.text) && new RegExp(`\\b${escapeRe(p.who)}\\b`, "i").test(request);
+      if (!moved && !typed.some((t) => t.includes(p.text))) problems.push(`${where}: "${p.text.length > 60 ? `${p.text.slice(0, 57)}...` : p.text}" is not the user's words`);
+    }
+  }
+  if (!problems.length) return null;
+  return `This is the user's own script, kept word for word: never change the hook, a beat's "say" or its lines (their words or speakers) unless the request gives the new words; then use them exactly. ${problems.join("; ")}. Change only what the camera shows, the shots, the scenes and the sound, or use the words the user typed.`;
+}
+
 export async function askEditor(input: {
   film: Film;
   target: EditTarget;
   request: string;
   models: Record<string, RoleModel>;
+  /** An as-written run: the script's words change only to words the user typed (wordLockProblem). */
+  lockWords?: boolean;
+  /** What the user typed, when the request is the producer's wording of it: the word lock reads this. */
+  typed?: string;
+  /** The run's standing notes (pipeline/notes.ts), kept to in every edit. */
+  notes?: readonly string[];
 }): Promise<{ summary: string; edits: Edit[]; result: EditResult }> {
   const { film, target, request, models } = input;
   const where = target.kind === "beat" ? `beat ${target.beat}` : "the whole video";
-  const prompt = `${describeFilm(film, target)}\n\nREQUEST for ${where}: ${request.trim()}`;
+  const lock = input.lockWords
+    ? `\nTHE WORDS ARE LOCKED: this is the user's own script. Never change the hook, a beat's "say" or its lines (words or speakers) unless the request gives the new words; then use exactly those words.`
+    : "";
+  const standing = input.notes?.length ? `\nTHE USER'S STANDING NOTES (keep to them):\n${input.notes.map((n) => `- ${n}`).join("\n")}` : "";
+  const prompt = `${describeFilm(film, target)}${lock}${standing}\n\nREQUEST for ${where}: ${request.trim()}`;
   const schema = replySchema(film, target) as unknown as z.ZodType<{ summary: string; edits: Edit[] }>;
   const reply = await callRole({
     role: "editor",
@@ -185,7 +269,7 @@ export async function askEditor(input: {
     prompt,
     schema,
     normalize: normalizeReply,
-    essential: (v) => checkEdits(film, target, v.edits),
+    essential: (v) => editProblem(film, target, v.edits) ?? (input.lockWords ? wordLockProblem(film, v.edits, input.typed ?? request) : null),
     models,
   });
   const { summary, edits } = reply.value;

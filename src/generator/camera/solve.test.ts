@@ -170,6 +170,14 @@ test("moves: push-in gets closer, pull-out farther, orbit turns, crane rises", (
   assert.ok(at("crane_up", 1).position[1] > at("crane_up", 0).position[1]);
 });
 
+test("a static locked shot stands truly still: the same pose all shot long", () => {
+  for (const size of ["MS", "WS", "EWS"] as const) {
+    const at = (u: number) => solveShot(shot({ size }), person, { aspect: 9 / 16, u, seconds: 4, seed: "still" });
+    const first = at(0);
+    for (const u of [0.25, 0.5, 1]) assert.deepEqual(at(u), first, `${size} at u=${u}`);
+  }
+});
+
 test("dolly zoom keeps the subject's size while the lens changes", () => {
   const size = (u: number) => {
     const pose = solveShot(shot({ size: "MS", move: "dolly_zoom", place: "center" }), person, { aspect: 9 / 16, u, seconds: 3, seed: "d" });
@@ -209,4 +217,41 @@ test("jump cuts: the same subject twice in a row changes size by two steps", () 
   assert.equal(changed, 1);
   assert.equal(shots[1].size, "ECU"); // MS -> two sizes tighter
   assert.equal(shots[2].size, "WS"); // a different subject is left alone
+});
+
+test("arc: sweeps the whole asked angle round the subject on smootherstep, dips low mid-sweep, a pure function of u", () => {
+  const subject = { center: [0, 0.9, 0] as [number, number, number], radius: 0.45, height: 1.8, facing: 0, ground: 0 };
+  const shot = { subject: "actor1", size: "FS" as const, angle: "eye" as const, side: "front" as const, move: "arc" as const, place: "center" as const, energy: "bold" as const, style: "smooth" as const };
+  const at = (u: number, arc: { sweep: number; dir: "left" | "right" } = { sweep: 180, dir: "left" }) => solveShot(shot, subject, { aspect: 9 / 16, u, seconds: 4.2, seed: "b6", arc });
+  const bearing = (p: { position: number[] }) => Math.atan2(p.position[0], p.position[2]);
+  const a = at(0);
+  const b = at(1);
+  const turned = Math.abs(((bearing(b) - bearing(a) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+  assert.ok(Math.abs(turned - Math.PI) < 0.02, `swept ${(turned * 180) / Math.PI} degrees`);
+  // Fastest in the middle, still at the ends.
+  const speed = (u: number) => Math.hypot(...at(u + 0.01).position.map((v, i) => v - at(u).position[i]));
+  assert.ok(speed(0.495) > 10 * speed(0.001));
+  // A slight low angle mid-sweep: the lens below its height at the ends.
+  assert.ok(at(0.5).position[1] < a.position[1] - 0.05);
+  // The other way round, and a smaller sweep.
+  const flip = at(1, { sweep: 180, dir: "right" });
+  assert.ok(Math.abs(flip.position[0] + b.position[0]) < 1e-6 || Math.abs(flip.position[0] - b.position[0]) < 1e-6);
+  const small = at(1, { sweep: 90, dir: "left" });
+  const t90 = Math.abs(((bearing(small) - bearing(at(0, { sweep: 90, dir: "left" })) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+  assert.ok(Math.abs(t90 - Math.PI / 2) < 0.02, `90 sweep turned ${(t90 * 180) / Math.PI}`);
+  assert.deepEqual(at(0.37), at(0.37), "pure");
+});
+
+test("arc: a blocker in the sweep's path turns, shrinks or flips it until the nine poses see the subject", () => {
+  const subject = { center: [0, 0.9, 0] as [number, number, number], radius: 0.45, height: 1.8, facing: 0, ground: 0 };
+  const shot = { subject: "actor1", size: "FS" as const, angle: "eye" as const, side: "front" as const, move: "arc" as const, place: "center" as const, energy: "bold" as const, style: "smooth" as const };
+  const opts = (u: number) => ({ aspect: 9 / 16, u, seconds: 4.2, seed: "b6", arc: { sweep: 180, dir: "left" as const } });
+  const free = [0, 0.25, 0.5, 0.75, 1].map((u) => solveShot(shot, subject, opts(u)).position);
+  // A column standing where the free arc's lens passes at u = 0.75.
+  const p = free[3];
+  const blocked = { ...subject, blockers: [{ kind: "column" as const, x: p[0], z: p[2], r: 0.6, top: 5, owner: -1 }] };
+  for (let k = 0; k <= 8; k++) {
+    const lens = solveShot(shot, blocked, opts(k / 8)).position;
+    assert.ok(Math.hypot(lens[0] - p[0], lens[2] - p[2]) > 0.6 + 0.3 - 1e-6, `pose ${k} stands clear of the column`);
+  }
 });

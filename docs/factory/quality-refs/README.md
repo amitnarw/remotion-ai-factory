@@ -66,3 +66,28 @@ Sheets: `out/phase7-gate/v2/gate-gravity.png` and `out/phase7-gate/v2/gate-toile
 | 6. Light and atmosphere | Night: a moon key with shadows, stars, lit windows, a moon disc when the shot faces it. Day street: crisp blue sky instead of the golden haze. |
 | 7. The world reacts | Every counter beat in a place moves it: stalls and debris lift, confetti, money, the ground cracks and breaks into slabs (the night-ground frame now reads close to the reference), floods, snow, lights out, buildings lifting. |
 | 8. The verdict | The user's. The reaction and night frames are closest; the biggest gaps left are people (a decision), house colour and landmark variety in the old towns, and the New York facades. |
+
+### Dressed places (2026-11-04)
+Gate item 3 for the old towns and New York, and Cairo's flood edge ([06-world-engine.md](../06-world-engine.md#dressed-places-phase-7-gate-item-3-2026-11-04)). Sheets in `out/agentTOWNS/`: `sheet-oldtowns.png` (the day-plaza reference, then Colmar's plaza and Paris's blocks before and after), `sheet-newyork.png` (the street references, then the walking shots before, after, and with the pending walk-ups), `sheet-cairo-flood.png` (the flood from high at night, before and after).
+- **House colours:** Paris's blocks are painted cream, limestone, ochre, rose, apricot, pale yellow, sage and powder blue under their zinc mansards (were all one beige); Colmar's box houses yellow, apricot, coral, blue, mint, pink and lilac. Since the same day Colmar's kit houses are painted too, on their plaster between the timber (yellow, ochre, apricot, coral, red, blue, mint, pink, cream): `sheet-paint.png`.
+- **A bell tower:** each old town's market plaza has one, standing a little left of centre in the plaza's wide and eye-level shots as in the reference: Colmar's cream with a red-tiled spire and clocks, Paris's limestone with a slate spire across the avenue (the Eiffel Tower stays at the avenue's end).
+- **Hills behind:** the land rises within about a kilometre of the towns (Colmar's built area is smaller, 1.6 km); from the plazas' high shots the hills read as soft rolling bands with fields over the roofs, paler than the reference's (the height fog).
+- **New York:** fewer, smaller street trees (half as many, 0.6 size): the walking shots see the shop fronts. Brick KayKit walk-ups with shop fronts replace the pastel Kenney shops, the Building Kit mid-rises are painted brick and stone, wooden water tanks stand on six roofs in ten, and every lot is built (half the models used to go missing): `sheet-newyork2.png`.
+- **Cairo's flood** ends on a shore that follows the land, 0.7 to 2 km past the city in bays and spurs, not on the city square's straight sides.
+- **Still different:** the hills hazier and further than the reference's green slopes.
+
+### Polish (2026-11-05)
+The smaller open items of the dressed places and the weather ([06](../06-world-engine.md#the-bell-tower-on-camera-brick-and-stone-walls-2026-11-05), [18](../18-world-weather.md)). Sheets in `out/agentPOLISH/`:
+- **The bell tower on camera** (`sheet-belfry.png`): a shot can name `belfry`, the old towns' bell tower; it frames the whole tower across the plaza's market (in Paris across the avenue), and a close-up holds the clock and the belfry's openings. The director is told which places have one.
+- **Brick and stone** (`sheet-brick.png`): New York's red-brown mid-rises and its walk-ups show running-bond brick with light joints, the pale mid-rises ashlar blocks, close up as in the reference's aerial; the courses fade out with distance, so the far city does not shimmer.
+- **Wet streets** (`sheet-wet.png`): in rain and storm the avenue, the streets, the sidewalks and the plaza go darker with a soft sheen toward the horizon, wetting after a rain-start and drying after a rain-stop.
+- **No sun glare in a storm** (`sheet-glare.png`): a flight's ground under rain or a storm no longer shows the sun's halo, rays or a pale disc.
+
+### More places (2026-11-05)
+Rome, London and San Francisco join Paris, Cairo, Colmar and New York ([06](../06-world-engine.md#more-real-places-rome-london-san-francisco-2026-11-05)). Sheets in `out/agentPLACES/`, each at noon, dusk and night:
+- `sheet-rome.png`: the Colosseum across its open ground, ochre houses under terracotta roofs, a brick campanile by the market plaza;
+- `sheet-london.png`: Big Ben's clock tower on its lawn, brick and stone under slate, the avenue;
+- `sheet-san-francisco.png`: the Golden Gate Bridge over its strait, the bay round the city, a street of stone mid-rises and brick walk-ups;
+- `sheet2-bridge.png`: the bridge close up, the Colosseum from low.
+
+Still different from the real places: the Colosseum's grey texture; the teal ring of the Ocean stub in San Francisco's aerials, as in New York's; no Thames.

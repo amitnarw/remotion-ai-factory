@@ -4,8 +4,10 @@
  * A real place: open water to the horizon with animated waves, a stepped
  * sandy beach with dunes and parasols, a wooden jetty with a lamp, canoes
  * riding the actual swell, a mooring buoy — and a moon path on the water
- * at night. Water events (water-vanish / water-return) and the stat beats
- * animate the water LEVEL, so "the ocean doubled" is literally on screen.
+ * at night. Water events (water-rise / water-vanish / water-return) and the
+ * stat beats animate the water LEVEL, so "the ocean doubled" is literally on
+ * screen: a rise floods up the beach, a vanish drains the basin, a return
+ * brings the sea back from either.
  *
  * Director contract: scene.kit = "ocean"; look.timeOfDay required; no cast
  * (the stage populates itself); statPanel beats drive the level like the
@@ -17,12 +19,12 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
 import { statScaleAt } from "../generator/statPanel";
-import { GlbSuspense, useGltfPaint } from "./glb";
+import { GlbSuspense, useGltfPaint, useSceneDrawOrder } from "./glb";
 import { WaterSurface, seaSwellAt, GradientSkyDome, WATER_TOD } from "./water";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { Birds } from "./Birds";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
-import { clearestFacing, type Blocker } from "./ForestStage";
+import { clearestFacing, useStageFog, type Blocker } from "./ForestStage";
 import type { Subject } from "../generator/camera/solve";
 import type { Occluder } from "../generator/camera/occlusion";
 import { turnedBox } from "../generator/camera/shapes";
@@ -97,18 +99,38 @@ function shorelineZ(level: number): number {
   return THREE.MathUtils.clamp(z, -4, 10);
 }
 
-/** Water level at time t: beats grow it; worldEvents drain it (vanish) and
- *  bring it back (return). Returns { level, visible, amp }. */
+/** A water-rise floods the sea this far up (metres: past the dune line, over
+ *  the upper slope, short of the promenade), over OCEAN_RISE_S seconds; a
+ *  water-return after it takes it back down over OCEAN_RECEDE_S. */
+const OCEAN_RISE_M = 1.8;
+const OCEAN_RISE_S = 2.5;
+const OCEAN_RECEDE_S = 1.8;
+const smooth01 = (v: number) => {
+  const x = Math.min(1, Math.max(0, v));
+  return x * x * (3 - 2 * x);
+};
+
+/** Water level at time t: beats grow it; worldEvents flood it (rise), drain
+ *  it (vanish) and bring it back (return: from a drain, or down from a
+ *  flood). Returns { level, visible, amp }. */
 function waterStateAt(spec: ShotSpec, t: number): { level: number; visible: boolean; amp: number } {
   const panel = spec.statPanel ?? null;
   const value = panel ? statScaleAt(panel, t) : 1;
   let base = panel ? waterLevelFromBeats(value) : 0;
+  const evs = spec.worldEvents ?? [];
+  // A flood: up from its event, down again at the first return after it.
+  const rise = evs.find((e) => e.name === "water-rise");
+  if (rise && t >= rise.t) {
+    const recede = evs.find((e) => e.name === "water-return" && e.t > rise.t);
+    const down = recede && t >= recede.t ? smooth01((t - recede.t) / OCEAN_RECEDE_S) : 0;
+    base += OCEAN_RISE_M * (smooth01((t - rise.t) / OCEAN_RISE_S) - down);
+  }
   // bigger water = bigger waves (gentle base swell ±0.46 m)
   const amp = 1 + Math.min(Math.max(base, 0), 0.9) * 0.3;
   let visible = true;
-  const evs = spec.worldEvents ?? [];
   const vanish = evs.find((e) => e.name === "water-vanish");
-  const back = evs.find((e) => e.name === "water-return");
+  // The return that brings a drained sea back comes after the drain.
+  const back = vanish ? evs.find((e) => e.name === "water-return" && e.t >= vanish.t) : undefined;
   if (vanish && t >= vanish.t) {
     if (back && t >= back.t) {
       // return: rise back over ~1.6s with a small settling overshoot
@@ -224,6 +246,7 @@ function FloatingCanoeModel({ x, z, rot, index, tod, level }: { x: number; z: nu
   const gltf = useGltfPaint(CANOE_FILE);
   const ref = useRef<THREE.Group>(null);
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const waveAmp = (WATER_TOD[tod] ?? WATER_TOD.noon).waveAmp;
   const boat = useMemo(() => {
     const c = gltf.scene.clone();
@@ -252,7 +275,7 @@ function FloatingCanoeModel({ x, z, rot, index, tod, level }: { x: number; z: nu
   useFrame(() => {
     const g = ref.current;
     if (!g) return;
-    const t = frame / 30;
+    const t = frame / fps;
     const h = seaSwellAt(x, z, 0, -120, t, 1, waveAmp);
     g.position.y = boat.lift - 0.06 + h + level;
     g.rotation.x = h * 0.18;
@@ -268,11 +291,12 @@ function FloatingCanoeModel({ x, z, rot, index, tod, level }: { x: number; z: nu
 function MooringBuoy({ x, z, tod, level }: { x: number; z: number; tod: string; level: number }) {
   const ref = useRef<THREE.Group>(null);
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const waveAmp = (WATER_TOD[tod] ?? WATER_TOD.noon).waveAmp;
   useFrame(() => {
     const g = ref.current;
     if (!g) return;
-    const t = frame / 30;
+    const t = frame / fps;
     g.position.y = level + seaSwellAt(x, z, 0, -120, t, 1, waveAmp) * 0.9;
     g.rotation.z = Math.sin(t * 0.7) * 0.06;
   });
@@ -334,6 +358,7 @@ const RIG_LENS = { fov: 75, near: 0.1, far: 1000 };
 function CameraRig({ level }: { level: number }) {
   const { camera } = useThree();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   useFrame(() => {
     // The camera object outlives shots and other stages (a director's shot or
     // the space rig may have changed the lens on an earlier frame), so put the
@@ -345,7 +370,7 @@ function CameraRig({ level }: { level: number }) {
       cam.far = RIG_LENS.far;
       cam.updateProjectionMatrix();
     }
-    const t = frame / 30;
+    const t = frame / fps;
     // Stand ON the apron rim, close to the waterline, eye low over the sea:
     // the sand strip stays at the bottom and the sea fills the middle. As
     // the flood takes the promenade the camera drifts inland and rises, so
@@ -627,13 +652,14 @@ export function oceanAnchors(spec: ShotSpec, tod: string, aspect = 9 / 16): Anch
 /* ------------------------------------------------------------------ */
 
 export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }) {
+  useSceneDrawOrder();
   const tod = (scene.look?.timeOfDay ?? "noon") as string;
   const look = OCEAN_TOD[tod] ?? OCEAN_TOD.noon;
   const night = tod === "night";
   const { fps, width, height } = useVideoConfig();
   const aspect = width / Math.max(1, height);
   const frame = useCurrentFrame();
-  const t = frame / (fps || 30);
+  const t = frame / fps;
   const { level, visible, amp } = waterStateAt(spec, t);
   const shore = shorelineZ(level);
   const lightsOut = lightsOutAt(spec, t);
@@ -652,13 +678,15 @@ export function OceanStage({ spec, scene }: { spec: ShotSpec; scene: SceneType }
   const canoes = useMemo(() => canoeLayout(spec.id), [spec.id]);
   // What the director's shots can frame (spec.shots); without shots the rig films.
   const anchors = useMemo(() => oceanAnchors(spec, tod, aspect), [spec, tod, aspect]);
+  // Far fog, every frame (it was a <fog> attached on mount, and R3F put the
+  // previous stage's fog back when this stage went).
+  useStageFog({ color: look.sky[1], near: 55, far: 300 });
 
   return (
     <>
-      {/* Gradient sky + far fog */}
+      {/* Gradient sky (the far fog: useStageFog above) */}
       <GradientSkyDome top={look.sky[0]} bottom={look.sky[1]} />
       {night && <NightSky />}
-      <fog attach="fog" args={[look.sky[1], 55, 300]} />
       {/* The water: level + wave size + shore depth tint react to the story */}
       {visible && (
         <WaterSurface

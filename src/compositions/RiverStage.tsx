@@ -10,23 +10,30 @@
  *   look.timeOfDay required (uses RIVER_TOD: noon/afternoon/golden/overcast/dawn/night)
  *   look.weather supported (rain/snow/storm overlay)
  *   statPanel drives river level / flow speed (optional)
- *   worldEvents: water-rise (flood), water-return (recede)
+ *   worldEvents (riverWater.ts): water-rise (the river floods its banks and
+ *     the valley floor), water-vanish (it drains: the bed shows and dries,
+ *     the falls dry up), water-return (back to its level, from either)
  *   riverConfig: { hasWaterfall: boolean, flowDir: "x" | "z", length: number, width: number }
+ *
+ * A scene whose spec has no water events draws exactly as before: no flood
+ * sheet, no channel walls, the falls and the bed as they were.
  */
-import { useMemo, useEffect } from "react";
+import { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ShotSpec, SceneType } from "../generator/spec.schema";
 import type { Subject, Vec3 } from "../generator/camera/solve";
 import { statScaleAt } from "../generator/statPanel";
+import { BED_Y, riverWaterAt } from "./riverWater";
 import { WeatherLayer, lightsOutAt } from "./weather";
 import { WaterSurface, GradientSkyDome } from "./water";
 import { MountainRidge } from "./mountains";
 import { keepMistBase, driftMist } from "./mist";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
-import { clearestFacing, restoreRigLens, type Blocker } from "./ForestStage";
+import { clearestFacing, restoreRigLens, useStageFog, type Blocker } from "./ForestStage";
 import type { Occluder } from "../generator/camera/occlusion";
+import { useSceneDrawOrder } from "./glb";
 
 export interface RiverConfig {
   hasWaterfall: boolean;
@@ -226,6 +233,29 @@ function AxisPlane({ flowDir, along, across, y, color }: {
   );
 }
 
+/** A drained river's bed, dried to silt (by day and by night). */
+const BED_DRY = "#6b5a44";
+const BED_DRY_NIGHT = "#1c1812";
+/** The flood sheet: its size (it covers the valley floor's ±300 m), how far
+ *  under the river's surface it rides, and the level from which it shows. */
+const FLOOD_SIZE = 600;
+const FLOOD_UNDER = 0.05;
+const FLOOD_SHOWS = 0.02;
+
+/** One side of the channel, from its bed up to the valley floor, along the
+ *  river at `across` (the water hides it until the river drains). */
+function ChannelSide({ flowDir, length, across, color }: { flowDir: RiverConfig["flowDir"]; length: number; across: number; color: string }) {
+  const axis = riverAxis(flowDir);
+  const [x, z] = axis.pos(0, across);
+  const [sx, sz] = axis.strip(length, 0.2);
+  return (
+    <mesh position={[x, BED_Y / 2, z]} receiveShadow>
+      <boxGeometry args={[sx, -BED_Y, sz]} />
+      <meshStandardMaterial color={color} roughness={1} metalness={0} />
+    </mesh>
+  );
+}
+
 function RiverRock({ x, y, z, scale, rot, col }: {
   x: number; y: number; z: number; scale: number; rot: number; col: string;
 }) {
@@ -241,7 +271,8 @@ function RiverRock({ x, y, z, scale, rot, col }: {
 
 function RiverMist({ active, night, flowDir }: { active: boolean; night: boolean; flowDir: RiverConfig["flowDir"] }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const positions: number[] = [];
@@ -279,7 +310,8 @@ function RiverMist({ active, night, flowDir }: { active: boolean; night: boolean
 
 function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: number; z: number; height: number; night: boolean }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const geo = useMemo(() => {
     const positions: number[] = [];
     const alphas: number[] = [];
@@ -325,12 +357,14 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
     const base = geo.userData.base as Float32Array;
     const baseAlpha = geo.userData.baseAlpha as Float32Array;
     const range = height - 0.2;
+    // Drift and fade-in per frame at 30 fps: the same motion at any rate.
+    const tick = frame * (30 / fps);
     for (let i = 0; i < 60; i++) {
       const fallen = fallSpeeds[i] * t;
       const start = base[3 * i + 1] - 0.2;
       const y = 0.2 + (((start - fallen) % range) + range) % range;
-      pos.setXYZ(i, base[3 * i] + driftXs[i] * frame, y, base[3 * i + 2] + driftZs[i] * frame);
-      alphaAttr.setX(i, Math.min(1, baseAlpha[i] + 0.01 * frame));
+      pos.setXYZ(i, base[3 * i] + driftXs[i] * tick, y, base[3 * i + 2] + driftZs[i] * tick);
+      alphaAttr.setX(i, Math.min(1, baseAlpha[i] + 0.01 * tick));
     }
     pos.needsUpdate = true;
     alphaAttr.needsUpdate = true;
@@ -348,9 +382,10 @@ function WaterfallMist({ active, x, z, height, night }: { active: boolean; x: nu
  */
 function RiverCameraRig({ spec, length, flowDir }: { spec: ShotSpec; length: number; flowDir: RiverConfig["flowDir"] }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const { camera } = useThree();
   const panel = spec.statPanel ?? null;
-  const t = frame / 30;
+  const t = frame / fps;
   const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.08 : 1;
   useFrame(() => {
     restoreRigLens(camera);
@@ -490,10 +525,12 @@ export function riverAnchors(
 }
 
 export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const active = scene ?? spec.scenes[0];
   const panel = spec.statPanel ?? null;
-  const t = frame / 30;
+  const t = frame / fps;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = RIVER_TOD[tod] ?? RIVER_TOD.afternoon;
@@ -506,14 +543,15 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const poolAt = axis.pos(riverConfig.length / 2 - 5, 0);
   const mistAt = axis.pos(riverConfig.length / 2, 0);
 
-  const { scene: threeScene } = useThree();
-  useEffect(() => {
-    threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
-  }, [look.fog, look.fogDensity, threeScene]);
+  useStageFog({ color: look.fog, density: look.fogDensity });
 
-  // River level animation (stat beats can raise water level)
-  const baseLevel = 0;
-  const level = panel ? baseLevel + (statScaleAt(panel, t) - 1) * 0.3 : baseLevel;
+  // River level animation: stat beats raise the water, the water events
+  // flood, drain and bring it back (riverWater.ts).
+  const water = riverWaterAt(spec, t);
+  const level = water.level;
+  const events = spec.worldEvents;
+  const floods = (events ?? []).some((e) => e.name === "water-rise");
+  const drains = (events ?? []).some((e) => e.name === "water-vanish");
 
   // River rocks along banks
   const riverRocks = useMemo(
@@ -530,7 +568,7 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
   const sunZ = look.dirPos[2];
   const anchors = useMemo((): Anchors => {
     if (!hasShots) return {};
-    const levelAt = (tt: number) => (panel ? baseLevel + (statScaleAt(panel, tt) - 1) * 0.3 : baseLevel);
+    const levelAt = (tt: number) => riverWaterAt({ statPanel: panel ?? undefined, worldEvents: events }, tt).level;
     return riverAnchors(
       { width: riverConfig.width, length: riverConfig.length, flowDir: riverConfig.flowDir, waterfallHeight: fallHeight },
       riverRocks,
@@ -540,7 +578,7 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
       // from their lit side
       { x: sunX, z: sunZ },
     );
-    }, [hasShots, panel, riverConfig.width, riverConfig.length, riverConfig.flowDir, fallHeight, riverRocks, aspect, sunX, sunZ]);
+    }, [hasShots, panel, events, riverConfig.width, riverConfig.length, riverConfig.flowDir, fallHeight, riverRocks, aspect, sunX, sunZ]);
 
   return (
     <group>
@@ -592,9 +630,12 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
         flowDir={riverConfig.flowDir}
         along={[-riverConfig.length / 2, riverConfig.length / 2]}
         across={[-riverConfig.width / 2 - 0.5, riverConfig.width / 2 + 0.5]}
-        y={-0.8}
-        color={look.waterDeep}
+        y={BED_Y}
+        // A drained river's bed dries to silt as the water leaves it.
+        color={water.flow < 1 ? `#${new THREE.Color(look.waterDeep).lerp(new THREE.Color(night ? BED_DRY_NIGHT : BED_DRY), 1 - water.flow).getHexString()}` : look.waterDeep}
       />
+      {/* The channel's sides, which only a drained river shows. */}
+      {drains && [-1, 1].map((side) => <ChannelSide key={side} flowDir={riverConfig.flowDir} length={riverConfig.length} across={side * riverConfig.width / 2} color={look.bank} />)}
 
       {/* River banks: a strip either side of the water, along the flow
           (4 m wide, 10 m past each end) */}
@@ -619,6 +660,21 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
         center={[0, 0, 0]}
         // Override water colors for river
       />
+      {floods && (
+        // A water-rise floods the valley: a sheet just under the river's
+        // surface (the same waves, so the two never cross), shown while the
+        // water stands over the valley floor.
+        <group visible={level > FLOOD_SHOWS}>
+          <WaterSurface
+            size={[FLOOD_SIZE, FLOOD_SIZE]}
+            segments={90}
+            tod={tod}
+            level={level - FLOOD_UNDER}
+            amp={riverConfig.hasWaterfall ? 0.6 : 0.3}
+            center={[0, 0, 0]}
+          />
+        </group>
+      )}
 
       {/* River rocks along banks */}
       {riverRocks.map((r, i) => (
@@ -646,7 +702,8 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
             <meshStandardMaterial
               color={look.waterDeep}
               transparent
-              opacity={0.7}
+              // Thins away as a drained river stops feeding it.
+              opacity={0.7 * water.flow}
               roughness={0.1}
               metalness={0}
               side={THREE.DoubleSide}
@@ -654,7 +711,7 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
           </mesh>
           {/* Waterfall mist */}
           <WaterfallMist
-            active={true}
+            active={water.flow > 0.5}
             x={mistAt[0]}
             z={mistAt[1]}
             height={riverConfig.waterfallHeight}
@@ -663,13 +720,13 @@ export function RiverStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType 
           {/* Pool at base */}
           <mesh position={[poolAt[0], 0.15, poolAt[1]]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
             <circleGeometry args={[riverConfig.width * 1.5, 16]} />
-            <meshStandardMaterial color={look.waterDeep} transparent opacity={0.8} roughness={0.1} metalness={0} />
+            <meshStandardMaterial color={look.waterDeep} transparent opacity={0.8 * water.flow} roughness={0.1} metalness={0} />
           </mesh>
         </>
       )}
 
       {/* River mist at dawn/overcast/golden */}
-      <RiverMist active={look.mist} night={night} flowDir={riverConfig.flowDir} />
+      <RiverMist active={look.mist && water.flow > 0.5} night={night} flowDir={riverConfig.flowDir} />
 
       {/* Weather overlay */}
       <WeatherLayer

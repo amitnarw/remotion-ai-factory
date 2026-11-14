@@ -377,6 +377,42 @@ export function rigidMatrix(plan: RigidPlan, i: number, t: number, eye: Vec3, ou
   return out.multiply(placementMatrix(piece.placement, _p));
 }
 
+/** Where opaque rigid pieces draw: after the rest of the opaque scene (order 0), each mesh at its own order in [1, 2), which no other opaque mesh uses. */
+export const RIGID_DRAW_ORDER = 1;
+
+/**
+ * The same draw order for a set's meshes (one InstancedMesh per model file
+ * and part, `pieces` the piece of each instance) in every render tab.
+ * three.js draws opaque meshes by renderOrder, then material id, then depth.
+ * Material ids follow the order the model files finished loading, which
+ * differs from tab to tab, so two pieces of different files touching (a
+ * plank through a crate, frozen in a bullet time's hold) won their shared
+ * depth either way round: 2 pixels in 1-2 of 30 hold frames, even for one
+ * frame rendered alone in a fresh browser. Each opaque mesh gets its own
+ * renderOrder, in build order (the pieces' order), after every other opaque
+ * mesh. A transparent part keeps order 0, so it still sorts by depth with
+ * the scene's other transparent things; its depth is one fixed sphere for
+ * the whole set (the pieces' rest bounds): three would otherwise compute it
+ * once per tab, from the first frame that tab drew, and the meshes tie on it
+ * and draw in build order. Writes the rest matrices (the next frame
+ * overwrites them).
+ */
+export function rigidDrawOrder(pieces: readonly RigidPiece[], slots: readonly { mesh: THREE.InstancedMesh; part: THREE.Matrix4; pieces: readonly number[] }[]): void {
+  const all = new THREE.Sphere();
+  for (const slot of slots) {
+    const out = slot.mesh.instanceMatrix.array as Float32Array;
+    slot.pieces.forEach((pi, j) => placementMatrix(pieces[pi].placement, _p).multiply(slot.part).toArray(out, j * 16));
+    slot.mesh.computeBoundingSphere();
+    all.union(slot.mesh.boundingSphere!);
+  }
+  if (all.isEmpty()) all.set(new THREE.Vector3(), 1);
+  slots.forEach((slot, i) => {
+    slot.mesh.boundingSphere = all.clone();
+    const mats = Array.isArray(slot.mesh.material) ? slot.mesh.material : [slot.mesh.material];
+    if (!mats.some((m) => m.transparent)) slot.mesh.renderOrder = RIGID_DRAW_ORDER + i / (slots.length + 1);
+  });
+}
+
 /** The model parts a placement costs per frame (catalog meshes or materials; 1 unknown). */
 export function partsOf(file: string): number {
   const a = assetOfFile(file);

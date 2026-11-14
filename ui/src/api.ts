@@ -13,6 +13,8 @@ export interface ProviderInfo {
 export interface ProvidersResponse {
   providers: ProviderInfo[];
   defaultProvider?: string;
+  /** What is wrong with ai.config.json or ai.config.local.json (a broken file is not used). */
+  problems?: string[];
 }
 
 export interface JobOutput {
@@ -43,6 +45,18 @@ export interface Job {
   output?: JobOutput;
   slug?: string;
   specId?: string;
+  /** Plan jobs: the run they planned (output/<runId>/). */
+  runId?: string;
+  /** Plan jobs that stopped at a gate: the story waits, or gate 2's shopping list. */
+  gate?: "story" | "shop";
+  /** Plan jobs that continue a run rather than start one. */
+  resume?: boolean;
+  /** Plan jobs: false when the story gate was turned off. */
+  storyGate?: boolean;
+  /** "variants": a job that makes the other versions of a finished run. */
+  kind?: "variants" | "publish";
+  /** Variants jobs: what was asked. */
+  variants?: VariantsAsk;
   storyboard?: unknown;
   error?: string;
   createdAt: number;
@@ -50,13 +64,23 @@ export interface Job {
 
 /* ---------- Spec engine: the AI writes the plan, you review and approve, then it renders ---------- */
 
-/** Start a plan job: the AI writes the shot spec. Nothing renders yet. */
+/** Start a plan job: the AI writes the shot spec. Nothing renders yet.
+ *  `storyGate: false` plans straight through; otherwise it stops after the story. */
 export async function planSpec(body: {
   premise: string;
   provider?: string;
   model?: string;
   audio?: unknown;
   settings?: unknown;
+  storyGate?: boolean;
+  /** false: never stop at the shopping list (gate 2). */
+  shopGate?: boolean;
+  storyFrom?: string;
+  /** The channel (unset: what-if). */
+  channel?: string;
+  /** The user's own story or script, and how to use it. */
+  script?: string;
+  mode?: "adapt" | "as-written";
 }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/plan`, {
@@ -77,6 +101,27 @@ export interface SpecResponse {
   provider?: string;
   model?: string;
   error?: string;
+  /** "story": the plan stopped after the story, which waits for approval. "shop": at gate 2's shopping list. */
+  gate?: "story" | "shop";
+  runId?: string;
+  /** Gate 2: what the library is missing, and the offers for it. */
+  shopping?: ShoppingList;
+  story?: import("../../src/generator/pipeline/writer").WriterStory;
+  /** The story's timed length (seconds) and whether the writer revised it to fit. */
+  length?: { duration: number; target: number; revised: boolean };
+  approved?: boolean;
+  /** Gate 1: the story checker's notes, the facts it claims, and (a story rewritten from yours) the plot points it lost. */
+  check?: import("../../src/generator/pipeline/checker").StoryCheck;
+  /** The claims check at the story gate (story.claims.json), when it ran. */
+  claims?: import("../../src/generator/pipeline/claims").ClaimsCheck;
+  /** The critic's notes on an approved story, kept as proposals. */
+  notes?: Array<{ beat: string; problem: string; fix: string }>;
+  /** What the story needs, grouped by what the library has (read-only until gate 2). */
+  needs?: Array<{
+    status: "have" | "close" | "download" | "build" | "data" | "skip";
+    title: string;
+    items: Array<{ id: string; kind: string; what: string; must: boolean; beats: string[]; use?: string; then?: string }>;
+  }>;
 }
 
 /** Poll a plan job's spec until it is ready. */
@@ -84,17 +129,264 @@ export async function getJobSpec(jobId: string): Promise<SpecResponse> {
   return json(await fetch(`${BASE}/spec/${jobId}`));
 }
 
+/** A channel the factory makes videos for (channels/<id>.json). */
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  genre: string;
+  description: string;
+  modes: Array<"premise" | "adapt" | "as-written">;
+  scriptMode: "adapt" | "as-written";
+  structure: Array<{ part: string; share: number; purpose: string }>;
+  formats: { default?: "9:16" | "16:9" | "1:1"; allowed: Array<{ format: "9:16" | "16:9" | "1:1"; min: number; max: number }> };
+  captions: import("../../src/generator/caption-style").CaptionStyleInput | null;
+  voices: { narration?: { enabled: boolean; engine: "kitten2" | "voxcpm2"; voice?: string }; dialogs?: { enabled: boolean; engine: "kitten2" | "voxcpm2"; defaultVoice?: string } };
+  storyGate: boolean;
+  shopGate: boolean;
+  version: number;
+}
+
+/** Every channel, what-if first. */
+export async function getChannels(): Promise<ChannelInfo[]> {
+  return json(await fetch(`${BASE}/channels`));
+}
+
+/** A channel's profile as its file holds it (channels/<id>.json), with the music moods and story modes it may name. */
+export type ChannelProfileFile = Record<string, unknown> & { id: string; version: number; name: string };
+
+export async function getChannelProfile(id: string): Promise<{ profile: ChannelProfileFile; moods: string[]; modes: string[] }> {
+  return json(await fetch(`${BASE}/channels/${encodeURIComponent(id)}`));
+}
+
+/** Save an edited profile; its version goes up when it changed. */
+export async function saveChannelProfile(profile: ChannelProfileFile): Promise<{ ok: true; changed: boolean; version: number; profile: ChannelProfileFile }> {
+  return json(
+    await fetch(`${BASE}/channels/${encodeURIComponent(profile.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile }),
+    }),
+  );
+}
+
+/** A new channel, copied from another. */
+export async function copyChannel(from: string, id: string, name: string): Promise<{ ok: true; id: string; profile: ChannelProfileFile }> {
+  return json(
+    await fetch(`${BASE}/channels`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from, id, name }),
+    }),
+  );
+}
+
+/** Continue a run in a new plan job: approves the story that waits at the gate,
+ *  or goes on from the stage it stopped at. At gate 2, `choices` are the user's:
+ *  approvals as the CLI writes them ("n6=bigsoundbank:1048", "n2=close",
+ *  "n3=build", "n9=skip") and `allFree` for "Approve every CC0 pick". */
+export async function resumeRun(runId: string, choices?: { approvals?: string[]; allFree?: boolean }): Promise<{ jobId: string }> {
+  return json(
+    await fetch(`${BASE}/plan/${runId}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(choices ?? {}),
+    }),
+  );
+}
+
+export interface RunStatus {
+  id: string;
+  premise: string;
+  stages: Array<{ name: string; state: string; model?: string; error?: string }>;
+  next: string | null;
+  nextLabel: string | null;
+  complete: boolean;
+  waitsForStory: boolean;
+  /** Gate 2's shopping list waits for the user's choices. */
+  waitsForShopping?: boolean;
+}
+
+/* ---------- Gate 2 and the assets (src/generator/library/acquire) ---------- */
+
+export type ShopOffer = import("../../src/generator/library/acquire/types").Offer;
+export type SourceStatus = import("../../src/generator/library/acquire/types").SourceStatus;
+export type BuildRequest = import("../../src/generator/library/acquire/types").BuildRequest;
+
+/** One need on gate 2's list: what it is, what stands in meanwhile, and the offers. */
+export interface ShoppingNeed {
+  need: string;
+  kind: string;
+  what: string;
+  must: boolean;
+  status: string;
+  type: "model" | "sound" | "ambience" | "music" | null;
+  words: string[];
+  beats: string[];
+  /** The stand-in's id and name. */
+  use?: string;
+  useName?: string;
+  offers: ShopOffer[];
+  notes: string[];
+}
+
+/** Gate 2's shopping list (output/<run>/shopping.json, the needs that wait). */
+export interface ShoppingList {
+  inventory: string;
+  /** The run still waits for the choices. */
+  waiting: boolean;
+  needs: ShoppingNeed[];
+  sources: SourceStatus[];
+  /** The sources this list searched ([] searched none); unset in lists from before it was recorded. */
+  searched?: string[];
+  warnings: string[];
+}
+
+/** Gate 2, from a need's card: more offers for that need (up to 20 from each source). */
+export async function moreOffers(runId: string, need: string): Promise<{ need: ShoppingNeed }> {
+  return json(
+    await fetch(`${BASE}/runs/${runId}/offers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ need }),
+    }),
+  );
+}
+
+/** Gate 2: a link pasted on a need's card, read as an offer (nothing is downloaded). */
+export async function offerFromLink(runId: string, need: string, url: string): Promise<{ offer: ShopOffer }> {
+  return json(
+    await fetch(`${BASE}/runs/${runId}/link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ need, url }),
+    }),
+  );
+}
+
+/** One item acquisition took in (acquired.catalog.json). */
+export interface AcquiredInfo {
+  id: string;
+  kind: "model" | "sound";
+  ref: string;
+  source: string;
+  title: string;
+  author: string;
+  page: string;
+  licence: string;
+  tier: "free" | "credit" | "never";
+  credit?: string;
+  fetchedAt: string;
+  need?: { run?: string; id: string; kind: string; what: string; words: string[] };
+  notes: string[];
+  /** Held back on a re-download (its licence or its file changed). */
+  held?: string;
+  /** Its files are on this computer. */
+  onDisk: boolean;
+}
+
+export interface AssetsResponse {
+  sources: SourceStatus[];
+  /** The build-request queue, most asked first. */
+  requests: BuildRequest[];
+  unreadable: string[];
+  acquired: AcquiredInfo[];
+}
+
+/** The Assets page: the sources, the build requests and what was acquired. */
+export async function getAssets(): Promise<AssetsResponse> {
+  return json(await fetch(`${BASE}/assets`));
+}
+
+/** A run's stages: what is done and where a resume starts. */
+export async function getRun(runId: string): Promise<RunStatus> {
+  return json(await fetch(`${BASE}/runs/${runId}`));
+}
+
 /** Render an approved plan. This is the only way a spec becomes a video.
- *  `opts.chunked` renders via the chunked, cached renderer (src/generator/render).
- *  Only the chunks an edit changed are rendered; the rest is reused. */
-export async function renderSpec(specId: string, audio?: unknown, opts?: { chunked?: boolean }): Promise<{ jobId: string }> {
+ *  Every button that makes a video (Approve on the review, the editor's Make
+ *  the video, Try again on the render screen) sends the same thing: the plan's
+ *  id alone. The server renders it with the plan's own voices (the recasts
+ *  included) through the chunked, cached renderer, so a later render reuses
+ *  every chunk an edit did not change. */
+export async function renderSpec(specId: string): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/render-spec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specId, audio, chunked: opts?.chunked }),
+      body: JSON.stringify({ specId }),
     }),
   );
+}
+
+/* ---------- Variants: other hooks, endings and formats of a finished run (15-producer.md §17) ---------- */
+
+export type VariantFormat = "9:16" | "16:9" | "1:1";
+
+/** Hooks and endings in all, the original counted; the formats (the run's own is always one). */
+export interface VariantsAsk {
+  hooks: number;
+  endings: number;
+  formats: VariantFormat[];
+}
+
+/** One version of the run (output/<run>/variants/variants.json). Hook and ending 1 are the original. */
+export interface VariantInfo {
+  id: string;
+  hook: number;
+  ending: number;
+  format: VariantFormat;
+  differs: Array<"hook" | "ending" | "format">;
+  hookText?: string;
+  endingText?: string;
+  /** "kept": as long as the run's own video in that format, so its unchanged chunks are reused. */
+  timing?: "kept" | "longer";
+  state: "planned" | "rendered" | "failed";
+  /** Relative to output/<run>/. */
+  video?: string;
+  durationSec?: number;
+  chunks?: { total: number; rendered: number; reused: number };
+  error?: string;
+  renderedAt?: string;
+}
+
+export interface VariantsResponse {
+  run: string;
+  updatedAt?: string;
+  base?: { format: VariantFormat; hook: string; ending: string; video: string };
+  hooks?: string[];
+  endings?: string[];
+  variants: VariantInfo[];
+  /** The run's own video: its format, length, and whether its words are the user's own (as written). */
+  current: { format: VariantFormat; durationSec: number; asWritten: boolean };
+  /** A variants job of this run still running. */
+  jobId?: string;
+}
+
+export async function getVariants(runId: string): Promise<VariantsResponse> {
+  return json(await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/variants`));
+}
+
+/** Make the variants in a job: only what differs is voiced and rendered again. */
+export async function makeVariants(runId: string, ask: Partial<VariantsAsk>): Promise<{ jobId: string }> {
+  return json(
+    await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ask),
+    }),
+  );
+}
+
+/** A finished video's publish pack (output/<id>/publish/publish.json, 20-publish.md); `jobId` while one is being made. */
+export type PublishPackInfo = import("../../src/generator/publish").PublishPack & { jobId?: string };
+
+export async function getPublishPack(id: string): Promise<PublishPackInfo> {
+  return json(await fetch(`${BASE}/videos/${encodeURIComponent(id)}/publish`));
+}
+
+/** Make the publish pack in a job (titles, description, tags, thumbnail); nothing is uploaded. */
+export async function makePublishPack(id: string): Promise<{ jobId: string }> {
+  return json(await fetch(`${BASE}/videos/${encodeURIComponent(id)}/publish`, { method: "POST" }));
 }
 
 /* Voice casting */
@@ -260,19 +552,6 @@ export async function setProviderKey(name: string, key: string) {
   return r.json();
 }
 
-export async function setProviderConfig(
-  name: string,
-  body: { baseUrl?: string; models?: string[] },
-) {
-  const r = await fetch(`${BASE}/providers/${name}/config`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(await errorText(r));
-  return r.json();
-}
-
 export async function addProvider(body: {
   name: string;
   package?: string;
@@ -322,20 +601,6 @@ export async function testProvider(name: string, model?: string): Promise<TestRe
   return r.json();
 }
 
-export async function generateVideo(
-  premise: string,
-  provider?: string,
-  model?: string,
-) {
-  const r = await fetch(`${BASE}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ premise, provider, model }),
-  });
-  if (!r.ok) throw new Error(await errorText(r));
-  return (await r.json()) as { jobId: string };
-}
-
 /* ---------- Editor (Phase 4): one planned video, versioned edits, Ask AI ---------- */
 
 export type Film = import("../../src/generator/film/edits").Film;
@@ -372,6 +637,8 @@ export interface FilmState {
 export interface FilmResponse extends FilmState {
   id: string;
   fields: EditorFields;
+  /** An as-written run: Ask AI may change the script's words only to words you type. */
+  wordsLocked?: boolean;
 }
 
 export interface FilmChangeResponse extends FilmState {
@@ -448,6 +715,8 @@ export interface JobListItem {
   status: Job["status"];
   premise: string;
   createdAt: number;
+  /** "story": a plan job that stopped for the story's approval; "shop": at gate 2's shopping list. */
+  gate?: "story" | "shop";
 }
 export async function listJobs(): Promise<JobListItem[]> {
   return json(await fetch(`${BASE}/jobs`));
@@ -467,6 +736,55 @@ export async function deleteVideo(id: string): Promise<{ ok: boolean; deleted: n
   return (await r.json()) as { ok: boolean; deleted: number };
 }
 
+/* ---------- The producer you talk to (P5): notes on a run, proposals, confirm, undo ---------- */
+
+export type ProducerTurn = import("../../src/generator/pipeline/notes").Turn;
+export type ProducerProposal = import("../../src/generator/pipeline/notes").Proposal & {
+  state: import("../../src/generator/pipeline/notes").ProposalState;
+  n: number;
+};
+
+/** One run's conversation with the producer. */
+export interface ProducerConversation {
+  id: string;
+  /** "plan": the plan is made (changes are editor versions); "story": only the story is written. */
+  phase: "plan" | "story" | "none";
+  turns: ProducerTurn[];
+  proposals: ProducerProposal[];
+  standing: string[];
+  canUndo: boolean;
+}
+
+export async function getProducer(runId: string): Promise<ProducerConversation> {
+  return json(await fetch(`${BASE}/producer/${runId}`));
+}
+
+async function producerPost<T>(runId: string, route: string, body: unknown): Promise<T> {
+  return json(
+    await fetch(`${BASE}/producer/${runId}/${route}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    }),
+  );
+}
+
+/** A note to the producer: its answer and proposals. Nothing changes until one is applied. */
+export function sayToProducer(runId: string, text: string): Promise<ProducerConversation & { reply: string; notes: string[] }> {
+  return producerPost(runId, "say", { text });
+}
+
+export function applyProposal(runId: string, proposal: string): Promise<ProducerConversation & { done: { summary: string[]; version?: number } }> {
+  return producerPost(runId, "ok", { proposal });
+}
+
+export function discardProposal(runId: string, proposal: string): Promise<ProducerConversation> {
+  return producerPost(runId, "no", { proposal });
+}
+
+export function undoProducer(runId: string): Promise<ProducerConversation & { done: { summary: string[] } }> {
+  return producerPost(runId, "undo", {});
+}
 
 export interface VoiceReference {
   id: string; label: string; archetype: string; tags: string[];

@@ -15,6 +15,10 @@ export const SHOT_MOVES = [
   "static", "push_in", "pull_out", "truck_left", "truck_right", "crane_up", "crane_down",
   "orbit_left", "orbit_right", "follow", "dolly_zoom",
 ] as const;
+/** Bullet time's move (docs/factory/14-bullet-time.md §3.4): a fast sweep
+ *  round the hero over the window. Kept out of SHOT_MOVES, the director's
+ *  list: the assembler gives it to the shot that spans a window. */
+export const ARC_MOVE = "arc" as const;
 export const SHOT_PLACES = ["center", "left_third", "right_third", "auto"] as const;
 export const SHOT_ENERGIES = ["calm", "normal", "bold"] as const;
 export const SHOT_STYLES = ["locked", "smooth", "handheld"] as const;
@@ -27,7 +31,7 @@ export const ShotSchema = z.object({
   size: z.enum(SHOT_SIZES),
   angle: z.enum(SHOT_ANGLES).default("eye"),
   side: z.enum(SHOT_SIDES).default("auto"),
-  move: z.enum(SHOT_MOVES).default("push_in"),
+  move: z.enum([...SHOT_MOVES, ARC_MOVE]).default("push_in"),
   place: z.enum(SHOT_PLACES).default("auto"),
   energy: z.enum(SHOT_ENERGIES).default("normal"),
   style: z.enum(SHOT_STYLES).default("smooth"),

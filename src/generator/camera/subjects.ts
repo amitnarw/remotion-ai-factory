@@ -67,6 +67,9 @@ export const KIT_SUBJECTS: Record<string, Record<string, string>> = {
     plaza: "the city's main square (when the place has one)",
     park: "the park inside the city (when it has one)",
     landmark: "the place's landmark (a minaret, tower...)",
+    // Few words, all its own: pipeline/shots.ts subjectFromSee scores a beat's
+    // "see" line against these (a word shared with other subjects steals beats).
+    belfry: "bell tower, clock, spire",
   },
 };
 

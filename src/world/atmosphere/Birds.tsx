@@ -5,10 +5,9 @@
  * frame: each bird circles a seeded centre at its own seeded radius, speed
  * and height, with a flap that is also pure math (no wall clock, no
  * randomness outside the seed). The flock is built once as plain three.js
- * groups and placed every frame from t = frame / fps.
+ * groups and placed every frame from the place's time t (GroundWorld's).
  */
 import { useMemo, useRef } from "react";
-import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { makeRng } from "../rng";
@@ -51,13 +50,13 @@ function birdNode(spec: Omit<BirdSpec, "node" | "wingL" | "wingR">): BirdSpec {
   return { ...spec, node, wingL, wingR };
 }
 
-export const BirdsLayer: React.FC<{ seed: string; count?: number; area?: BirdsArea }> = ({
+/** `t`: the place's time (GroundWorld's: the world's clock in a bullet time). */
+export const BirdsLayer: React.FC<{ seed: string; t: number; count?: number; area?: BirdsArea }> = ({
   seed,
+  t,
   count = 9,
   area = { x: [-140, 90], z: [-90, 70], y: [24, 52] },
 }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
   const flock = useMemo(() => {
     const r = makeRng(`birds:${seed}`);
     const list: BirdSpec[] = [];
@@ -84,7 +83,6 @@ export const BirdsLayer: React.FC<{ seed: string; count?: number; area?: BirdsAr
   const group = useRef<THREE.Group>(null);
   useFrame(() => {
     if (!group.current) return;
-    const t = frame / (fps || 30);
     for (const s of flock) {
       const a = s.phase + s.speed * t;
       s.node.position.set(

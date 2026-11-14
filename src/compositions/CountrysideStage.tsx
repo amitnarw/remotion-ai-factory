@@ -14,7 +14,7 @@
  *   statPanel drives windmill rotor speed + camera zoom (optional escalation)
  *   worldEvents: water-rise (if river added later), lights-out
  */
-import { useMemo, useRef, useEffect } from "react";
+import { useMemo, useRef } from "react";
 import { useCurrentFrame, useVideoConfig, random } from "remotion";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
@@ -30,7 +30,8 @@ import { MountainRidge } from "./mountains";
 import { Birds } from "./Birds";
 import { keepMistBase, driftMist } from "./mist";
 import { ShotCamera, type Anchors } from "./camera/ShotCamera";
-import { clearestFacing, restoreRigLens, type Blocker } from "./ForestStage";
+import { clearestFacing, restoreRigLens, useStageFog, type Blocker } from "./ForestStage";
+import { useSceneDrawOrder } from "./glb";
 
 /** Per-TOD look for countryside (mirrors ASSET_TOD pattern). */
 const COUNTRYSIDE_TOD: Record<
@@ -305,10 +306,11 @@ function Windmill({ x, z, rot, scale, bodyCol, bladeCol, specId, index }: {
 }) {
   const rotorRef = useRef<THREE.Group>(null);
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const baseSpeed = 0.8 + seeded(specId, `windmill-${index}-speed`, 0) * 0.6;
   // Absolute angle from the frame number, not an accumulated per-tick step.
   useFrame(() => {
-    if (rotorRef.current) rotorRef.current.rotation.z = -(frame * baseSpeed) / 30;
+    if (rotorRef.current) rotorRef.current.rotation.z = -(frame * baseSpeed) / fps;
   });
 
   return (
@@ -476,7 +478,8 @@ function CropStrips({ bounds, baseCol, accentCol, specId }: {
 
 function MistLayer({ active, night }: { active: boolean; night: boolean }) {
   const frame = useCurrentFrame();
-  const t = frame / 30;
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const positions: number[] = [];
@@ -521,9 +524,10 @@ function MistLayer({ active, night }: { active: boolean; night: boolean }) {
  */
 function CountrysideCameraRig({ spec }: { spec: ShotSpec }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const { camera } = useThree();
   const panel = spec.statPanel ?? null;
-  const t = frame / 30;
+  const t = frame / fps;
   const zoom = panel ? 1 + (statScaleAt(panel, t) - 1) * 0.12 : 1;
   useFrame(() => {
     restoreRigLens(camera);
@@ -822,18 +826,17 @@ export function countrysideAnchors(L: CountryLayout, specId: string, aspect: num
 }
 
 export function CountrysideStage({ spec, scene }: { spec: ShotSpec; scene?: SceneType }) {
+  useSceneDrawOrder();
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const active = scene ?? spec.scenes[0];
-  const t = frame / 30;
+  const t = frame / fps;
   const lightsOut = lightsOutAt(spec, t);
   const tod = active?.look?.timeOfDay ?? "afternoon";
   const look = COUNTRYSIDE_TOD[tod] ?? COUNTRYSIDE_TOD.afternoon;
   const night = tod === "night";
 
-  const { scene: threeScene } = useThree();
-  useEffect(() => {
-    threeScene.fog = new THREE.FogExp2(look.fog, look.fogDensity);
-  }, [look.fog, look.fogDensity, threeScene]);
+  useStageFog({ color: look.fog, density: look.fogDensity });
 
   // Procedural layout seeded by spec.id
   const layout = useMemo(() => countryLayout(spec.id), [spec.id]);

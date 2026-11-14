@@ -14,7 +14,10 @@
  *  - notes: generic banknotes that flutter (rock about ±40° while swinging
  *    side to side and sinking slowly; textures.ts);
  *  - chips: small chips that rise off the plaza with the lift level (their
- *    release times are per-scene attributes read off the level track).
+ *    release times are per-scene attributes read off the level track) and
+ *    drop as the rigid pieces do when it falls back (gravity on): from
+ *    where they are, under gravity, pulled harder when that would take
+ *    longer than lift.ts DROP_LAND_MAX.
  *
  * Burst particles leave the epicentre at their burst's time, rise against
  * drag and settle to a slow fall with the breeze (the closed-form linear
@@ -30,7 +33,7 @@
  */
 import { makeRng } from "../rng";
 import type { Vec3 } from "./lift";
-import { HOP_FLOOR, RELEASE_FRONT_SPEED, RELEASE_JITTER, THRESHOLD_FLOOR, WEIGHT_POWER } from "./lift";
+import { DROP_LAND_MAX, DROP_SPEED_MAX, G, HOP_FLOOR, heldLand, RELEASE_FRONT_SPEED, RELEASE_JITTER, THRESHOLD_FLOOR, WEIGHT_POWER } from "./lift";
 import { crossings, levelOf, MAX_BURSTS, sceneBursts, type Burst, type LevelTrack } from "./track";
 
 export type ParticleKind = "confetti" | "notes" | "chips";
@@ -428,6 +431,9 @@ attribute vec4 aSeedD;
 attribute vec4 aRelease;
 
 const float RP_TAU = 6.28318530718;
+const float RP_G = ${G.toFixed(2)};
+const float RP_LAND_MAX = ${DROP_LAND_MAX.toFixed(3)};
+const float RP_SPEED_MAX = ${DROP_SPEED_MAX.toFixed(1)};
 const mat3 RP_FLAT = mat3(1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0);
 
 mat3 rpAxisAngle(vec3 a, float g) {
@@ -473,6 +479,10 @@ void rpParticle(out vec3 pos, out mat3 rot, out float scale) {
   float vis = 0.0;
   // The motion clock at touch-down (-1: it never lands).
   float tland = -1.0;
+  // A chip after its drop: seconds into its fall (held at touch-down; -1 before), its rise's length and its fall's.
+  float chipS = -1.0;
+  float chipD = 0.0;
+  float chipL = 0.0;
   bool landed = false;
   pos = uRpEpi;
 
@@ -494,16 +504,36 @@ void rpParticle(out vec3 pos, out mat3 rot, out float scale) {
       tt = tauR;
       env = 1.0 - exp(-tauR / uRpTau0);
       if (drop < 5.0e5) {
-        // Its fall after the drop lasts (height / fall speed) plus the smooth start.
+        // Gravity on: it falls from its height and rising speed at the drop
+        // (the rise's and the hop's), under gravity, or pulled harder to
+        // touch down sooner (lift.ts fallPlan).
         float tauD = drop - rel;
-        float yd = uRpRestLift + vr * rpRamp(tauD, uRpTau0) + aRelease.w * (1.0 - exp(-tauD / uRpTau0));
+        float eD = exp(-tauD / uRpTau0);
+        float yd = uRpRestLift + vr * rpRamp(tauD, uRpTau0) + aRelease.w * (1.0 - eD);
+        // The rise's tumble keeps the pace it always had (as if it drifted
+        // down at its fall speed), so no frame before gravity-on changes; the
+        // fall turns it on to land flat.
         tland = tauD + max(0.0, yd - (yg - uRpEpi.y)) / fall + uRpTau0;
-      }
-      if (t > drop) {
-        float s = t - drop;
-        pos.y -= fall * rpRamp(s, uRpTau0);
-        tt = tauR + s;
-        if (pos.y <= yg) landed = true;
+        float v0 = vr * (1.0 - eD) + aRelease.w * eD / uRpTau0;
+        float dh = max(0.0, yd - (yg - uRpEpi.y));
+        float g = RP_G;
+        float sl = (v0 + sqrt(v0 * v0 + 2.0 * g * dh)) / g;
+        // Held to RP_LAND_MAX, or longer where that would land faster than RP_SPEED_MAX (lift.ts heldLand).
+        float held = sl > RP_LAND_MAX ? max(RP_LAND_MAX, 2.0 * dh / max(1.0e-3, RP_SPEED_MAX - v0)) : 1.0e6;
+        if (held < sl) {
+          g = 2.0 * (dh + v0 * held) / (held * held);
+          sl = held;
+        }
+        chipD = tauD;
+        chipL = sl;
+        if (t > drop) {
+          float s = min(t - drop, sl);
+          pos.y += v0 * s - 0.5 * g * s * s;
+          // Its clock stops at touch-down: no tumbling or sliding on the ground.
+          tt = tauR + s;
+          chipS = s;
+          if (t - drop >= sl) landed = true;
+        }
       }
       vis = smoothstep(0.0, uRpGrow, t - rel);
     }
@@ -577,7 +607,14 @@ void rpParticle(out vec3 pos, out mat3 rot, out float scale) {
     float spin = rate;
     if (tland > 0.0) spin = (floor((rate * tland + phase) / 3.14159265359 + 0.5) * 3.14159265359 - phase) / tland;
     vec3 axis = vec3(cos(RP_TAU * C.w), 0.0, sin(RP_TAU * C.w));
-    rot = rpAxisAngle(axis, spin * tt + phase) * rpRotY(RP_TAU * C.z) * RP_FLAT;
+    float ang = spin * tt + phase;
+    if (chipS >= 0.0) {
+      // A falling chip turns from its angle at the drop to the nearest flat one at touch-down.
+      float a0 = spin * chipD + phase;
+      float a1 = floor((a0 + spin * chipL) / 3.14159265359 + 0.5) * 3.14159265359;
+      ang = a0 + (a1 - a0) * (chipL > 0.0 ? chipS / chipL : 1.0);
+    }
+    rot = rpAxisAngle(axis, ang) * rpRotY(RP_TAU * C.z) * RP_FLAT;
   } else {
     // Flutter: swing along the note's long side, rocking with the swing.
     float yaw = RP_TAU * C.z + 0.25 * (C.w - 0.5) * tt;
@@ -695,6 +732,9 @@ export function particleAt(
   let env = 1;
   let vis = 0;
   let tland = -1;
+  let chipS = -1;
+  let chipD = 0;
+  let chipL = 0;
   let landed = false;
   let pos: Vec3 = [...u.epi];
 
@@ -718,14 +758,27 @@ export function particleAt(
       env = 1 - Math.exp(-tauR / u.tau0);
       if (drop < 5e5) {
         const tauD = drop - rel;
-        const yd = u.restLift + vr * rampF(tauD, u.tau0) + hopH * (1 - Math.exp(-tauD / u.tau0));
+        const eD = Math.exp(-tauD / u.tau0);
+        const yd = u.restLift + vr * rampF(tauD, u.tau0) + hopH * (1 - eD);
         tland = tauD + Math.max(0, yd - (yg - u.epi[1])) / fall + u.tau0;
-      }
-      if (t > drop) {
-        const sd = t - drop;
-        pos[1] -= fall * rampF(sd, u.tau0);
-        tt = tauR + sd;
-        if (pos[1] <= yg) landed = true;
+        const v0 = vr * (1 - eD) + (hopH * eD) / u.tau0;
+        const dh = Math.max(0, yd - (yg - u.epi[1]));
+        let g = G;
+        let sl = (v0 + Math.sqrt(v0 * v0 + 2 * g * dh)) / g;
+        const held = sl > DROP_LAND_MAX ? heldLand(dh, v0, DROP_LAND_MAX, DROP_SPEED_MAX) : Infinity;
+        if (held < sl) {
+          g = (2 * (dh + v0 * held)) / (held * held);
+          sl = held;
+        }
+        chipD = tauD;
+        chipL = sl;
+        if (t > drop) {
+          const sd = Math.min(t - drop, sl);
+          pos[1] += v0 * sd - 0.5 * g * sd * sd;
+          tt = tauR + sd;
+          chipS = sd;
+          if (t - drop >= sl) landed = true;
+        }
       }
       vis = smoothstep(0, u.grow, t - rel);
     }
@@ -792,7 +845,13 @@ export function particleAt(
     pos[2] += u.sway * env * Math.cos(0.3 * rate * tt + phase);
     const spin = tland > 0 ? (Math.floor((rate * tland + phase) / Math.PI + 0.5) * Math.PI - phase) / tland : rate;
     const axis: Vec3 = [Math.cos(2 * Math.PI * C[3]), 0, Math.sin(2 * Math.PI * C[3])];
-    rot = mul(mul(axisAngle(axis, spin * tt + phase), rotY(2 * Math.PI * C[2])), FLAT);
+    let ang = spin * tt + phase;
+    if (chipS >= 0) {
+      const a0 = spin * chipD + phase;
+      const a1 = Math.floor((a0 + spin * chipL) / Math.PI + 0.5) * Math.PI;
+      ang = a0 + (a1 - a0) * (chipL > 0 ? chipS / chipL : 1);
+    }
+    rot = mul(mul(axisAngle(axis, ang), rotY(2 * Math.PI * C[2])), FLAT);
   } else {
     const yaw = 2 * Math.PI * C[2] + 0.25 * (C[3] - 0.5) * tt;
     const rock = Math.sin(rate * tt + phase) * env * (1 - settleK);

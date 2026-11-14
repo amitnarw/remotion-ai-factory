@@ -13,6 +13,10 @@
  * would cull a lifted stall still on screen). They cast shadows, which
  * show how high things float (the reference's night frame).
  *
+ * They draw in a fixed order, the same in every render tab (rigid.ts
+ * rigidDrawOrder): touching pieces frozen in a bullet time's hold otherwise
+ * drew either way round.
+ *
  * Loading holds the Remotion frame (delayRender) until the models are in
  * the scene; a model that does not load is drawn as KitInstances' stand-in
  * box. Draw it as a sibling of GroundWorld, in world coordinates.
@@ -23,7 +27,7 @@ import * as THREE from "three";
 import { useDelayRender } from "remotion";
 import { loadKitModelOrStandIn, type KitModel } from "../KitInstances";
 import type { Vec3 } from "./lift";
-import { rigidMatrix, rigidPlan, type RideFn, type RigidPiece, type RigidPlan } from "./rigid";
+import { rigidDrawOrder, rigidMatrix, rigidPlan, type RideFn, type RigidPiece, type RigidPlan } from "./rigid";
 import { NO_BURSTS, type Burst, type LevelTrack } from "./track";
 
 interface Slot {
@@ -58,6 +62,7 @@ function buildRigid(pieces: readonly RigidPiece[], models: ReadonlyMap<string, K
       slots.push({ mesh, part: part.matrix, pieces: list });
     }
   }
+  rigidDrawOrder(pieces, slots);
   return { group, slots };
 }
 

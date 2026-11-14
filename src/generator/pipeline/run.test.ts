@@ -1,17 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { SettingsSchema, validateSpec } from "../spec.schema";
 import { parseCounterValue } from "./assemble";
 import { matchesStress } from "./captions";
 import { resetFixtureCounters } from "./llm";
+import { runDir, setOutputDir } from "./manifest";
 import { approvedSettings, mergeAudio, reassemble, runPlan } from "./run";
 import { matchSound, soundVocabulary } from "./sound";
 import { resolveTtsPython } from "../tts-python";
 
 const FIXTURES = join(process.cwd(), "test-fixtures", "pipeline", "money-doubles");
 const ID = "fixture-test-money-doubles";
+
+// The run folders go to a temp folder, not output/.
+setOutputDir(mkdtempSync(join(tmpdir(), "run-test-")));
+
+/** The voice files the plan published for a run (tts.ts keeps them under output/ and public/). */
+function removeVoiceFiles(id: string) {
+  rmSync(join(process.cwd(), "output", `${id}-voice`), { recursive: true, force: true });
+  rmSync(join(process.cwd(), "output", `${id}-voice.json`), { force: true });
+  rmSync(join(process.cwd(), "public", "voice", id), { recursive: true, force: true });
+}
 
 test("counter values: plain numbers only", () => {
   assert.equal(parseCounterValue("1,000"), 1000);
@@ -46,7 +58,7 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     });
     assert.doesNotThrow(() => validateSpec(spec));
     for (const f of ["story", "voice", "timeline", "direction", "sound", "plan"]) {
-      assert.ok(existsSync(join(process.cwd(), "output", ID, `${f}.json`)), `${f}.json saved`);
+      assert.ok(existsSync(join(runDir(ID), `${f}.json`)), `${f}.json saved`);
     }
     assert.ok(Math.abs(report.duration - 25) / 25 <= 0.1 || report.duration <= 25 * 1.4, `length ${report.duration} within 10% of 25 (or honestly over, capped at 40%)`);
     // The plan-time length is a PREDICTION from the machine-calibrated speech
@@ -77,7 +89,7 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     assert.ok(again.warnings.some((w) => /story line\(s\) updated/.test(w)), "the adopted story edit is announced");
     assert.ok(again.spec.captions[0].text.startsWith("[edited]"), "the approved caption text kept its window");
     assert.equal(again.spec.story!.beats.find((b) => b.say === beat.say) !== undefined, true, "the approved story text adopted");
-    const saved = JSON.parse(readFileSync(join(process.cwd(), "output", ID, "story.json"), "utf8")) as { beats: Array<{ say: string }> };
+    const saved = JSON.parse(readFileSync(join(runDir(ID), "story.json"), "utf8")) as { beats: Array<{ say: string }> };
     assert.ok(saved.beats.some((b) => b.say === beat.say), "the story edit persisted to the stage file");
 
     // The approved spec's look settings (quality, caption style) reach the
@@ -90,7 +102,7 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     assert.equal(styled.spec.settings?.format, "9:16", "the planned format is kept");
     assert.equal(styled.spec.width, 1080);
     assert.ok(styled.warnings.some((w) => /format \(16:9\) differs/.test(w)), "the ignored format change is announced");
-    const savedPlan = JSON.parse(readFileSync(join(process.cwd(), "output", ID, "plan.json"), "utf8")) as { settings: { quality: string } };
+    const savedPlan = JSON.parse(readFileSync(join(runDir(ID), "plan.json"), "utf8")) as { settings: { quality: string } };
     assert.equal(savedPlan.settings.quality, "draft", "the approved look settings persist for later rebuilds");
 
     // Rebuilding from the saved files (no model calls) gives the same video length.
@@ -100,7 +112,8 @@ test("the fixture pipeline plans a valid video and saves every stage", async () 
     }
   } finally {
     delete process.env.FACTORY_LLM_FIXTURES;
-    rmSync(join(process.cwd(), "output", ID), { recursive: true, force: true });
+    rmSync(runDir(ID), { recursive: true, force: true });
+    removeVoiceFiles(ID);
   }
 });
 

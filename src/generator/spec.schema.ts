@@ -1,6 +1,23 @@
 import { z } from "zod";
 import { CaptionStyleSchema } from "./caption-style";
 import { ShotSchema } from "./camera/shot";
+import {
+  ARC_DIRS,
+  DODGES,
+  MAX_HERO_RATE,
+  MAX_PROJECTILES,
+  MAX_RAMP,
+  MAX_RATE,
+  MAX_WINDOW,
+  MIN_HOLD,
+  MIN_RAMP,
+  MIN_WINDOW,
+  MISSES,
+  PROJECTILE_KINDS,
+} from "../world/warp";
+import { ACTOR_ACTIONS, CARRY_KINDS } from "../world/actors/script";
+import { BrandSchema } from "../compositions/brand/brand";
+import { SceneVfxSchema } from "../world/vfx/spec";
 
 /**
  * Shot spec schema — the single contract that drives the whole video.
@@ -120,6 +137,39 @@ const StreetVarySchema = z.object({
 export type StreetVarySpec = z.infer<typeof StreetVarySchema>;
 export type StatBeat = z.infer<typeof StatBeatSchema>;
 
+/** scene.bulletTime (src/world/warp.ts BulletTime): real video seconds; the
+ *  clocks, the projectiles' paths and the sound follow from it per frame. */
+export const BulletTimeSchema = z.object({
+  from: z.number(),
+  to: z.number(),
+  rampIn: z.number().min(MIN_RAMP).max(MAX_RAMP),
+  rampOut: z.number().min(MIN_RAMP).max(MAX_RAMP),
+  /** The world's rate in the hold: 0 is frozen, a crawl is 0.005. */
+  rate: z.number().min(0).max(MAX_RATE),
+  /** The featured actor on the faster clock (by name or role), and how it dodges. */
+  hero: z
+    .object({ actor: z.string().min(1), rate: z.number().min(0).max(MAX_HERO_RATE), dodge: z.enum(DODGES).optional() })
+    .optional(),
+  /** The camera's sweep round the hero over the window (degrees) and its way. */
+  arc: z.object({ sweep: z.number().min(45).max(270), dir: z.enum(ARC_DIRS) }).optional(),
+  projectiles: z
+    .array(
+      z.object({
+        kind: z.enum(PROJECTILE_KINDS),
+        /** A featured actor's name (the shooter), a city spot, or a compass direction (off screen). */
+        from: z.string().min(1),
+        /** The featured actor it passes. */
+        at: z.string().min(1),
+        /** When it passes, as a share of the hold. */
+        pass: z.number().min(0).max(1),
+        miss: z.enum(MISSES),
+      }),
+    )
+    .max(MAX_PROJECTILES)
+    .optional(),
+});
+export type BulletTimeSpec = z.infer<typeof BulletTimeSchema>;
+
 export const SceneSchema = z.object({
   scene: z.string(),
   from: z.number(),
@@ -138,10 +188,16 @@ export const SceneSchema = z.object({
    *    "street-block" = dense city street (time-of-day worlds, crowd, traffic)
    *    "space"        = planets/stars/orbit — set subject: earth | moon | mars
    *    "city-street" | "park" | "boardwalk" | "pier" | "interior" = CC0 GLB
-   *                     kits rendered by AssetStage (with scene.cast) */
+   *                     kits rendered by AssetStage (with scene.cast)
+   *    "model-set"    = one catalog model staged as the whole set (scene.modelSet) */
   kit: z
-    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river", "world"])
+    .enum(["city-street", "street-block", "park", "boardwalk", "pier", "interior", "space", "ocean", "countryside", "forest", "river", "world", "model-set"])
     .optional(),
+  /** A model set (docs/factory/19-model-sets.md): a catalog model the
+   *  director chose (world/modelset/sets.ts modelSetDefs), staged by
+   *  ModelSetStage on the sea or its islet, with the scene's `actors` on
+   *  its spots. Only with kit "model-set". */
+  modelSet: z.object({ model: z.string().min(1) }).optional(),
   /** For space scenes: which world is in frame (planet built procedurally). */
   subject: z.enum(["earth", "moon", "mars"]).optional(),
   /** Per-scene look variation (time of day is the AI's per-shot choice). */
@@ -205,11 +261,22 @@ export const SceneSchema = z.object({
       place: z.string(),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
       time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "time must be HH:MM, 24-hour"),
+      /** A director device, the time-lapse (docs/factory/13-light-and-time.md
+       *  Part B): over the scene the local clock runs from `time` to `lapse.to`
+       *  (same date, later, paced slower through dusk: src/world/lapse.ts) and
+       *  the sun and everything that follows from it moves. Always a clock
+       *  time here (the assembler turns the director's words into one). At
+       *  most one per video, on a scene of at least 3 s. */
+      lapse: z
+        .object({
+          to: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "lapse.to must be HH:MM, 24-hour"),
+        })
+        .optional(),
     })
     .optional(),
   /** Featured performers in a world scene (Phase 5): specific people the story
-   *  needs, at the city's named spots (cityAnchors). At most 4 — the
-   *  background crowd fills itself without direction. Times (do[].at) are
+   *  needs, at the city's named spots (cityAnchors). At most 4; they are the
+   *  only people a world place shows (the background crowd is off). Times (do[].at) are
    *  seconds of the VIDEO (the assembler absolutizes the director's
    *  scene-relative choices). */
   actors: z
@@ -224,15 +291,20 @@ export const SceneSchema = z.object({
           .array(
             z.object({
               at: z.number().min(0).optional(),
-              action: z.enum(["idle", "walk", "run", "wave", "point", "sit", "look", "talk", "react", "panic", "fall", "cheer", "clap", "jump"]),
+              /** The actor scripts' own list (world/actors/script.ts), the director's too. */
+              action: z.enum(ACTOR_ACTIONS),
               to: z.string().optional(),
               target: z.string().optional(),
               for: z.number().positive().optional(),
+              /** A dodge's way (bullet time): lean (default), duck or roll. */
+              how: z.enum(DODGES).optional(),
+              /** What a pickup picks up. */
+              prop: z.enum(CARRY_KINDS).optional(),
             }),
           )
           .max(6)
           .optional(),
-        carry: z.enum(["bag", "box", "briefcase"]).optional(),
+        carry: z.enum(CARRY_KINDS).optional(),
       }),
     )
     .max(4)
@@ -240,6 +312,16 @@ export const SceneSchema = z.object({
   /** Set when the previous scene's world place differs from this one's:
    *  the join renders as a flight over the globe. */
   flight: z.boolean().optional(),
+  /** A director device, bullet time (docs/factory/14-bullet-time.md): over a
+   *  window of video seconds inside this world scene the world's clock ramps
+   *  down to a crawl (or stops), holds, and ramps back (src/world/warp.ts),
+   *  while the camera arcs round the hero on real time. Projectiles are drawn
+   *  only when listed here; they always miss. At most one per video. */
+  bulletTime: BulletTimeSchema.optional(),
+  /** The director's effects in this world scene (docs/factory/21-vfx-effekseer.md):
+   *  each a family (src/world/vfx/families.ts) at a video time on a city spot,
+   *  absolute seconds like worldEvents' t. Drawn only when listed. */
+  vfx: SceneVfxSchema.optional(),
 });
 
 export type SceneType = z.infer<typeof SceneSchema>;
@@ -386,6 +468,9 @@ export const ShotSpecSchema = z.object({
   height: z.number().default(1920),
   palette: z.string().default("pastelDay"),
   settings: SettingsSchema.optional(),
+  /** The channel's brand (compositions/brand/brand.ts): bumpers, colours,
+   *  fonts, watermark. Absent: unbranded (what-if). */
+  brand: BrandSchema.optional(),
   /** Planned story (Phase 2). Absent for offline templates and older specs. */
   story: StorySchema.optional(),
   /** Camera shots in time order (Phase 3). Absent: each stage films with its own rig. */
@@ -467,6 +552,10 @@ export const ShotSpecSchema = z.object({
              *  slicing mid-file (keeps heartbeat beats phase-aligned when
              *  the tempo changes between segments). */
             restart: z.boolean().optional(),
+            /** Seconds of equal-power fade at the bed's start and end (a
+             *  time-lapse's ambience crossfades where the light changes). */
+            fadeIn: z.number().optional(),
+            fadeOut: z.number().optional(),
           }),
         )
         .optional(),
@@ -571,6 +660,56 @@ export function validateSpec(input: unknown): ShotSpec {
         `scenes[${i}].kit is missing — every story scene must declare kit from the scene library: street-block | space | ocean | countryside | forest | river | park | boardwalk | pier | interior | city-street (or a world place choice)`,
       );
     }
+  });
+  // The time-lapse (a world scene's lapse): forward on one date, at least 3 s,
+  // one per video. Whether the sun moves enough is the assembler's check
+  // (src/world/lapse.ts lapseProblem), which this browser-bundled module
+  // leaves out.
+  const lapses = spec.scenes.map((s, i) => ({ s, i })).filter(({ s }) => s.world?.lapse);
+  lapses.forEach(({ s, i }) => {
+    if (s.world!.lapse!.to <= s.world!.time) {
+      problems.push(`scenes[${i}].world.lapse.to (${s.world!.lapse!.to}) must be later than world.time (${s.world!.time}) on the same date`);
+    }
+    if (s.to - s.from < 3) {
+      problems.push(`scenes[${i}] has a lapse but lasts ${(s.to - s.from).toFixed(1)}s — a lapse needs at least 3s`);
+    }
+  });
+  if (lapses.length > 1) {
+    problems.push(`${lapses.length} scenes have a lapse (scenes ${lapses.map(({ i }) => i).join(", ")}) — at most one per video`);
+  }
+  // Bullet time (a world scene's window): inside its scene, 2.5-6 s with a
+  // hold of 1.5 s, no time-lapse in the same scene, one per video. Whether
+  // the hero and the projectiles' targets are the scene's actors, and that
+  // every projectile misses, is the assembler's check (src/world/warp.ts
+  // bulletProblem, src/world/projectiles.ts), which needs the planned cast.
+  const bullets = spec.scenes.map((s, i) => ({ s, i })).filter(({ s }) => s.bulletTime);
+  bullets.forEach(({ s, i }) => {
+    const bt = s.bulletTime!;
+    const len = bt.to - bt.from;
+    if (s.kit !== "world" || !s.world) problems.push(`scenes[${i}].bulletTime is only for world scenes (a real place)`);
+    if (s.world?.lapse) problems.push(`scenes[${i}] has both a lapse and a bulletTime — drop one`);
+    if (len < MIN_WINDOW - 1e-6 || len > MAX_WINDOW + 1e-6) problems.push(`scenes[${i}].bulletTime lasts ${len.toFixed(2)}s — it must last ${MIN_WINDOW}-${MAX_WINDOW}s`);
+    if (len - bt.rampIn - bt.rampOut < MIN_HOLD - 1e-6) problems.push(`scenes[${i}].bulletTime's hold is under ${MIN_HOLD}s — shorten the ramps or lengthen the window`);
+    if (bt.from < s.from - 1e-6 || bt.to > s.to + 1e-6) problems.push(`scenes[${i}].bulletTime (${bt.from}-${bt.to}) must sit inside its scene (${s.from}-${s.to})`);
+    if (bt.hero && bt.hero.rate < bt.rate) problems.push(`scenes[${i}].bulletTime.hero.rate (${bt.hero.rate}) must be at least the world's rate (${bt.rate})`);
+  });
+  if (bullets.length > 1) {
+    problems.push(`${bullets.length} scenes have a bulletTime (scenes ${bullets.map(({ i }) => i).join(", ")}) — at most one per video`);
+  }
+  // Effects (scene.vfx) are drawn by the world only, each starting inside
+  // its scene.
+  spec.scenes.forEach((s, i) => {
+    if (!s.vfx?.length) return;
+    if (s.kit !== "world" || !s.world) problems.push(`scenes[${i}].vfx is only for world scenes (a real place): drop it or move it to one`);
+    for (const v of s.vfx) {
+      if (v.t < s.from - 1e-6 || v.t >= s.to) problems.push(`scenes[${i}].vfx ${v.kind} at ${v.t}s must start inside its scene (${s.from}-${s.to})`);
+    }
+  });
+  // The arc move is a bullet time's: a shot with it lies inside a window.
+  (spec.shots ?? []).forEach((sh, i) => {
+    if (sh.move !== "arc") return;
+    const inside = bullets.some(({ s }) => sh.from >= s.bulletTime!.from - 1e-3 && sh.to <= s.bulletTime!.to + 1e-3);
+    if (!inside) problems.push(`shots[${i}].move "arc" is only for a bullet time's window (${sh.from}-${sh.to} has none): use orbit_left or orbit_right`);
   });
   const duration = t;
   if (duration < MIN_DURATION_S) {
