@@ -7,7 +7,7 @@
  * it while something runs.
  */
 import * as React from "react";
-import { Boxes, CircleCheck, CircleHelp, Clapperboard, Film, Loader2, Settings, Sparkles, type LucideIcon } from "lucide-react";
+import { Boxes, CircleCheck, CircleHelp, Clapperboard, Film, Loader2, Settings, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { useJobs, jobScreen, type ActiveJob } from "../lib/jobs";
 import { navigate } from "../lib/navigation";
 import type { Section } from "../lib/routes";
@@ -21,6 +21,7 @@ const NAV: Array<{ key: Exclude<Section, "editor">; label: string; icon: LucideI
   { key: "assets", label: "Assets", icon: Boxes },
   { key: "settings", label: "Settings", icon: Settings },
   { key: "help", label: "Help", icon: CircleHelp },
+  { key: "activity", label: "Activity", icon: Terminal },
 ];
 
 function jobTitle(j: ActiveJob): string {

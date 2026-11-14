@@ -17,7 +17,7 @@
  * ?tab=providers&provider=, ?tab=setup are mapped onto the new screens.
  */
 
-export type Section = "create" | "library" | "assets" | "settings" | "help" | "editor";
+export type Section = "create" | "library" | "assets" | "settings" | "help" | "activity" | "editor";
 
 export const SETUP_STEPS = ["idea", "format", "voice", "captions", "summary"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
@@ -102,6 +102,11 @@ export function normalizeQuery(q: URLSearchParams): Params | null {
     case "help":
       next = { tab: "help" };
       break;
+    case "activity": {
+      const job = q.get("job") ?? undefined;
+      next = { tab: "activity", job };
+      break;
+    }
     case "editor":
       // The editor reads film/from/plan itself; leave it untouched.
       return null;

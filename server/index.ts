@@ -9,6 +9,7 @@ import { reportTime } from "../src/generator/ai/knowledge";
 import { keyUrlFor, actionable } from "./error-hints";
 import { fetchProviderModels } from "./fetch-models";
 import { createJob, getJob, getAllJobs, premiseSlug, runJob, deleteJob, subscribeSSE } from "./jobs";
+import { cancelActivity, listActivities, getActivity, subscribeActivitySSE, serverLogLines, activityState } from "./activity";
 import { resolveModel } from "../src/generator/ai/provider-registry";
 import { buildFamilySpec } from "../src/generator/build-family-spec";
 import { SettingsSchema, type VideoSettings } from "../src/generator/spec.schema";
@@ -1100,6 +1101,48 @@ app.get("/api/jobs/:id/events", (req, res) => {
     return res.status(404).json({ error: "unknown or expired job — the server may have restarted; start again" });
   }
   subscribeSSE(req.params.id, res);
+});
+
+// ---------- Activity: everything the factory is doing right now ----------
+/** All activities, newest first. Running ones first within their group. */
+app.get("/api/activity", (_req, res) => {
+  const acts = listActivities();
+  const running = acts.filter((a) => a.status === "queued" || a.status === "running");
+  const finished = acts.filter((a) => a.status === "done" || a.status === "failed" || a.status === "cancelled");
+  res.json({ running, finished });
+});
+
+/** One activity's full state. */
+app.get("/api/activity/:id", (req, res) => {
+  const act = getActivity(req.params.id);
+  if (!act) return res.status(404).json({ error: "unknown activity" });
+  res.json({ ...act, state: activityState(req.params.id) });
+});
+
+/** Live stream for one activity (SSE). */
+app.get("/api/activity/:id/stream", (req, res) => {
+  const act = getActivity(req.params.id);
+  if (!act) return res.status(404).json({ error: "unknown activity" });
+  subscribeActivitySSE(req.params.id, res);
+});
+
+/** Download an activity's log as plain text. */
+app.get("/api/activity/:id/log", (req, res) => {
+  const act = getActivity(req.params.id);
+  if (!act) return res.status(404).json({ error: "unknown activity" });
+  res.type("text/plain").send(`${act.label} (${act.id})\nStarted: ${new Date(act.startedAt).toISOString()}\nStatus: ${act.status}\n${act.error ? "Error: " + act.error + "\n" : ""}\n---\n${(act.logs ?? []).join("\n")}`);
+});
+
+/** Cancel a running or queued activity. */
+app.post("/api/activity/:id/cancel", (req, res) => {
+  const ok = cancelActivity(req.params.id);
+  if (!ok) return res.status(400).json({ error: "cannot cancel that activity" });
+  res.json({ ok: true });
+});
+
+/** Server-wide log ring buffer (newest first): provider checks, TTS install, warnings, errors. */
+app.get("/api/logs/server", (_req, res) => {
+  res.json({ logs: serverLogLines(500) });
 });
 
 // ---------- Voice sample (audition) ----------

@@ -736,6 +736,69 @@ export async function deleteVideo(id: string): Promise<{ ok: boolean; deleted: n
   return (await r.json()) as { ok: boolean; deleted: number };
 }
 
+/* ---------- Activity: what the factory is doing right now ---------- */
+
+export interface ActivityItem {
+  id: string;
+  kind: string;
+  label: string;
+  args?: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  progress: number;
+  stage?: string;
+  etaSec?: number | null;
+  error?: string;
+  startedAt: number;
+  endedAt?: number;
+  lastActivityAt: number;
+  logs: string[];
+  timeline?: Array<{ stage: string; startedAt: number; endedAt?: number }>;
+}
+
+export interface ActivityList {
+  running: ActivityItem[];
+  finished: ActivityItem[];
+}
+
+export interface ActivityState {
+  status: ActivityItem["status"] | "missing";
+  progress: number;
+  stage?: string;
+  quietMs?: number;
+  stale?: boolean;
+  stuck?: boolean;
+}
+
+export interface ServerLogLine {
+  t: number;
+  level: "log" | "warn" | "error";
+  msg: string;
+}
+
+export async function listActivities(): Promise<ActivityList> {
+  return json(await fetch(`${BASE}/activity`));
+}
+
+export async function getActivity(id: string): Promise<{ activity: ActivityItem; state: ActivityState }> {
+  return json(await fetch(`${BASE}/activity/${encodeURIComponent(id)}`));
+}
+
+export async function cancelActivity(id: string): Promise<{ ok: boolean }> {
+  const r = await fetch(`${BASE}/activity/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.json();
+}
+
+export async function downloadActivityLog(id: string): Promise<string> {
+  const r = await fetch(`${BASE}/activity/${encodeURIComponent(id)}/log`);
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.text();
+}
+
+export async function getServerLogs(limit = 500): Promise<{ logs: ServerLogLine[] }> {
+  return json(await fetch(`${BASE}/logs/server?limit=${limit}`));
+}
+
 /* ---------- The producer you talk to (P5): notes on a run, proposals, confirm, undo ---------- */
 
 export type ProducerTurn = import("../../src/generator/pipeline/notes").Turn;

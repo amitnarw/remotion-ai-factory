@@ -7,6 +7,7 @@ import { FFMPEG } from "../src/generator/ffmpeg";
 import { reportTime } from "../src/generator/ai/knowledge";
 import { actionable } from "./error-hints";
 import { isLaterStage, nextProgress, PLAN_PROGRESS, readRenderLog, stageMarker } from "./progress";
+import { createActivity, updateActivity, finishActivity, failActivity, cancelActivity, watchProcess, type ActivityKind } from "./activity";
 
 export interface StageSpan {
   stage: string;
@@ -240,6 +241,9 @@ export function createJob(premise: string, provider?: string, model?: string): J
   sseClients.set(id, new Set());
   persist(job, true);
   evictOldJobs();
+  // Every job is also an activity so the Activity page can show it.
+  const kind: ActivityKind = job.engine === "plan" ? "plan" : "render";
+  createActivity({ id, kind, label: kind === "plan" ? "Writing your plan" : "Making your video", args: premise });
   return job;
 }
 
@@ -261,6 +265,7 @@ export function deleteJob(id: string): "cancelled" | "deleted" | null {
   jobs.delete(id);
   deleteJobFile(id);
   removePlanAudioFile(id);
+  cancelActivity(id);
   return "deleted";
 }
 export function getAllJobs(): Job[] { return Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt); }
@@ -272,6 +277,7 @@ export function cancelJob(id: string): boolean {
   job.error = "Cancelled by user";
   persist(job, true);
   broadcast(job.id, { type: "failed", error: job.error });
+  cancelActivity(id);
   return true;
 }
 
@@ -360,6 +366,25 @@ function failedLogError(premise: string, runId?: string): string | undefined {
   return tail || undefined;
 }
 
+/**
+ * The reason a run failed, from the job's own log. Prefer the line the CLI
+ * wrote after "FAILED" (it starts with "Error:"); the lines before it are
+ * engine chatter, and taking only the tail is how a native crash used to reach
+ * the dashboard as "voxcpm_model_path: ..." with no explanation.
+ */
+export function failureReason(text: string, code: number | null | undefined): string {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .filter((l) => !/FutureWarning|DeprecationWarning|UserWarning/.test(l))
+    .filter((l) => !/^\s*WeightNorm\.apply\(/.test(l));
+  const errorAt = lines.reduce((last, line, i) => (/^(?:Error|error):\s/.test(line) ? i : last), -1);
+  if (errorAt >= 0) return lines.slice(errorAt, errorAt + 4).join("\n").trim();
+  const tail = lines.slice(-4).join("\n").trim();
+  return tail || (code == null ? "" : `exit code ${code}`);
+}
+
 export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boolean; script?: string }) {
   job.status = "running";
   broadcast(job.id, { type: "status", status: "running" });
@@ -397,6 +422,17 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     // first; the CLI also reads .env itself (loadDotEnv, never overriding).
   });
   job.child = child;
+  const kind: ActivityKind = job.engine === "plan" ? "plan" : "render";
+  createActivity({
+    id: job.id,
+    kind,
+    label: kind === "plan" ? "Writing your plan" : "Making your video",
+    args: job.premise,
+    status: "running",
+  });
+  // Stream the CLI's output into the activity's log too (the Activity page
+  // shows it when the job's own screen is closed).
+  watchProcess(job.id, child, "cli");
   // "@@STAGE <name>" lines from the pipeline drive the stage pills. Output
   // arrives in chunks that can split a line, so keep the unfinished tail.
   let pending = "";
@@ -454,6 +490,11 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
         etaSec: job.etaSec,
       });
       persist(job);
+      updateActivity(job.id, {
+        progress: job.progress,
+        stage: job.stage,
+        etaSec: job.etaSec ?? null,
+      });
     }
   };
   child.stdout.on("data", (buf) => handleOutput(buf.toString()));
@@ -480,6 +521,7 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     if (job.status === "cancelled") {
       // DELETE /api/jobs/:id killed it: keep "cancelled" (not a failure to explain).
       setStage(job, "cancelled");
+      cancelActivity(job.id);
     } else if (code === 0) {
       if (job.engine === "plan" && job.specId) markFixtureModels(job.specId);
       job.status = "done";
@@ -501,21 +543,18 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
         } catch { /* ignore */ }
       }
       broadcast(job.id, { type: "done", timeline: job.timeline });
+      finishActivity(job.id);
     } else {
       job.status = "failed";
       setStage(job, "failed");
       const logError = failedLogError(job.premise, job.runId);
-      const logTail = job.logs
-        .join("")
-        .split(/\r?\n/)
-        .filter((l) => l.trim() && !l.includes("Rendered ") && !l.includes("FutureWarning") && !l.includes("DeprecationWarning") && !l.includes("UserWarning"))
-        .slice(-4)
-        .join("\n");
-      job.error = logError ?? (logTail || `exit code ${code}`);
-      // Attach the actionable fix for known failure classes.
+      job.error = logError ?? (failureReason(job.logs.join(""), code) || `exit code ${code}`);
+      // Attach the actionable fix for known failure classes. "How to fix it:"
+      // is the pattern the dashboard splits into its own line.
       const hint = actionable(job.error, job.provider);
-      if (hint.fix) job.error += `\n→ Fix: ${hint.fix}`;
+      if (hint.fix) job.error += `\nHow to fix it: ${hint.fix}`;
       broadcast(job.id, { type: "failed", error: job.error, timeline: job.timeline });
+      failActivity(job.id, job.error ?? `exit code ${code}`);
     }
     // Terminal state reached — release SSE sockets for this job.
     for (const c of sseClients.get(job.id) ?? []) {

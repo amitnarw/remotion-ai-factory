@@ -17,6 +17,7 @@ import Library from "./pages/library/Library";
 import Assets from "./pages/assets/Assets";
 import Settings from "./pages/settings/Settings";
 import Help from "./pages/Help";
+import Activity from "./pages/activity/Activity";
 
 // The editor pulls in the 3D composition; load it only when it is opened.
 const Editor = React.lazy(() => import("./pages/editor/Editor"));
@@ -52,6 +53,7 @@ export default function App() {
     else if (section === "assets") page = <Assets />;
     else if (section === "settings") page = <Settings />;
     else if (section === "help") page = <Help />;
+    else if (section === "activity") page = <Activity />;
   }
 
   React.useEffect(() => {
@@ -61,6 +63,7 @@ export default function App() {
       assets: "Assets",
       settings: "Settings",
       help: "Help",
+      activity: "Activity",
       editor: "Editor",
     };
     document.title = `${titles[section]} | Video Factory`;

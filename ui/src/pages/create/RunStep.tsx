@@ -11,7 +11,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
-  ChevronDown,
   CircleCheck,
   Download,
   Film,
@@ -21,13 +20,12 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Square,
-  Terminal,
   X,
 } from "lucide-react";
 import { cancelJob, getJob, makeVariants, renderSpec, type Job } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { LogConsole } from "../../components/LogConsole";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -287,10 +285,17 @@ function RenderingView({
 
   return (
     <div className="space-y-4">
+      {/* A failure the server already explained (for example VoxCPM2 running
+          out of memory) carries its own "How to fix it:" line; the generic
+          retry text is only for the unexplained ones. */}
       {failed && !stopped ? (
         <ErrorBanner
           error={job?.error ?? "Something went wrong while making the video."}
-          fix="Try again. If it keeps failing, the technical log below says which step broke."
+          fix={
+            /how to fix it:/i.test(job?.error ?? "")
+              ? undefined
+              : "Try again. If it keeps failing, the technical log below says which step broke."
+          }
         />
       ) : null}
       {retryError ? <ErrorBanner error={retryError} /> : null}
@@ -486,34 +491,4 @@ function DoneView({ job, onMakeAnother }: { job: Job; onMakeAnother: () => void 
   );
 }
 
-/** The technical log, folded away unless you want it. */
-function LogConsole({ logs }: { logs: string[] }) {
-  const [open, setOpen] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const lines = logs.join("").split(/\r?\n/).filter((l) => l.trim()).slice(-200);
-  useEffect(() => {
-    if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [open, lines.length]);
-  if (!lines.length) return null;
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <Card className="overflow-hidden">
-        <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-          <Terminal className="h-4 w-4 text-muted-foreground" />
-          <span className="flex-1">{open ? "Hide the technical log" : "Show the technical log"}</span>
-          <span className="text-xs font-medium text-muted-foreground">{lines.length} {lines.length === 1 ? "line" : "lines"}</span>
-          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div ref={scrollRef} className="max-h-72 overflow-y-auto bg-black/50 p-4 font-mono text-[11px] leading-relaxed">
-            {lines.map((l, i) => (
-              <div key={i} className="whitespace-pre-wrap break-words text-foreground/80">
-                {l}
-              </div>
-            ))}
-          </div>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
-  );
-}
+
