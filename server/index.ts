@@ -28,6 +28,7 @@ import { acquirePaths, readAcquired } from "../src/generator/library/acquire/cat
 import { rankRequests, readRequests } from "../src/generator/library/acquire/requests";
 import { sourceStatus } from "../src/generator/library/acquire/sources";
 import { ttsStatus, startInstall, getTtsJob } from "./tts";
+import { readSystemMemory, memoryStatus, GB, MIN_FREE_RAM_GB, MIN_FREE_COMMIT_GB } from "./memory";
 import { AUDITION_TEXT, KNOWN_VOICES, VOXCPM_VOICE_DESCRIPTIONS, TTS_ENGINES, voxDescription, voxTransform, voxReferenceId, voiceLabel, voiceMeta } from "../src/generator/voices";
 import { resolveTtsPython } from "../src/generator/tts-python";
 import { cacheKey, synthesizeLines, voicePreviewKey, voicePreviewLine, type VoiceLine } from "../src/generator/tts";
@@ -604,12 +605,18 @@ function shoppingFor(runId: string) {
 app.post("/api/plan/:runId/resume", (req, res) => {
   const { runId } = req.params;
   if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
-  const body = (req.body ?? {}) as { approvals?: unknown; allFree?: unknown };
+  const body = (req.body ?? {}) as { approvals?: unknown; allFree?: unknown; override?: unknown };
   const approvals = Array.isArray(body.approvals) ? body.approvals.filter((a): a is string => typeof a === "string") : [];
   try {
     parseApprovals(approvals);
   } catch (e) {
     return res.status(400).json({ error: e instanceof Error ? e.message : String(e), fix: "For each need choose an offer, keep the stand-in, ask for it to be built, or skip it" });
+  }
+  const override = body.override && typeof body.override === "object" && !Array.isArray(body.override) ? body.override as { findings?: unknown; reason?: unknown } : undefined;
+  const overrideFindings = Array.isArray(override?.findings) ? override.findings.filter((f): f is string => typeof f === "string") : [];
+  const overrideReason = typeof override?.reason === "string" ? override.reason : "";
+  if (overrideFindings.length && !overrideReason.trim()) {
+    return res.status(400).json({ error: "an override needs a reason", fix: "pass a non-empty reason with the findings to override" });
   }
   const run = readRun(runId);
   const brief = readBrief(runId);
@@ -636,7 +643,7 @@ app.post("/api/plan/:runId/resume", (req, res) => {
   job.engine = "plan";
   job.resume = true;
   job.runId = runId;
-  const choices = [...(approvals.length ? ["--approve", approvals.join(",")] : []), ...(body.allFree === true ? ["--all-cc0"] : [])];
+  const choices = [...(approvals.length ? ["--approve", approvals.join(",")] : []), ...(body.allFree === true ? ["--all-cc0"] : []), ...overrideFindings.map((f) => ["--override-review", `${f}=${overrideReason}`]).flat()];
   runJob(job, { extraArgs: ["--resume", runId, "--no-render", ...choices] });
   res.json({ jobId: job.id });
 });
@@ -830,6 +837,13 @@ app.get("/api/spec/:jobId", (req, res) => {
       } catch {
         claims = undefined;
       }
+      // The story-quality review (story-review.ts): findings and disposition.
+      let review: unknown;
+      try {
+        review = run?.gates.story.review ? JSON.parse(fs.readFileSync(join(dir, "story.review.json"), "utf8")) : undefined;
+      } catch {
+        review = undefined;
+      }
       return res.json({
         ready: true,
         gate: "story",
@@ -837,6 +851,7 @@ app.get("/api/spec/:jobId", (req, res) => {
         story,
         ...(check ? { check } : {}),
         ...(claims ? { claims } : {}),
+        ...(review ? { review } : {}),
         length: { duration: timeline.duration ?? 0, target: timeline.target ?? 0, revised: !!run?.stages.story.facts?.revised },
         approved: run?.gates.story.state === "approved",
         provider: job.provider,
@@ -1367,9 +1382,29 @@ function readRefs(): VoiceRefMeta[] {
   const out: VoiceRefMeta[] = [];
   for (const d of fs.readdirSync(REF_ROOT, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
-    const metaPath = join(REF_ROOT, d.name, "meta.json");
-    if (!fs.existsSync(metaPath)) continue;
-    try { out.push(JSON.parse(fs.readFileSync(metaPath, "utf8")) as VoiceRefMeta); } catch { /* skip */ }
+    const dir = join(REF_ROOT, d.name);
+    const wav = join(dir, "reference.wav");
+    if (!fs.existsSync(wav)) continue; // a voice is only usable once its clip exists
+    const metaPath = join(dir, "meta.json");
+    let meta: Partial<VoiceRefMeta> = {};
+    if (fs.existsSync(metaPath)) {
+      try { meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Partial<VoiceRefMeta>; } catch { meta = {}; }
+    }
+    const probe = probeAudio(wav);
+    if (!probe) continue; // ffmpeg can't read it
+    out.push({
+      id: meta.id ?? d.name,
+      label: meta.label ?? d.name,
+      archetype: meta.archetype ?? "narrator",
+      tags: Array.isArray(meta.tags) ? meta.tags : [],
+      transcript: meta.transcript ?? "",
+      url: `/media/voice/references/${d.name}/reference.wav`,
+      duration: probe.duration, sr: probe.sr, channels: probe.channels,
+      license: meta.license ?? "unknown",
+      consent: Boolean(meta.consent),
+      createdAt: meta.createdAt ?? 0,
+      notes: meta.notes,
+    });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);
 }
@@ -1429,7 +1464,15 @@ app.post("/api/voice-references/:id/audition", async (req, res) => {
     res.sendFile(wav, { dotfiles: "allow" });
     fs.rmSync(join(ROOT, "output", `${nId}-voice`), { recursive: true, force: true });
   } catch (e) {
-    res.status(500).json({ error: "audition failed", detail: (e instanceof Error ? e.message : String(e)).slice(-400) });
+    const detail = e instanceof Error ? e.message : String(e);
+    if (/not enough free memory/i.test(detail)) {
+      return res.status(503).json({
+        error: "low_memory",
+        detail: detail.slice(-400),
+        hint: "Close Chrome or VS Code and try again.",
+      });
+    }
+    res.status(500).json({ error: "audition failed", detail: detail.slice(-400) });
   }
 });
 
@@ -1556,6 +1599,24 @@ app.use("/media", express.static(join(ROOT, "output"), { index: false }));
 // SFX library for the sound-design audition players (public/sfx tree:
 // synth + cc0 wavs + sfx.catalog.json).
 app.use("/sfx", express.static(join(ROOT, "public", "sfx"), { index: false }));
+
+// ---------- RAM / commit available to the VoxCPM2 load guard ----------
+app.get("/api/system/memory", async (_req, res) => {
+  const reading = await readSystemMemory();
+  if (!reading) {
+    return res.status(503).json({ error: "memory_unavailable" });
+  }
+  res.json({
+    totalRam: Math.round((reading.totalPhys / GB) * 100) / 100,
+    freeRam: Math.round((reading.availPhys / GB) * 100) / 100,
+    totalCommit: Math.round((reading.totalPageFile / GB) * 100) / 100,
+    freeCommit: Math.round((reading.availPageFile / GB) * 100) / 100,
+    minFreeRam: MIN_FREE_RAM_GB,
+    minFreeCommit: MIN_FREE_COMMIT_GB,
+    status: memoryStatus(reading),
+    source: reading.source,
+  });
+});
 
 // ---------- JSON 404 for API/media (never return HTML) ----------
 app.use("/api", (_req, res) => {

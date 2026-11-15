@@ -1,0 +1,21 @@
+{
+  "id": "device-tower-hill",
+  "kind": "device",
+  "title": "Low-poly cell towers standing on hills",
+  "what": "low-poly cell towers standing on hills",
+  "why": "the story fails without it",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-d9711d",
+      "need": "n5",
+      "beats": [
+        "b3"
+      ],
+      "at": "2026-11-14T20:14:51.013Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "leave it out of the picture",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "device-sun-sky",
+  "kind": "device",
+  "title": "The low-poly sun fixed in the sky",
+  "what": "the low-poly sun fixed in the sky (golden daylight)",
+  "why": "the story fails without it",
+  "asks": [
+    {
+      "run": "what-if-the-sun-never-set-82fc28",
+      "need": "n9",
+      "beats": [
+        "b8",
+        "b9"
+      ],
+      "at": "2026-11-14T10:00:56.146Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "a bright sun",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

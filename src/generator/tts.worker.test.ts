@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { kittenWorkerEnabled, parseWorkerResult } from "./tts";
+import { exitCodeLabel, kittenWorkerEnabled, parseWorkerResult } from "./tts";
 
 test("the worker flag honours TTS_KITTEN_WORKER=0 and defaults on", () => {
   const before = process.env.TTS_KITTEN_WORKER;
@@ -31,4 +31,16 @@ test("result lines parse; progress chatter does not", () => {
   assert.equal(bad?.error, "model exploded");
   assert.equal(parseWorkerResult("@@ {not json}"), null);
   assert.equal(parseWorkerResult("@@ null"), null);
+});
+
+// 3221225477 is how Windows ends a process that died of an access violation;
+// the model load running out of memory is the usual cause, and there is no
+// Python traceback to show.
+test("a native crash code is spelled out, a normal one is left as it is", () => {
+  assert.equal(exitCodeLabel(3221225477), "3221225477 (0xC0000005, access violation)");
+  assert.equal(exitCodeLabel(-1073741819), "-1073741819 (0xC0000005, access violation)");
+  assert.equal(exitCodeLabel(0xc0000135), "3221225781 (0xC0000135, missing DLL)");
+  assert.equal(exitCodeLabel(1), "1");
+  assert.equal(exitCodeLabel(null), "unknown exit code");
+  assert.equal(exitCodeLabel(undefined), "unknown exit code");
 });

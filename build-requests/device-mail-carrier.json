@@ -1,0 +1,21 @@
+{
+  "id": "device-mail-carrier",
+  "kind": "device",
+  "title": "Mail carrier",
+  "what": "mail carrier",
+  "why": "the story fails without it; Generic blocky character with a walk animation; no mail uniform, cap, or mailbag described, so it would stand in for a mail carrier but lacks carrier-specific details.",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-f49a3b",
+      "need": "n3",
+      "beats": [
+        "b2"
+      ],
+      "at": "2026-11-15T16:11:27.977Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "kenney-blocky-characters-character-a",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

@@ -15,6 +15,7 @@
  * resume from the step it stopped at.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { Switch } from "../../components/ui/switch";
 import {
   ArrowLeft,
   BookOpen,
@@ -35,9 +36,10 @@ import {
   TriangleAlert,
   UserRound,
   Volume2,
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { cancelJob, getJob, getJobSpec, getRun, renderSpec, resumeRun, type RunStatus, type SpecResponse } from "../../api";
+import { cancelJob, editFilm, getJob, getJobSpec, getRun, renderSpec, resumeRun, type FilmEdit, type RunStatus, type SpecResponse } from "../../api";
 import type { ShotSpec } from "../../../../src/generator/spec.schema";
 import type { WriterStory } from "../../../../src/generator/pipeline/writer";
 import { Badge } from "../../components/ui/badge";
@@ -59,7 +61,7 @@ import { ErrorBanner, InfoRow, ProgressBar, SegmentedControl } from "../../compo
 import { InfoTip } from "../../components/InfoTip";
 import { StorySection } from "../../components/StorySection";
 import { ProducerChat } from "../../components/ProducerChat";
-import { PRESET_LABELS } from "../../components/CaptionPanel";
+import { PRESET_LABELS } from "../../../../src/generator/caption-style";
 import { ENGINE_LABELS, FORMATS, formatSeconds, isSetupProblem, prettyVoice, type VideoFormat } from "../../lib/format";
 import { navigate, setQuery } from "../../lib/navigation";
 import { refreshJobs } from "../../lib/jobs";
@@ -249,7 +251,7 @@ export function PlanStep({
         const r = await getJobSpec(planJobId);
         if (!alive) return;
         if (r.ready && r.gate === "story" && r.story && r.runId) {
-          setStoryGate({ runId: r.runId, story: r.story, length: r.length, approved: !!r.approved, check: r.check, claims: r.claims });
+          setStoryGate({ runId: r.runId, story: r.story, length: r.length, approved: !!r.approved, check: r.check, claims: r.claims, review: r.review });
           setReady(true);
           return;
         }
@@ -403,6 +405,7 @@ interface StoryGateData {
   approved: boolean;
   check?: SpecResponse["check"];
   claims?: SpecResponse["claims"];
+  review?: SpecResponse["review"];
 }
 
 /** A plan that stopped can resume from the step it stopped at (the finished steps are kept). */
@@ -444,12 +447,20 @@ function ResumeButton({ runId }: { runId: string }) {
  * sound and the rest are planned around it.
  */
 function StoryGateView({ data, onRewrite, rewriting, onChanged }: { data: StoryGateData; onRewrite: () => void; rewriting: boolean; onChanged: () => void }) {
-  const { story, length, check, claims } = data;
+  const { story, length, check, claims, review } = data;
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [overriding, setOverriding] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
   const spoken = story.beats.filter((b) => b.say.trim() || b.lines.length).length;
+  const criticalFindings = review?.findings.filter((f) => f.severity === "critical" && f.status === "open") ?? [];
+  const reviewBlocked = criticalFindings.length > 0;
 
   const approve = async () => {
+    if (reviewBlocked) {
+      setError("Critical story-quality findings must be corrected or overridden before approval.");
+      return;
+    }
     setApproving(true);
     setError(null);
     try {
@@ -460,6 +471,29 @@ function StoryGateView({ data, onRewrite, rewriting, onChanged }: { data: StoryG
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setApproving(false);
+    }
+  };
+
+  const overrideReview = async () => {
+    if (!overrideReason.trim()) {
+      setError("A reason is required to override critical findings.");
+      return;
+    }
+    setOverriding(true);
+    setError(null);
+    try {
+      const { jobId } = await resumeRun(data.runId, {
+        override: {
+          findings: criticalFindings.map((f) => f.id),
+          reason: overrideReason.trim(),
+        },
+      });
+      refreshJobs();
+      toast.success("Story-quality findings overridden. The AI plans the scenes and the sound now");
+      navigate({ tab: "create", step: "writing", plan: jobId });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setOverriding(false);
     }
   };
 
@@ -507,6 +541,7 @@ function StoryGateView({ data, onRewrite, rewriting, onChanged }: { data: StoryG
 
         {check && (check.lost?.length || check.notes.length || check.claims.length) ? <CheckSection check={check} /> : null}
         {claims?.claims.length ? <ClaimsSection claims={claims} /> : null}
+        {review ? <ReviewSection review={review} /> : null}
 
         <Section title="The story, beat by beat" hint={`${spoken} of ${story.beats.length} beats are spoken. What each beat shows is in grey.`}>
           <ol className="space-y-2">
@@ -545,18 +580,37 @@ function StoryGateView({ data, onRewrite, rewriting, onChanged }: { data: StoryG
           >
             <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
           </Button>
-          <Button variant="secondary" className="px-4 sm:px-6" aria-label="Write the story again" disabled={rewriting || approving} onClick={onRewrite}>
+          <Button variant="secondary" className="px-4 sm:px-6" aria-label="Write the story again" disabled={rewriting || approving || overriding} onClick={onRewrite}>
             <RefreshCw className={cn("h-4 w-4", rewriting && "animate-spin")} /> <span className="hidden sm:inline">Write it again</span>
           </Button>
-          <Button variant="amber" className="flex-1 px-4 sm:ml-auto sm:flex-none sm:px-6" disabled={approving} onClick={approve}>
-            {approving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
-            {approving ? "Starting..." : (
-              <>
-                <span className="sm:hidden">Approve</span>
-                <span className="hidden sm:inline">Approve the story and plan the rest</span>
-              </>
-            )}
-          </Button>
+          {reviewBlocked ? (
+            <>
+              <div className="flex-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Override reason</label>
+                <textarea
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background p-2 text-sm"
+                  placeholder="Why proceed despite these findings…"
+                  rows={2}
+                />
+              </div>
+              <Button variant="destructive" className="mt-2 w-auto" disabled={overriding || !overrideReason.trim()} onClick={overrideReview}>
+                {overriding ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Override and proceed
+              </Button>
+            </>
+          ) : (
+            <Button variant="amber" className="flex-1 px-4 sm:ml-auto sm:flex-none sm:px-6" disabled={approving || reviewBlocked} onClick={approve}>
+              {approving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+              {approving ? "Starting..." : (
+                <>
+                  <span className="sm:hidden">Approve</span>
+                  <span className="hidden sm:inline">Approve the story and plan the rest</span>
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -647,6 +701,79 @@ function ClaimsSection({ claims }: { claims: NonNullable<SpecResponse["claims"]>
           );
         })}
       </ul>
+    </Section>
+  );
+}
+
+/** Story-quality findings: critical ones must be resolved before approval;
+ *  suggestions are shown but never block. */
+function ReviewSection({ review }: { review: NonNullable<SpecResponse["review"]> }): React.ReactElement {
+  const critical = review.findings.filter((f) => f.severity === "critical" && f.status === "open");
+  const suggestions = review.findings.filter((f) => f.severity === "suggestion");
+  const overridden = review.findings.filter((f) => f.status === "overridden");
+  return (
+    <Section
+      title="Story-quality review"
+      hint={review.disposition.state === "blocked" ? "Critical findings block approval. Correct the story or override with a reason." : "No unresolved critical findings."}
+    >
+      {review.disposition.override ? (
+        <div className="rounded-xl bg-amber/10 p-3 border border-amber/20">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+            <TriangleAlert className="h-4 w-4" /> Overridden: {review.disposition.override.reason}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            By {review.disposition.override.by} at {new Date(review.disposition.override.at).toLocaleString()}
+          </div>
+        </div>
+      ) : null}
+      {critical.length ? (
+        <div className="rounded-xl bg-destructive/10 p-3 border border-destructive/20">
+          <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
+            <AlertCircle className="h-4 w-4" /> {critical.length} critical finding(s) — must be resolved
+          </div>
+          <ul className="mt-2 space-y-2 text-[15px]">
+            {critical.map((f) => (
+              <li key={f.id} className="flex gap-3 rounded-xl bg-input/40 p-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="text-sm font-semibold">{f.explanation}</div>
+                  <div className="text-xs text-muted-foreground">{f.location.kind === "hook" ? "hook" : `beat ${f.location.beat}`} · [{f.category}]</div>
+                  {f.proposedCorrection ? (
+                    <div className="mt-1 text-sm text-muted-foreground">Suggested: "{f.proposedCorrection}"</div>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {overridden.length ? (
+        <div className="mt-3 rounded-xl bg-secondary/50 p-3">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Previously overridden</div>
+          <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+            {overridden.map((f) => (
+              <li key={f.id}>{f.explanation}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {suggestions.length ? (
+        <div className="mt-3 rounded-xl bg-secondary/50 p-3">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Suggestions (not blocking)</div>
+          <ul className="mt-1 space-y-1 text-xs text-sm text-muted-foreground">
+            {suggestions.map((f) => (
+              <li key={f.id} className="truncate">{f.explanation}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {!critical.length && !suggestions.length && !overridden.length ? (
+        <p className="text-sm text-muted-foreground">No story-quality findings.</p>
+      ) : null}
+      {review.checks.claims !== "done" || review.checks.checker !== "done" ? (
+        <div className="mt-2 rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground">
+          Review checks: claims {review.checks.claims}, checker {review.checks.checker}.
+        </div>
+      ) : null}
     </Section>
   );
 }
@@ -881,7 +1008,7 @@ function Review({
       <Card className="p-5 sm:p-6" role="tabpanel" aria-label={VIEWS.find((v) => v.value === view)?.label}>
         {view === "story" ? <StoryView spec={spec} specId={specId} onSpec={onSpec} notes={notes} needs={needs} /> : null}
         {view === "scenes" ? <ScenesView spec={spec} /> : null}
-        {view === "sound" ? <SoundView spec={spec} /> : null}
+        {view === "sound" ? <SoundView spec={spec} specId={specId} onSpec={onSpec} /> : null}
         {view === "settings" ? <SettingsView spec={spec} modelInfo={modelInfo} length={length} /> : null}
       </Card>
 
@@ -1155,12 +1282,40 @@ function ScenesView({ spec }: { spec: ShotSpec }) {
   );
 }
 
-function SoundView({ spec }: { spec: ShotSpec }) {
+function SoundView({ spec, specId, onSpec }: { spec: ShotSpec; specId: string | null; onSpec: (s: ShotSpec) => void }) {
   const narration = spec.audio?.narration;
   const dialogs = spec.audio?.dialogs;
   const music = (spec.audio?.music ?? []).filter((m) => m.mood);
   const ambient = Array.from(new Set((spec.audio?.ambient ?? []).map((a) => a.tag)));
   const effects = Array.from(new Set((spec.events ?? []).flatMap((e) => (e.sfx ?? []).map((s) => s.tag))));
+  const [soundEffects, setSoundEffects] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const current = spec.audio?.soundEffects ?? true;
+
+  useEffect(() => {
+    setSoundEffects(current);
+    setSaveError(null);
+  }, [current]);
+
+  const toggleSoundEffects = async () => {
+    if (!specId) return;
+    const next = !current;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const edits: FilmEdit[] = [{ op: "set", path: "plan.settings.soundEffects", value: next }];
+      const r = await editFilm(specId, { edits });
+      // The reassembled spec carries the saved value in settings and audio.
+      onSpec(r.spec);
+      setSoundEffects(r.spec.audio?.soundEffects ?? true);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <Section title="Voices">
@@ -1208,16 +1363,30 @@ function SoundView({ spec }: { spec: ShotSpec }) {
         )}
       </Section>
       <Section title="Sound effects">
-        {effects.length ? (
-          <div className="flex flex-wrap gap-2">
-            {effects.map((s) => (
-              <Badge key={s} variant="secondary">
-                {SFX_LABEL[s] ?? pretty(s)}
-              </Badge>
-            ))}
+        {saveError ? (
+          <p className="text-sm text-destructive">{saveError}</p>
+        ) : soundEffects === false ? (
+          <div className="flex items-center gap-3">
+            <label className="text-sm">Sound effects</label>
+            <Switch checked={false} onCheckedChange={toggleSoundEffects} disabled={saving} aria-label="Sound effects" />
+            <p className="text-sm text-muted-foreground">Off: silences every one-shot SFX cue. Music, ambience, narration and dialogue stay on.</p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No sound effects.</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm">Sound effects</label>
+            <Switch checked={true} onCheckedChange={toggleSoundEffects} disabled={saving} aria-label="Sound effects" />
+            {effects.length ? (
+              <div className="flex flex-wrap gap-2">
+                {effects.map((s) => (
+                  <Badge key={s} variant="secondary">
+                    {SFX_LABEL[s] ?? pretty(s)}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No sound effects.</p>
+            )}
+          </div>
         )}
       </Section>
     </div>

@@ -502,8 +502,10 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
   const sceneAt = (t: number) => scenes.find((s) => t >= s.from && t < s.to) ?? scenes[scenes.length - 1];
 
   /* ---- events, beds ---- */
-  const events: NonNullable<ShotSpec["events"]> = [{ t: 0.05, name: "hook", targets: [], sfx: [{ tag: "pop_light" }] }];
+  const events: NonNullable<ShotSpec["events"]> = [{ t: 0.05, name: "hook", targets: [], sfx: [] }];
   const ambient: NonNullable<NonNullable<ShotSpec["audio"]>["ambient"]> = [];
+  const soundOff = input.settings.soundEffects === false;
+  const sfxOf = (tag: string): NonNullable<(typeof events)[number]["sfx"]> => soundOff ? [] : [{ tag }];
 
   /* ---- bullet time (docs/factory/14-bullet-time.md) ---- */
   const bullet = bulletTimeOf(direction, timeline, scenes, warnings);
@@ -580,10 +582,10 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
       // step keeps the pop and the plan says the place won't move.)
       let unreacted = 0;
       const hitAt = (t: number): NonNullable<(typeof events)[number]["sfx"]>[number] => {
-        if (sceneAt(t).kit !== "world") return { tag: "pop_light" };
+        if (sceneAt(t).kit !== "world") return sfxOf("pop_light")[0];
         if (!react) {
           unreacted += 1;
-          return { tag: "pop_light" };
+          return sfxOf("pop_light")[0];
         }
         const hit = REACT_HIT[react];
         return hit.cut ? { tag: hit.tag, to: r3(t + hit.cut), volume: "ramp-down" } : { tag: hit.tag };
@@ -640,7 +642,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
     }
     if (w.event === "rain-start" && scene.look && scene.look.weather !== "rain" && scene.look.weather !== "storm") scene.look.weather = "rain";
     worldEvents.push({ t, name: w.event });
-    events.push({ t, name: `world-${w.event}-${w.beat}`, targets: [], sfx: [{ tag: EVENT_HIT[w.event] }] });
+    events.push({ t, name: `world-${w.event}-${w.beat}`, targets: [], sfx: sfxOf(EVENT_HIT[w.event]) });
   }
 
   /* ---- sound plan ---- */
@@ -648,7 +650,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
     const b = beatOf(h.beat);
     if (!b) continue;
     const t = h.at === "end" ? Math.max(b.from, b.to - 0.3) : b.from + 0.05;
-    events.push({ t: r3(t), name: `hit-${h.beat}-${h.at}`, targets: [], sfx: [{ tag: h.sound }] });
+    events.push({ t: r3(t), name: `hit-${h.beat}-${h.at}`, targets: [], sfx: sfxOf(h.sound) });
   }
   for (const bed of input.sound.beds) {
     const from = bed.start === timeline.beats[0].id ? 0 : fromOf(bed.start);
@@ -738,6 +740,15 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
   events.push(...vfxSound.hits);
   events.push(...shipCreaks(scenes));
   ambient.push(...vfxSound.beds);
+  // Storm thunder is appended last: strip one-shot SFX from every event now,
+  // so thunder cannot escape the sound-effects-off setting either.
+  events.push(...stormThunder(scenes, worldEvents, flights));
+  // When the user switched sound effects off, no one-shot SFX cue plays:
+  // the hook, counter pops, world hits, sound-plan hits, VFX cues, creaks
+  // and thunder all lose their sfx. Music, beds and voice are untouched.
+  if (soundOff) {
+    for (const e of events) e.sfx = undefined;
+  }
   // A shot films each effect's spot when it is first seen (shots.ts frameEffects).
   shotPlan.shots = frameEffects(shotPlan.shots, scenes, flights);
 
@@ -767,7 +778,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
       }),
     },
     hook: { text: story.hook || input.premise, keywordHighlight: [], t: 0, duration: r3(Math.max(1.5, timeline.hook.to)) },
-    events: [...events, ...stormThunder(scenes, worldEvents, flights)].filter((e) => e.t >= 0 && e.t <= D).sort((a, b) => a.t - b.t),
+    events: [...events].filter((e) => e.t >= 0 && e.t <= D).sort((a, b) => a.t - b.t),
     captions: input.captions.map((c) => ({ text: c.text, from: c.from, to: c.to, keyword: c.keyword, ...(c.speaker ? { speaker: c.speaker } : {}), words: c.words })),
     ...(statPanel ? { statPanel } : {}),
     ...(heroProp ? { heroProp } : {}),
@@ -788,6 +799,7 @@ export function assemble(input: AssembleInput): { spec: Record<string, unknown>;
         voices,
         ...(input.audio.dialogs?.defaultVoice ? { defaultVoice: input.audio.dialogs.defaultVoice } : {}),
       },
+      soundEffects: !soundOff,
     },
   };
   return { spec, warnings };

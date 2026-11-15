@@ -17,23 +17,23 @@ import {
 
 const FRAMES = { portrait: [1080, 1920], square: [1080, 1080], landscape: [1920, 1080] } as const;
 
-test("the serif looks (reference default, documentary) get the text HUD; the others keep the cards", () => {
+test("the serif looks (bar default) get the text HUD; the others keep the cards", () => {
   assert.equal(resolveHudStyle().kind, "text");
   assert.equal(resolveHudStyle(null).kind, "text");
   for (const preset of CAPTION_PRESET_NAMES) {
-    const want = preset === "reference" || preset === "documentary" ? "text" : "card";
+    const want = preset === "bar" ? "text" : "card";
     assert.equal(resolveHudStyle({ preset }).kind, want, preset);
   }
   // A style override does not change the HUD kind; only the preset does.
-  assert.equal(resolveHudStyle({ preset: "bold-pop", font: "playfair-display" }).kind, "card");
+  assert.equal(resolveHudStyle({ preset: "shorts", font: "playfair-display" }).kind, "card");
 });
 
 test("the text HUD's serif and accent come from the caption look", () => {
-  const ref = resolveHudStyle({ preset: "reference" });
+  const ref = resolveHudStyle({ preset: "bar" });
   assert.equal(ref.valueFont, FONT_STACKS["playfair-display"], "Georgia is not bundled: Playfair Display instead");
-  assert.equal(resolveHudStyle({ preset: "reference", font: "lora" }).valueFont, FONT_STACKS.lora);
+  assert.equal(resolveHudStyle({ preset: "bar", font: "lora" }).valueFont, FONT_STACKS.lora);
   assert.equal(ref.accent, mixHex(resolveCaptionStyle().highlight, "#ffffff", 0.25));
-  assert.deepEqual(ref.caption, { position: "bottom", offsetPct: 0, size: 46 });
+  assert.deepEqual(ref.caption, { position: "bar", offsetPct: 0, size: 38 });
   assert.equal(mixHex("#000000", "#ffffff", 0.5), "#808080");
   assert.equal(mixHex("#d4af37", "#ffffff", 0), "#d4af37");
 });

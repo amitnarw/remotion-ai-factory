@@ -1,0 +1,5 @@
+
+> remotion@1.0.0 server
+> tsx server/index.ts
+
+Server listening on http://127.0.0.1:5178

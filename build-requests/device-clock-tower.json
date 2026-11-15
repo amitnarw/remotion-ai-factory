@@ -1,0 +1,21 @@
+{
+  "id": "device-clock-tower",
+  "kind": "device",
+  "title": "Low-poly clock towers with blurring hands",
+  "what": "low-poly clock towers with blurring hands (blurred hands)",
+  "why": "the story fails without it",
+  "asks": [
+    {
+      "run": "what-if-the-sun-never-set-82fc28",
+      "need": "n8",
+      "beats": [
+        "b7"
+      ],
+      "at": "2026-11-14T10:00:53.877Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "any clock face",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

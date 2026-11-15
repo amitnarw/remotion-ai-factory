@@ -272,6 +272,7 @@ export async function askEditor(input: {
     essential: (v) => editProblem(film, target, v.edits) ?? (input.lockWords ? wordLockProblem(film, v.edits, input.typed ?? request) : null),
     models,
   });
-  const { summary, edits } = reply.value;
+  if (!reply.ok) throw new Error(reply.problem ?? "editor failed");
+  const { summary, edits } = reply.value!;
   return { summary: summary || edits.map((e) => `${e.op} ${e.path}`).join("; "), edits, result: applyEdits(film, edits) };
 }

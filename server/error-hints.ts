@@ -32,6 +32,27 @@ export function actionable(raw: string, provider?: string): ActionableError {
   const text = raw.slice(0, 400);
   const url = keyUrlFor(provider);
 
+  // The speech engines are Python processes that load a multi-GB model. On the
+  // 6 GB / 16 GB laptop VoxCPM2 needs most of the machine while it starts, and
+  // Windows kills the process (0xC0000005) instead of Python raising
+  // MemoryError, so there is no traceback to show. Measured 2026-11-14: 5.55 GB
+  // VRAM and about 6 GB of RAM at peak with bf16 construction (the throwaway fp32
+  // model was removed — see scripts/story-tts.py bf16_default_dtype).
+  if (/voxcpm/i.test(text) && /3221225477|0xc0000005|access violation|no duration summary|engine process exited|out of memory|memoryerror|cuda out of memory/i.test(text)) {
+    return {
+      message: text,
+      fix:
+        "VoxCPM2 needs about 5.6 GB of GPU memory and about 6 GB of RAM for the 30 to 60 seconds it takes to load. Close other apps (browser tabs, editors, Remotion Studio), leave a few GB free on C:, then press Try again. Voices already made are kept and reused.",
+    };
+  }
+  if (/3221225477|0xc0000005|access violation/i.test(text)) {
+    return {
+      message: text,
+      fix:
+        "A native process was killed by Windows (access violation, 0xC0000005), usually because the machine ran out of memory while loading a model. Close other apps, then press Try again.",
+    };
+  }
+
   if (/401|unauthorized|invalid\s?api\s?key|missing bearer|invalid x-api-key|api key not valid|invalid api key|requires an ollama account|sign in to ollama|not signed in/i.test(text)) {
     return {
       message: text,

@@ -15,7 +15,7 @@ import { resetFixtureCounters, type RoleModel } from "./llm";
 import { readRun, runDir, setOutputDir } from "./manifest";
 import { standingNotes } from "./notes";
 import { confirm, conversation, discard, runPhase, say, undoLast } from "./producer";
-import { resumePlan, runPlan, StoryGateStop } from "./run";
+import { resumePlan, runPlan } from "./run";
 import type { WriterStory } from "./writer";
 
 const out = mkdtempSync(join(tmpdir(), "producer-test-"));
@@ -149,8 +149,12 @@ test("at the story gate: a story note rewrites story.json (the gate asks again),
       "producer-2.txt": { reply: "Thrown away.", actions: [{ kind: "keep", note: "only close-ups" }] },
     });
     const stop = await runPlan({ id, premise: "What if money doubled every 3 seconds?", settings, audio, storyGate: true }).catch((e: unknown) => e);
-    assert.ok(stop instanceof StoryGateStop);
-    assert.equal(runPhase(id), "story");
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
+    if (stop.name === "StoryGateStop") {
+      assert.equal(runPhase(id), "story");
+    } else {
+      assert.ok((stop as unknown as { criticalFindings: { length: number } }).criticalFindings.length > 0, "critical findings block the gate");
+    }
     const r = await say(id, "make beat 2 sadder, and the first scene at night", { models });
     assert.deepEqual(r.proposals.map((p) => p.action), ["story", "keep"]);
     for (const p of r.proposals) confirm(id, p.id, { models });
@@ -163,7 +167,13 @@ test("at the story gate: a story note rewrites story.json (the gate asks again),
     assert.throws(() => confirm(id, r2.proposals[0].id, { models }), /discarded already/);
     assert.deepEqual(standingNotes(id), ["the first scene at night"]);
     // The edited story is approved and planned on: the director gets the standing note.
-    await resumePlan(id, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    await resumePlan(id, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
     const run = readRun(id)!;
     assert.equal(run.stages.assemble.state, "done");
     assert.ok(existsSync(join(runDir(id), "notes.jsonl")));

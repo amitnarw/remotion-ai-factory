@@ -290,8 +290,10 @@ const VideoBody: React.FC<WhatIfVideoProps & { brand?: Brand }> = ({
         />
       )}
 
-      {/* Captions */}
-      <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} plateFont={brand?.fonts.caption} />
+      {/* Captions — off switch hides the caption block; the hook title stays. */}
+      {spec.settings?.captions?.enabled !== false && (
+        <Captions captions={spec.captions ?? []} fps={fps} style={captionLook} glow={veil} plateFont={brand?.fonts.caption} />
+      )}
 
       {/* The channel's corner mark, once the hook has gone */}
       {brand?.watermark && <Watermark brand={brand} after={hookFrames.to} />}

@@ -839,5 +839,6 @@ export async function directStory(input: {
       return problems.length ? problems.join("; ") : null;
     },
   });
-  return result.value;
+  if (!result.ok) throw new Error(result.problem ?? "director failed");
+  return result.value!;
 }

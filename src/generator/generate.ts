@@ -57,7 +57,8 @@ import { masterAudio } from "./audio-master";
 import { generateSpec } from "./ai/generate-spec";
 import { creditsForPlaces } from "../world/landmarks";
 import { PLACES } from "../world/places";
-import { canReassemble, reassemble, resumePlan, ShopGateStop, StoryGateStop, type PlanReport, type ShopDecision } from "./pipeline/run";
+import { canReassemble, reassemble, resumePlan, ShopGateStop, StoryGateStop, StoryReviewBlockError, VisualBlockError, type PlanReport, type ShopDecision } from "./pipeline/run";
+import { reviewSummary } from "./pipeline/story-review";
 import { formatCheck } from "./pipeline/checker";
 import { formatClaims } from "./pipeline/claims";
 import { describeRun, isComplete, newRunId, nextStage, readBrief, readRun, STAGE_LABELS, waitsForShopping, waitsForStory } from "./pipeline/manifest";
@@ -128,6 +129,7 @@ function parseArgs(argv: string[]): {
   sources: string | undefined;
   variants: string | undefined;
   publish: boolean;
+  reviewOverrides: Array<{ finding: string; reason: string }>;
   settings: Partial<VideoSettings>;
 } {
   const settings: Partial<VideoSettings> = {};
@@ -151,6 +153,7 @@ function parseArgs(argv: string[]): {
   let sources: string | undefined;
   let variants: string | undefined;
   let publish = false;
+  const reviewOverrides: Array<{ finding: string; reason: string }> = [];
   const premiseParts: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -166,6 +169,13 @@ function parseArgs(argv: string[]): {
     } else if (a === "--all-cc0") {
       // Gate 2: approve the best free (CC0) offer of every need not named.
       allFree = true;
+    } else if (a === "--override-review" && argv[i + 1]) {
+      // Story-quality override: --override-review f1=reason [f2=reason] (comma or space separated).
+      reviewOverrides.push(...argv[++i].split(/[\s,]+/).filter(Boolean).map((entry) => {
+        const eq = entry.indexOf("=");
+        if (eq === -1) throw new Error(`not a review override: ${entry} (use --override-review <findingId>=<reason>)`);
+        return { finding: entry.slice(0, eq), reason: entry.slice(eq + 1) };
+      }));
     } else if (a === "--sources" && argv[i + 1]) {
       // The sources gate 2 searches: kenney,bigsoundbank,... or none.
       sources = argv[++i];
@@ -253,6 +263,7 @@ function parseArgs(argv: string[]): {
     sources,
     variants,
     publish,
+    reviewOverrides,
     settings,
   };
 }
@@ -368,6 +379,59 @@ function printShopGate(stop: ShopGateStop, carry: string[]): void {
   console.log(`  Go on with what you have:   ${resume}`);
   console.log(`  Skip this stop:             add --no-shop-gate to the first command`);
   console.log(`SHOP_ID: ${id}`);
+}
+
+/** A must-have visual could not be taken in: show what is missing and how to resolve it. */
+function printVisualBlock(error: VisualBlockError, carry: string[]): void {
+  const { id, unresolved } = error;
+  const resume = ["npm run generate -- --resume", id, ...carry].join(" ");
+  console.log("");
+  console.log("═══ REQUIRED VISUALS MISSING ═══");
+  console.log(`Run:    ${id}`);
+  console.log(`Gate 2 is blocked: a must-have visual the story needs could not be taken in.`);
+  console.log("");
+  for (const u of unresolved) {
+    console.log(`  ${u.id} (${u.kind}): ${u.what}`);
+    console.log(`    beats: ${u.beats.join(", ")}`);
+    console.log(`    reason: ${u.reason}`);
+    if (u.buildRequest) console.log(`    build request: ${u.buildRequest}`);
+  }
+  console.log("");
+  console.log("The plan will not render until every required visual is available:");
+  console.log(`  Choose a different offer:  ${resume} --approve <need>=<source>:<id>`);
+  console.log(`  Accept the stand-in:       ${resume} --approve <need>=close`);
+  console.log(`  File a build request:      ${resume} --approve <need>=build`);
+  console.log(`  Change the story or skip:  edit output/${id}/story.json, then resume`);
+  console.log(`  Skip this stop:            add --no-shop-gate to the first command`);
+  console.log(`VISUAL_BLOCK_ID: ${id}`);
+}
+
+/** Critical story-quality findings are open: show them and how to correct or override. */
+function printStoryReviewBlock(error: StoryReviewBlockError, carry: string[]): void {
+  const { id, criticalFindings, review } = error;
+  const resume = ["npm run generate -- --resume", id, ...carry].join(" ");
+  console.log("");
+  console.log("═══ STORY QUALITY BLOCKED ═══");
+  console.log(`Run:    ${id}`);
+  console.log(`The story cannot proceed: ${criticalFindings.length} critical finding(s) are unresolved.`);
+  console.log("");
+  for (const f of criticalFindings) {
+    console.log(`  ${f.id} [${f.category}] ${f.location.kind === "hook" ? "hook" : `beat ${f.location.beat}`}`);
+    console.log(`    ${f.explanation}`);
+    if (f.proposedCorrection) console.log(`    suggested: "${f.proposedCorrection}"`);
+  }
+  if (review) {
+    console.log("");
+    console.log(`Review: ${reviewSummary(review)}`);
+    console.log(`Checks: claims ${review.checks.claims}, checker ${review.checks.checker}`);
+  }
+  console.log("");
+  console.log("Resolve each critical finding before the plan can go on:");
+  console.log(`  Correct the story:           edit output/${id}/story.json, then resume (the story is re-checked)`);
+  console.log(`  Override a finding:          ${resume} --override-review <findingId>=<reason>`);
+  console.log(`  Override several findings:   ${resume} --override-review f1=reason1 f2=reason2`);
+  console.log(`  Skip this stop:              add --no-story-gate to the first command (critical findings still block)`);
+  console.log(`STORY_REVIEW_BLOCK_ID: ${id}`);
 }
 
 /** The plan is written: check it, save spec.json, then stop (--no-render) or render. */
@@ -499,6 +563,14 @@ function planStopped(id: string, premise: string, error: unknown, carry: string[
     printShopGate(error, carry);
     return;
   }
+  if (error instanceof VisualBlockError) {
+    printVisualBlock(error, carry);
+    return;
+  }
+  if (error instanceof StoryReviewBlockError) {
+    printStoryReviewBlock(error, carry);
+    return;
+  }
   const logPath = writeFailedLog(id, premise, error);
   console.error("");
   console.error("═══ FAILED ═══");
@@ -558,7 +630,7 @@ function main() {
     return;
   }
   const args = parseArgs(process.argv.slice(2));
-  const { premise: premiseArg, provider, model, noRender, fromSpec, audioFile, chunked, resume, status, noStoryGate, storyFrom, settings: rawSettings } = args;
+  const { premise: premiseArg, provider, model, noRender, fromSpec, audioFile, chunked, resume, status, noStoryGate, storyFrom, settings: rawSettings, reviewOverrides } = args;
   if (args.channels) {
     printChannels();
     return;
@@ -593,7 +665,7 @@ function main() {
     if (premiseArg || Object.keys(rawSettings).length || audioFile || storyFrom || args.channel || args.scriptFile || args.mode || args.sources) {
       console.warn("[producer] a resumed run keeps the premise, settings, voices and sources it started with; the ones given here are ignored");
     }
-    resumeMain(resume, { provider, model, noRender, chunked, noStoryGate, noShopGate: args.noShopGate, shop, carry, variants, publish: args.publish });
+    resumeMain(resume, { provider, model, noRender, chunked, noStoryGate, noShopGate: args.noShopGate, shop, carry, variants, publish: args.publish, override: reviewOverrides.length ? { findings: reviewOverrides.map((o) => o.finding), reason: reviewOverrides.map((o) => o.reason).join("; "), by: "cli" } : undefined });
     return;
   }
   const settingsCheck = SettingsSchema.safeParse(rawSettings);
@@ -659,6 +731,7 @@ function main() {
     console.error("       npm run generate -- [--channel <id>] --script story.txt [--mode adapt|as-written]   (your own story)");
     console.error("       npm run generate -- --resume <run>   (approve the story, or continue a run that stopped)");
     console.error("       npm run generate -- --resume <run> --all-cc0 | --approve n6=<source>:<id> n2=close ...   (gate 2's shopping list)");
+    console.error("       npm run generate -- --resume <run> --override-review f1=reason   (override a critical story-quality finding)");
     console.error("       npm run generate -- --status <run>   (each stage's state)");
     console.error("       npm run generate -- --channels       (the channels and their story modes)");
     console.error("       npm run generate -- variants <run> hooks=3,endings=2,formats=9:16,16:9   (versions of a planned run)");
@@ -707,7 +780,7 @@ function main() {
  */
 function resumeMain(
   id: string,
-  opts: { provider?: string; model?: string; noRender: boolean; chunked: boolean; noStoryGate: boolean; noShopGate: boolean; shop?: ShopDecision; carry: string[]; variants?: VariantAsk; publish?: boolean },
+  opts: { provider?: string; model?: string; noRender: boolean; chunked: boolean; noStoryGate: boolean; noShopGate: boolean; shop?: ShopDecision; carry: string[]; variants?: VariantAsk; publish?: boolean; override?: { findings: string[]; reason: string; by: string } },
 ): void {
   const run = readRun(id);
   const brief = readBrief(id);
@@ -739,6 +812,7 @@ function resumeMain(
         shopGate: opts.noShopGate ? false : undefined,
         shop,
         cli: { provider: opts.provider, model: opts.model },
+        ...(opts.override ? { override: opts.override } : {}),
       });
       await afterPlan(id, brief.premise, { spec, report, provider: report.models.writer.provider, model: report.models.writer.model }, el, opts);
     } catch (error) {

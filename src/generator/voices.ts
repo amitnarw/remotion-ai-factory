@@ -86,6 +86,9 @@ export const VOXCPM_VOICE_DESCRIPTIONS: Array<{ id: string; description: string;
     id: "narrator-bbc-calm",
     description: "British man, neutral clear articulation, calm measured mid-low baritone, understated authority, polished factual documentary narration",
     tags: ["narrator", "documentary", "british"],
+    // FROZEN TIMBRE: cloned from public/voice/references/narrator-bbc-calm/reference.wav
+    // (8-10 s, single speaker, ~2.98 wps reference pace). Audio-based conditioning, no seed.
+    referenceId: "narrator-bbc-calm",
   },
   {
     id: "narrator-science",
@@ -242,6 +245,19 @@ export function voxSeed(voice: string | undefined): number | undefined {
   if (!voice) return undefined;
   const preset = VOXCPM_VOICE_DESCRIPTIONS.find((v) => v.id === voice);
   return preset?.seed;
+}
+
+/** Derive a stable, unsigned 32-bit seed from a voice id so the same VoxCPM
+ *  description-only voice always synthesizes with the same seed across runs,
+ *  without depending on preset metadata having a seed field. Deterministic and
+ *  engine-independent: the same voice string always yields the same seed. */
+export function seedFromVoice(voice: string): number {
+  let seed = 0;
+  for (let i = 0; i < voice.length; i++) {
+    seed = ((seed << 5) - seed) + voice.charCodeAt(i);
+    seed |= 0;
+  }
+  return seed >>> 0;
 }
 
 /**

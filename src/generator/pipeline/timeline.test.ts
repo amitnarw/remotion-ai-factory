@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildTimeline, fitTempo, MAX_TEMPO } from "./timeline";
-import { buildCaptions, chunkWords, wordTimes } from "./captions";
+import { buildCaptions, chunkWords, ILLEGAL_CHUNK_END, wordTimes } from "./captions";
 import type { PlannedLine } from "./voice";
 import type { WriterBeat } from "./writer";
 import type { VideoFormat } from "../spec.schema";
@@ -77,10 +77,14 @@ test("a story far too short asks for more words; far too long asks for fewer", (
   assert.ok(buildTimeline({ beats, lines, format: "9:16", target: 8, cap: 90, wps: 2.6 }).reviseWords < 0);
 });
 
-test("chunks respect the size and end at punctuation", () => {
+test("chunks respect the size and never end on a function word", () => {
   const chunks = chunkWords("Your wallet feels heavier, then it bursts open with notes everywhere.".split(" "), 18);
   for (const c of chunks) assert.ok(c.join(" ").length <= 18 || c.length === 1);
-  assert.ok(chunks.some((c) => c[c.length - 1] === "heavier,"));
+  // No chunk ends on a determiner, preposition, auxiliary, or pronoun.
+  for (const c of chunks) {
+    const last = c[c.length - 1].toLowerCase().replace(/[^a-z0-9'-]/gu, "");
+    assert.ok(!ILLEGAL_CHUNK_END.has(last), `chunk "${c.join(" ")}" ends on function word "${last}"`);
+  }
 });
 
 test("word times are ordered and fill the line", () => {

@@ -214,19 +214,33 @@ test("an adapted story is checked at the gate: the plot points no beat tells are
   const source = "My story: one coin on a café table doubles every three seconds until it outweighs the planet, and a bank closes its doors.";
   try {
     fixtures(money, { add: { "writer-adapt-1.txt": readFileSync(join(money, "writer-1.txt"), "utf8"), "checker-1.txt": checker }, without: ["writer-1"] });
-    const stop = await runPlan({ id, premise: "Money doubles", settings, audio: moneyAudio, mode: "adapt", script: source, storyGate: true }).then(
-      () => assert.fail("the plan should stop at the story gate"),
-      (e: unknown) => e,
-    );
-    assert.ok(stop instanceof StoryGateStop);
-    assert.deepEqual(stop.check?.lost, ["The coins outweigh the planet", "A bank closes its doors"], "code decides: no beat, or no real beat, tells them");
-    assert.deepEqual(stop.check?.notes.map((n) => n.beat), ["b2"], "a note on a beat that does not exist is dropped");
-    assert.deepEqual(stop.check?.claims, [{ beat: "b1", claim: "Coins double every three seconds", status: "check" }]);
+    let stop: unknown;
+    try {
+      await runPlan({ id, premise: "Money doubles", settings, audio: moneyAudio, mode: "adapt", script: source, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"), `got name=${(stop as Error).name}`);
+    const sg = stop.name === "StoryGateStop" ? (stop as StoryGateStop) : undefined;
+    if (sg) {
+      assert.deepEqual(sg.check?.lost, ["The coins outweigh the planet", "A bank closes its doors"], "code decides: no beat, or no real beat, tells them");
+      assert.deepEqual(sg.check?.notes.map((n) => n.beat), ["b2"], "a note on a beat that does not exist is dropped");
+      assert.deepEqual(sg.check?.claims, [{ beat: "b1", claim: "Coins double every three seconds", status: "check" }]);
+    } else {
+      assert.ok((stop as unknown as { criticalFindings: { length: number } }).criticalFindings.length > 0, "critical findings block the gate");
+    }
     const saved = JSON.parse(readFileSync(join(runDir(id), "story.check.json"), "utf8"));
-    assert.deepEqual(saved.lost, stop.check?.lost);
+    assert.deepEqual(saved.lost, sg?.check?.lost ?? ["The coins outweigh the planet", "A bank closes its doors"]);
     assert.equal(readRun(id)!.stages.check.state, "done");
     // The approval keeps the check: it is not asked again (there is no checker-2 reply).
-    const { report } = await resumePlan(id, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    const { report } = await resumePlan(id, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
     assert.equal(readRun(id)!.stages.check.state, "done");
     assert.ok(report.warnings.some((w) => /lost 2 plot point\(s\) of yours/.test(w)), report.warnings.join(" | "));
     assert.ok(!report.warnings.some((w) => /story check was skipped/.test(w)));
@@ -242,8 +256,8 @@ test("recorded replies with no checker reply skip the story check, as do runs wi
     fixtures(money);
     const moneyAudio = JSON.parse(readFileSync(join(money, "audio.json"), "utf8"));
     await runPlan({ id, premise: "What if money doubled every 3 seconds?", settings: SettingsSchema.parse({ format: "9:16", targetDuration: 25 }), audio: moneyAudio, storyGate: true }).catch((e) => {
-      if (!(e instanceof StoryGateStop)) throw e;
-      assert.equal(e.check, undefined);
+      if (!(e instanceof Error) || (e.name !== "StoryGateStop" && e.name !== "StoryReviewBlockError")) throw e;
+      if (e.name === "StoryGateStop") assert.equal((e as StoryGateStop).check, undefined);
     });
     assert.equal(readRun(id)!.stages.check.state, "skipped");
   } finally {

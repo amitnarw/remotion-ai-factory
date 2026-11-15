@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { calibratedWps, castVoices, estimateDuration, planLines, sentences, speedUp, voiceLines } from "./voice";
+import { cacheKey } from "../tts";
 import { resolveTtsPython } from "../tts-python";
 import type { WriterStory } from "./writer";
 
@@ -52,6 +53,46 @@ test("VoxCPM characters get a written description", () => {
   assert.match(cast.characters.Ana.voiceDesc ?? "", /female/);
 });
 
+test("VoxCPM distinct characters do not share a preset", () => {
+  const cast = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2" } });
+  assert.notEqual(cast.characters.Ana.voice, cast.characters.Ben.voice);
+});
+
+test("VoxCPM default voice is the casting baseline", () => {
+  const cast = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2", defaultVoice: "character-hero" } });
+  assert.equal(cast.characters.Ana.voice, "character-hero");
+  // Ben must not also get character-hero (taken set prevents sharing).
+  assert.notEqual(cast.characters.Ben.voice, "character-hero");
+});
+
+test("default voice is applied as casting baseline for Kitten", () => {
+  const cast = castVoices(story, { ...both, dialogs: { enabled: true, engine: "kitten2", defaultVoice: "Rosie" } });
+  assert.equal(cast.characters.Ana.voice, "Rosie");
+  // Ben must not also get Rosie (taken set prevents sharing).
+  assert.notEqual(cast.characters.Ben.voice, "Rosie");
+});
+
+test("seed is deterministic for the same voice", () => {
+  const s1 = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2" } }).characters.Ana.seed;
+  const s2 = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2" } }).characters.Ana.seed;
+  assert.equal(s1, s2);
+  assert.ok(typeof s1 === "number" && s1 >= 0);
+});
+
+test("different voices get different seeds", () => {
+  const cast1 = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2", voices: { Ana: "character-hero" } } });
+  const cast2 = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2", voices: { Ana: "character-villain" } } });
+  assert.notEqual(cast1.characters.Ana.seed, cast2.characters.Ana.seed);
+});
+
+test("PlannedLine carries seed from cast", () => {
+  const cast = castVoices(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2" } });
+  const lines = planLines(story, { ...both, dialogs: { enabled: true, engine: "voxcpm2" } });
+  const dialogLine = lines.find((l) => l.kind === "dialog" && l.who === "Ana");
+  assert.ok(dialogLine);
+  assert.equal(dialogLine?.seed, cast.characters.Ana.seed);
+});
+
 test("estimates grow with words", () => {
   assert.ok(estimateDuration("one two three four five six", 2.6) > estimateDuration("one two", 2.6));
 });
@@ -74,4 +115,71 @@ test("calibration defaults per engine until 5 lines of that engine are measured"
     const wps = calibratedWps(engine);
     assert.ok(wps >= 1.6 && wps <= 4, `${engine}: ${wps}`);
   }
+});
+
+function voiceLine(overrides: Partial<{ engine: "kitten2" | "voxcpm2"; voice: string; voiceDesc?: string; text: string; referenceWav?: string; referenceText?: string; voiceStyle?: string; voiceTransform?: { semitones?: number; tempo?: number; saturation?: number }; seed?: number }> = {}): Record<string, unknown> {
+  return {
+    engine: overrides.engine ?? "kitten2",
+    voice: overrides.voice ?? "Bruno",
+    voiceDesc: overrides.voiceDesc ?? null,
+    text: overrides.text ?? "hello world",
+    referenceWav: overrides.referenceWav ?? null,
+    referenceText: overrides.referenceText ?? null,
+    voiceStyle: overrides.voiceStyle ?? null,
+    voiceTransform: overrides.voiceTransform ?? null,
+    seed: overrides.seed ?? null,
+    ...overrides,
+  };
+}
+
+test("cacheKey: same inputs give the same key", () => {
+  const a = cacheKey(voiceLine() as never);
+  const b = cacheKey(voiceLine() as never);
+  assert.equal(a, b);
+  assert.ok(a.length > 0);
+});
+
+test("cacheKey: different voice changes the key", () => {
+  const a = cacheKey(voiceLine({ voice: "Bruno" }) as never);
+  const b = cacheKey(voiceLine({ voice: "Rosie" }) as never);
+  assert.notEqual(a, b);
+});
+
+test("cacheKey: different seed changes the key", () => {
+  const a = cacheKey(voiceLine({ voice: "character-hero", seed: 0 }) as never);
+  const b = cacheKey(voiceLine({ voice: "character-hero", seed: 1 }) as never);
+  assert.notEqual(a, b);
+});
+
+test("cacheKey: different engine changes the key", () => {
+  const a = cacheKey(voiceLine({ engine: "kitten2" }) as never);
+  const b = cacheKey(voiceLine({ engine: "voxcpm2" }) as never);
+  assert.notEqual(a, b);
+});
+
+test("cacheKey: different referenceWav changes the key", () => {
+  const a = cacheKey(voiceLine({ voice: "narrator-bbc-calm", referenceWav: "/ref/a.wav" }) as never);
+  const b = cacheKey(voiceLine({ voice: "narrator-bbc-calm", referenceWav: "/ref/b.wav" }) as never);
+  assert.notEqual(a, b);
+});
+
+test("cacheKey: different voiceTransform changes the key", () => {
+  const a = cacheKey(voiceLine({ voiceTransform: { semitones: 0 } }) as never);
+  const b = cacheKey(voiceLine({ voiceTransform: { semitones: 2 } }) as never);
+  assert.notEqual(a, b);
+});
+
+test("cacheKey: different text changes the key but not the speaker assignment", () => {
+  const a = cacheKey(voiceLine({ voice: "Ana", text: "hello" }) as never);
+  const b = cacheKey(voiceLine({ voice: "Ana", text: "goodbye" }) as never);
+  assert.notEqual(a, b);
+  // Same voice: only the text portion differs; the identity portion is stable.
+  assert.notEqual(a.length, 0);
+  assert.notEqual(b.length, 0);
+});
+
+test("cacheKey: voiceDesc changes the key", () => {
+  const a = cacheKey(voiceLine({ voiceDesc: "desc A" }) as never);
+  const b = cacheKey(voiceLine({ voiceDesc: "desc B" }) as never);
+  assert.notEqual(a, b);
 });

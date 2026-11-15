@@ -61,14 +61,14 @@ test("the bumpers' frames and the whole video's length", () => {
 });
 
 test("the captions, the hook and the HUD take the brand's colours and fonts", () => {
-  const caption = brandCaptionLook(resolveCaptionStyle({ preset: "reference" }), BRAND);
+  const caption = brandCaptionLook(resolveCaptionStyle({ preset: "bar" }), BRAND);
   assert.equal(caption.font, "montserrat");
   assert.equal(caption.color, "#fafafa");
   assert.equal(caption.highlight, "#ff6a1a");
   assert.equal(caption.backgroundColor, "#0d0f14");
   assert.equal(caption.italic, true, "the rest of the preset stays");
   assert.equal(brandTitleLook(caption, BRAND).font, "anton");
-  const hud = brandHudLook(resolveHudStyle({ preset: "reference" }), BRAND);
+  const hud = brandHudLook(resolveHudStyle({ preset: "bar" }), BRAND);
   assert.equal(hud.kind, "text");
   assert.equal(hud.valueFont, FONT_STACKS.anton);
   assert.equal(hud.text, "#fafafa");
@@ -76,8 +76,8 @@ test("the captions, the hook and the HUD take the brand's colours and fonts", ()
   assert.match(hud.accent, /^#[0-9a-f]{6}$/);
   assert.equal(brandTitleWeight(BRAND), 400, "Anton ships in one weight: never drawn bolder");
   assert.equal(brandTitleWeight({ ...BRAND, fonts: { title: "playfair-display" } }), 700);
-  assert.equal(brandCaptionLook(resolveCaptionStyle({ preset: "bold-pop" }), { ...BRAND, fonts: { caption: "bebas-neue" } }).weight, 400);
-  assert.equal(brandCaptionLook(resolveCaptionStyle({ preset: "bold-pop" }), BRAND).weight, 800, "a font with the weight keeps the look's");
+  assert.equal(brandCaptionLook(resolveCaptionStyle({ preset: "shorts" }), { ...BRAND, fonts: { caption: "bebas-neue" } }).weight, 400);
+  assert.equal(brandCaptionLook(resolveCaptionStyle({ preset: "shorts" }), BRAND).weight, 800, "a font with the weight keeps the look's");
   const noFonts = { ...BRAND, fonts: {} };
   assert.equal(brandCaptionLook(resolveCaptionStyle({ preset: "clean" }), noFonts).font, "inter", "no caption font: the look's own");
   assert.equal(brandHudLook(resolveHudStyle(undefined), noFonts).valueFont, resolveHudStyle(undefined).valueFont);

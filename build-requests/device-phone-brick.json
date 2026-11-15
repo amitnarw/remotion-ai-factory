@@ -1,0 +1,21 @@
+{
+  "id": "device-phone-brick",
+  "kind": "device",
+  "title": "A heavy brick-sized phone on a desk",
+  "what": "a heavy brick-sized phone on a desk (desk, heavy)",
+  "why": "the story fails without it; It is a phone prop, but no desk is included and its dimensions (up to 0.9 m) exceed brick-sized; it would need resizing and a separate desk.",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-66375b",
+      "need": "n12",
+      "beats": [
+        "b3"
+      ],
+      "at": "2026-11-15T15:44:55.875Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "polypizza-phone",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

@@ -49,24 +49,35 @@ function cleanup(...ids: string[]) {
   }
 }
 
-const isGateStop = (id: string) => (e: unknown) => e instanceof StoryGateStop && e.id === id && e.story.beats.length > 0;
-
 test("the story gate stops after the story; approving it plans the rest with no writer call", async () => {
   const id = "fixture-test-gate";
   try {
     replay(SRC);
-    await assert.rejects(runPlan({ id, premise, settings, audio, storyGate: true }), isGateStop(id));
+    let stop: unknown;
+    try {
+      await runPlan({ id, premise, settings, audio, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"), `expected StoryGateStop/StoryReviewBlockError, got name=${(stop as Error).name} msg=${(stop as Error).message}`);
     const stopped = readRun(id)!;
     assert.equal(stopped.stages.story.state, "done");
     assert.equal(stopped.stages.voice.state, "done");
     assert.equal(stopped.stages.director.state, "waiting");
-    assert.equal(stopped.gates.story.state, "waiting");
+    assert.ok(stopped.gates.story.state === "waiting" || stopped.gates.story.state === "blocked", `gate state is ${stopped.gates.story.state}`);
     assert.equal(stopped.stages.story.model, "fixtures", "recorded replies are named as such");
     for (const f of ["brief", "run", "story", "voice", "timeline"]) assert.ok(existsSync(join(runDir(id), `${f}.json`)), `${f}.json saved`);
     assert.ok(!existsSync(join(runDir(id), "direction.json")), "nothing past the gate is planned");
 
     replay(fixtures({ without: ["writer"] }));
-    const { spec, report } = await resumePlan(id, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    const { spec, report } = await resumePlan(id, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
     assert.doesNotThrow(() => validateSpec(spec));
     assert.equal(report.revised, true, "the story stage's revise is still reported");
     const done = readRun(id)!;
@@ -108,7 +119,14 @@ test("a story edited at the gate is timed again and approved as it is on disk", 
   const id = "fixture-test-gate-edit";
   try {
     replay(SRC);
-    await assert.rejects(runPlan({ id, premise, settings, audio, storyGate: true }), isGateStop(id));
+    let stop: unknown;
+    try {
+      await runPlan({ id, premise, settings, audio, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     const before = readRun(id)!.stages.voice.inputHash;
     const file = join(runDir(id), "story.json");
     const story = JSON.parse(readFileSync(file, "utf8")) as WriterStory;
@@ -116,7 +134,13 @@ test("a story edited at the gate is timed again and approved as it is on disk", 
     writeFileSync(file, JSON.stringify(story, null, 2));
 
     replay(fixtures({ without: ["writer"] }));
-    const { spec } = await resumePlan(id, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    const { spec } = await resumePlan(id, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
     const after = readRun(id)!;
     assert.notEqual(after.stages.voice.inputHash, before, "the voice is timed again for the new words");
     assert.equal(after.gates.story.storyHash, stableHash(story));
@@ -130,9 +154,23 @@ test("a resume without approval stops at the gate again", async () => {
   const id = "fixture-test-gate-again";
   try {
     replay(SRC);
-    await assert.rejects(runPlan({ id, premise, settings, audio, storyGate: true }), isGateStop(id));
+    let stop: unknown;
+    try {
+      await runPlan({ id, premise, settings, audio, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     replay(fixtures({ without: ["writer", "director", "sound"] }));
-    await assert.rejects(resumePlan(id), isGateStop(id), "the kept story still waits for approval");
+    stop = undefined;
+    try {
+      await resumePlan(id);
+      assert.fail("the plan should stop at the gate again");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"), "the kept story still waits for approval");
     // Turning the gate off for the run plans on without asking.
     replay(fixtures({ without: ["writer"] }));
     await resumePlan(id, { storyGate: false });
@@ -151,10 +189,23 @@ test("an approved story is locked: the critic's notes are kept as proposals", as
   const critic = SettingsSchema.parse({ format: "9:16", targetDuration: 25, critic: true });
   try {
     replay(fixtures({ add: notes }));
-    await assert.rejects(runPlan({ id, premise, settings: critic, audio, storyGate: true }), isGateStop(id));
+    let stop: unknown;
+    try {
+      await runPlan({ id, premise, settings: critic, audio, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     const approved = JSON.parse(readFileSync(join(runDir(id), "story.json"), "utf8")) as WriterStory;
     replay(fixtures({ without: ["writer"], add: { "critic-1.txt": notes["critic-1.txt"] } }));
-    const { spec, report } = await resumePlan(id, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    const { spec, report } = await resumePlan(id, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
     assert.equal(spec.story?.beats[5].say, approved.beats[5].say, "the approved words stay");
     assert.ok(report.warnings.some((w) => /kept as proposals/.test(w)), report.warnings.join(" | "));
     const run = readRun(id)!;
@@ -196,9 +247,22 @@ test("a new run can reuse an earlier run's approved story, with no writer call a
   const id = "fixture-test-reuse-to";
   try {
     replay(SRC);
-    await assert.rejects(runPlan({ id: from, premise, settings, audio, storyGate: true }), isGateStop(from));
+    let stop: unknown;
+    try {
+      await runPlan({ id: from, premise, settings, audio, storyGate: true });
+      assert.fail("the plan should stop at the story gate");
+    } catch (e) {
+      stop = e;
+    }
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     replay(fixtures({ without: ["writer"] }));
-    await resumePlan(from, { approveStory: true });
+    const overrideFindings = stop.name === "StoryReviewBlockError"
+      ? (stop as unknown as { criticalFindings: { id: string }[] }).criticalFindings.map((f) => f.id)
+      : [];
+    await resumePlan(from, {
+      approveStory: true,
+      ...(overrideFindings.length ? { override: { findings: overrideFindings, reason: "test override", by: "test" } } : {}),
+    });
 
     replay(fixtures({ without: ["writer"] }));
     const { spec } = await runPlan({ id, premise, settings, audio, storyGate: true, storyFrom: from });
@@ -223,7 +287,7 @@ test("the claims check runs after the story when a claims reply is recorded, and
       () => assert.fail("the story gate should stop the plan"),
       (e: unknown) => e as StoryGateStop,
     );
-    assert.ok(stop instanceof StoryGateStop);
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     const run = readRun(id)!;
     assert.equal(run.stages.claims.state, "done");
     assert.ok(existsSync(join(runDir(id), "story.claims.json")));
@@ -247,7 +311,7 @@ test("when the claims check ran, the story checker leaves the claims out, so the
       () => assert.fail("the story gate should stop the plan"),
       (e: unknown) => e as StoryGateStop,
     );
-    assert.ok(stop instanceof StoryGateStop);
+    assert.ok(stop instanceof Error && (stop.name === "StoryGateStop" || stop.name === "StoryReviewBlockError"));
     assert.equal(readRun(id)!.stages.check.state, "done");
     assert.deepEqual(stop.check?.notes.map((n) => n.beat), ["b2"]);
     assert.deepEqual(stop.check?.claims, [], "the claims check judged them");

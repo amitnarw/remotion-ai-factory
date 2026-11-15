@@ -25,6 +25,7 @@ measured durations to stdout (one line, prefixed "@@"):
   @@ {"durations": {"beat-0-n": 2.31, ...}, "engine": "kitten2"}
 """
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -91,6 +92,99 @@ def use_all_cores():
         torch.set_num_threads(os.cpu_count() or 4)
     except Exception:
         pass
+
+
+# VoxCPM2's loader builds every layer in torch's default dtype (fp32, ~9.2 GB),
+# casts to config.dtype (bfloat16), then loads the 4.4 GB state dict: about
+# 10.7 GB of RAM and 5.55 GB of VRAM at peak (measured 2026-11-14 on the 16 GB
+# / 6 GB laptop). Building directly in bf16 skips the throwaway fp32 model and
+# brings the peak down to about 6 GB. When the machine is short, Windows kills
+# the process with 0xC0000005 and Python never gets to raise, so check first.
+VOXCPM_PEAK_RAM_GB = 6.0  # measured load peak with bf16 construction (2026-11-14)
+VOXCPM_MIN_FREE_RAM_GB = float(os.environ.get("VOXCPM_MIN_FREE_RAM_GB", "3.0"))
+VOXCPM_MIN_FREE_COMMIT_GB = float(os.environ.get("VOXCPM_MIN_FREE_COMMIT_GB", "6.0"))
+
+
+def free_memory_gb():
+    """(free physical, free commit) in GB on Windows; None elsewhere."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+    except Exception:
+        return None
+
+    class _MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = _MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+    try:
+        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+    except Exception:
+        return None
+    if not ok:
+        return None
+    gb = float(1024**3)
+    return status.ullAvailPhys / gb, status.ullAvailPageFile / gb
+
+
+def voxcpm_memory_problem():
+    """Why VoxCPM2 cannot load right now, or None when it has room to try."""
+    mem = free_memory_gb()
+    if mem is None:
+        return None
+    ram, commit = mem
+    short = []
+    if ram < VOXCPM_MIN_FREE_RAM_GB:
+        short.append(f"RAM {ram:.1f} GB free (needs {VOXCPM_MIN_FREE_RAM_GB:.1f})")
+    if commit < VOXCPM_MIN_FREE_COMMIT_GB:
+        short.append(f"commit {commit:.1f} GB free (needs {VOXCPM_MIN_FREE_COMMIT_GB:.1f})")
+    if not short:
+        return None
+    return (
+        "not enough free memory to load VoxCPM2: "
+        + "; ".join(short)
+        + f". The load peaks at about {VOXCPM_PEAK_RAM_GB:.1f} GB. "
+        "Close other apps (browser tabs, editors) and try again."
+    )
+
+
+@contextlib.contextmanager
+def bf16_default_dtype():
+    """Build VoxCPM2 straight in bf16 so the throwaway fp32 model never exists.
+
+    VoxCPM2Model.from_local() constructs every layer in torch's default dtype
+    and only then casts to config.dtype (bfloat16). On this 15.2 GB machine that
+    fp32 model is ~9.2 GB and is discarded before any weights are loaded, which
+    is what pushed the load peak to ~10.7 GB. The final model is identical:
+    weights come from a BF16 checkpoint, the AudioVAE is loaded from its fp32
+    file afterwards, and RoPE tables are computed explicitly in fp32. Only the
+    dtype of the throwaway buffers changes.
+
+    No-op on CPU-only machines, where bf16 construction has no benefit.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        yield
+        return
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(prev)
 
 
 def run_kitten(job, out_dir):
@@ -168,6 +262,10 @@ def apply_voice_transform(wav, sr, tr):
 
 def run_voxcpm(job, out_dir):
     use_all_cores()
+    problem = voxcpm_memory_problem()
+    if problem:
+        print(f"[voice/voxcpm] {problem}", file=sys.stderr, flush=True)
+        raise SystemExit(3)
     try:
         from voxcpm import VoxCPM  # noqa: E402
     except Exception as e:
@@ -179,7 +277,11 @@ def run_voxcpm(job, out_dir):
 
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device)
+    with bf16_default_dtype():
+        model = VoxCPM.from_pretrained(
+            "openbmb/VoxCPM2", load_denoiser=False, device=device,
+            local_files_only=True,
+        )
     sr = model.tts_model.sample_rate
     default_desc = job.get("defaultVoiceDesc")
     default_ref = job.get("defaultReferenceWav") or job.get("default_reference_wav")
@@ -190,7 +292,6 @@ def run_voxcpm(job, out_dir):
         timesteps = 4
     if timesteps > 30:
         timesteps = 30
-    default_ref_text = job.get("defaultReferenceText") or job.get("default_reference_text")
     retry_threshold = float(job.get("retryBadcaseRatioThreshold", job.get("retry_badcase_ratio_threshold", 8.0)))
     if retry_threshold < 4.0:
         retry_threshold = 4.0
@@ -213,7 +314,8 @@ def run_voxcpm(job, out_dir):
         path = os.path.join(out_dir, f"{line['id']}.wav")
         text = line["text"]
         ref = line.get("referenceWav") or line.get("reference_wav") or default_ref
-        ref_text = line.get("referenceText") or line.get("reference_text") or default_ref_text
+        if ref and not os.path.exists(ref):
+            raise FileNotFoundError(f"reference WAV not found: {ref}")
         style = line.get("voiceStyle") or line.get("style") or default_style
         si = ""
         if style and isinstance(style, str) and style.strip():
@@ -221,22 +323,10 @@ def run_voxcpm(job, out_dir):
             if not si.startswith("("):
                 si = f"({si})"
         target_text = f"{si}{text}" if si else text
-        if ref and ref_text and isinstance(ref_text, str) and ref_text.strip():
-            prompt_text = ref_text.strip() + " "
-            wav = model.generate(
-                text=prompt_text + target_text,
-                prompt_wav_path=ref,
-                prompt_text=prompt_text,
-                reference_wav_path=ref,
-                cfg_value=cfg_value,
-                inference_timesteps=timesteps,
-                normalize=True,
-                denoise=False,
-                retry_badcase=True,
-                retry_badcase_max_times=3,
-                retry_badcase_ratio_threshold=retry_threshold,
-            )
-        elif ref:
+        if ref:
+            # Reference-only cloning: the description path is gone. The reference
+            # clip alone determines the timbre — no transcript is prepended, and
+            # no (voiceStyle) prefix is added because it would change the clone.
             wav = model.generate(
                 text=target_text,
                 reference_wav_path=ref,
@@ -364,6 +454,12 @@ def worker_voxcpm() -> None:
     import os
     import sys
 
+    problem = voxcpm_memory_problem()
+    if problem:
+        print("@@ " + json.dumps({"ok": False, "id": None, "error": problem}), flush=True)
+        print(f"[voice/voxcpm] {problem}", file=sys.stderr, flush=True)
+        raise SystemExit(3)
+
     import torch
 
     try:
@@ -375,7 +471,11 @@ def worker_voxcpm() -> None:
     t0 = time.time()
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device)
+        with bf16_default_dtype():
+            model = VoxCPM.from_pretrained(
+                "openbmb/VoxCPM2", load_denoiser=False, device=device,
+                local_files_only=True,
+            )
         sr = model.tts_model.sample_rate
     except Exception as e:
         print("@@ " + json.dumps({"ok": False, "id": None, "error": f"model load failed: {str(e)[:300]}"}), flush=True)

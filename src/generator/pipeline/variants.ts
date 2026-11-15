@@ -226,8 +226,9 @@ export async function proposeAlternatives(input: {
       return null;
     },
   });
-  const hooks = result.value.hooks.filter((h) => !same(h, input.story.hook) && !avoid.hooks.some((a) => same(a, h)));
-  const endings = result.value.endings.filter((e) => !same(e, last?.say ?? "") && !avoid.endings.some((a) => same(a, e)));
+  if (!result.ok) throw new Error(result.problem ?? "writer variants failed");
+  const hooks = result.value!.hooks.filter((h) => !same(h, input.story.hook) && !avoid.hooks.some((a) => same(a, h)));
+  const endings = result.value!.endings.filter((e) => !same(e, last?.say ?? "") && !avoid.endings.some((a) => same(a, e)));
   return { hooks: hooks.slice(0, input.hooks), endings: endings.slice(0, input.endings) };
 }
 

@@ -174,11 +174,12 @@ export async function judgeNeed(
     models: opts.models,
     maxAttempts: 2,
   });
+  if (!result.ok) throw new Error(result.problem ?? "library judge failed");
   if (file) {
     mkdirSync(opts.cacheDir!, { recursive: true });
-    writeFileSync(file, JSON.stringify({ verdicts: result.value.verdicts }, null, 1));
+    writeFileSync(file, JSON.stringify({ verdicts: result.value!.verdicts }, null, 1));
   }
-  return { verdicts: new Map(result.value.verdicts.map((v) => [v.item, { verdict: v.verdict, note: v.note }])), by: "model", model: `${result.provider}/${result.model}` };
+  return { verdicts: new Map(result.value!.verdicts.map((v) => [v.item, { verdict: v.verdict, note: v.note }])), by: "model", model: `${result.provider}/${result.model}` };
 }
 
 /**

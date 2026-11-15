@@ -1,0 +1,21 @@
+{
+  "id": "device-touchscreen-screen",
+  "kind": "device",
+  "title": "A touchscreen inside a room",
+  "what": "a touchscreen inside a room (lit, rectangular)",
+  "why": "the story fails without it; described as a computer screen, not explicitly a touchscreen; touch capability not specified",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-66375b",
+      "need": "n14",
+      "beats": [
+        "b5"
+      ],
+      "at": "2026-11-15T15:45:00.265Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "kenney-furniture-kit-computer-screen",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

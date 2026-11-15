@@ -13,6 +13,7 @@ import { navigate } from "../lib/navigation";
 import type { Section } from "../lib/routes";
 import { cn } from "../lib/utils";
 import { ProgressBar } from "./shared";
+import { MemoryMeter, MemoryPill } from "./MemoryMeter";
 
 const NAV: Array<{ key: Exclude<Section, "editor">; label: string; icon: LucideIcon }> = [
   { key: "create", label: "Create", icon: Sparkles },
@@ -144,6 +145,7 @@ export function AppShell({
         </nav>
         <div className="mt-auto space-y-4">
           <StatusArea active={active} />
+          <MemoryMeter />
           <p className="px-1 text-xs leading-relaxed text-muted-foreground">
             Everything runs on this computer. Nothing is uploaded, except to the AI accounts you set up yourself.
           </p>
@@ -152,9 +154,9 @@ export function AppShell({
 
       {/* Top bar (narrow screens) */}
       <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-md lg:hidden">
-        <div className="flex h-16 items-center gap-2 px-4 sm:px-6">
+        <div className="flex h-16 items-center justify-between gap-2 px-4 sm:px-6">
           <Brand compact />
-          <nav aria-label="Main" className="ml-auto flex-1 sm:flex-none">
+          <nav aria-label="Main" className="flex-1 sm:flex-none">
             <ul className="grid grid-cols-5 gap-1 sm:flex sm:gap-2">
               {NAV.map((n) => {
                 const activeItem = section === n.key;
@@ -181,6 +183,7 @@ export function AppShell({
               })}
             </ul>
           </nav>
+          <MemoryPill />
         </div>
         {first ? (
           <button

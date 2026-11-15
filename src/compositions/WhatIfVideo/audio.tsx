@@ -74,16 +74,17 @@ function warmUp(volume: number | ((f: number) => number)): (f: number) => number
 export const CompositionAudio: React.FC<CompositionAudioProps> = ({ spec, fps }) => {
   const events = spec.events ?? [];
   const audio = spec.audio ?? {};
+  const soundEffects = audio.soundEffects ?? true;
   const ambient: Bed[] = audio.ambient ?? [];
   const voiceFiles = audio.voiceFiles ?? [];
   const music = audio.music ?? [];
-  const transitions = audio.transitions ?? [];
+  const transitions = soundEffects ? audio.transitions ?? [] : [];
   const duration = Math.max(...spec.scenes.map((s) => s.to));
   const duck = duckFactor(voiceFiles);
 
   return (
     <>
-      {events.flatMap((ev, ei) =>
+      {soundEffects ? events.flatMap((ev, ei) =>
         (ev.sfx ?? []).map((cue, i) => {
           const at = secToFrame((cue.at ?? ev.t) as number, fps);
           const to = cue.to ? secToFrame(cue.to as number, fps) : undefined;
@@ -103,7 +104,7 @@ export const CompositionAudio: React.FC<CompositionAudioProps> = ({ spec, fps })
             </Sequence>
           );
         }),
-      )}
+      ) : null}
 
       {transitions.map((tr, i) => (
         <Sequence key={`cut-${i}`} from={Math.max(0, secToFrame(tr.t, fps))}>

@@ -12,7 +12,7 @@ import { join } from "path";
 import { spawn, type ChildProcess } from "child_process";
 import { runFfmpeg, measureLoudness } from "./ffmpeg";
 import { resolveTtsPython, envKeyFor } from "./tts-python";
-import { AUDITION_TEXT, voxDescription, voxTransform, voxSeed, voxReferenceId } from "./voices";
+import { AUDITION_TEXT, voxDescription, voxTransform, voxSeed, seedFromVoice, voxReferenceId } from "./voices";
 
 const ROOT = process.cwd();
 const PUBLIC_VOICE = join(ROOT, "public", "voice");
@@ -21,18 +21,15 @@ const OUTPUT_DIR = join(ROOT, "output");
 export const CACHE_DIR = join(ROOT, ".cache", "voice");
 
 /** Resolve a frozen reference clip for a preset cloned from one. */
-function resolveVoiceReference(voice: string | undefined): { wav: string; text?: string } | undefined {
+export function resolveVoiceReference(voice: string | undefined): { wav: string } | undefined {
   const id = voxReferenceId(voice);
   if (!id) return undefined;
   const dir = join(ROOT, "public", "voice", "references", id);
   const wav = join(dir, "reference.wav");
   if (!existsSync(wav)) return undefined;
-  let text: string | undefined;
-  try {
-    const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as { transcript?: string };
-    if (meta.transcript && meta.transcript.trim()) text = meta.transcript.trim();
-  } catch { /* no transcript: audio-only conditioning */ }
-  return { wav, text };
+  // The meta.json transcript must stay empty: a non-empty transcript silently
+  // switches VoxCPM2 to continuation mode, which re-reads it before every line.
+  return { wav };
 }
 
 /** Two-pass loudnorm from one WAV to another (linear when the mix allows it). */
@@ -67,11 +64,20 @@ function normalizeVoiceWav(file: string): void {
   }
 }
 
+/** What a finished engine process left behind: its combined output and exit code. */
+interface PythonRun {
+  out: string;
+  code: number | null;
+}
+
 /**
  * Run a Python script and collect its output (stdout + stderr), with a time
- * limit. `onLine` gets each complete stdout line as it arrives.
+ * limit. `onLine` gets each complete stdout line as it arrives. The exit code
+ * is kept: a Windows access violation (3221225477 = 0xC0000005) is how a
+ * Python process usually dies when a model load runs out of memory, and the
+ * dashboard needs that code to explain the crash.
  */
-function runPython(python: string, args: string[], timeoutMs: number, onLine?: (line: string) => void): Promise<string> {
+function runPython(python: string, args: string[], timeoutMs: number, onLine?: (line: string) => void): Promise<PythonRun> {
   return new Promise((resolve) => {
     let out = "";
     let partial = "";
@@ -95,16 +101,49 @@ function runPython(python: string, args: string[], timeoutMs: number, onLine?: (
       }
     });
     child.stderr?.on("data", (d) => (out += d.toString()));
-    child.on("close", () => {
+    child.on("close", (code) => {
       clearTimeout(timer);
       if (partial) onLine?.(partial);
-      resolve(out);
+      resolve({ out, code });
     });
     child.on("error", (e) => {
       clearTimeout(timer);
-      resolve(out + String(e));
+      resolve({ out: out + String(e), code: null });
     });
   });
+}
+
+/**
+ * Windows native exit codes, in words. A speech engine that dies while loading
+ * a multi-GB model is killed by the OS, not by Python, so there is no traceback
+ * and the code is the only clue.
+ */
+const NATIVE_EXIT_CODES: Record<number, string> = {
+  0xc0000005: "access violation",
+  0xc000001d: "illegal instruction",
+  0xc0000135: "missing DLL",
+  0xc0000409: "stack buffer overrun / fast fail",
+  0xc00000fd: "stack overflow",
+};
+
+/** "3221225477 (0xC0000005, access violation)" — what a crash code means. */
+export function exitCodeLabel(code: number | null | undefined): string {
+  if (code == null) return "unknown exit code";
+  const unsigned = code >>> 0;
+  const name = NATIVE_EXIT_CODES[unsigned];
+  if (!name) return String(code);
+  return `${code} (0x${unsigned.toString(16).toUpperCase()}, ${name})`;
+}
+
+/** The last few meaningful lines of engine output: warnings and blanks dropped. */
+function outputTail(out: string, maxLines = 6): string {
+  const lines = out
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .filter((l) => !/FutureWarning|DeprecationWarning|UserWarning/.test(l))
+    .filter((l) => !/^\s*WeightNorm\.apply\(/.test(l));
+  return lines.slice(-maxLines).join("\n").slice(-900);
 }
 
 export interface VoiceLine {
@@ -241,13 +280,22 @@ class TtsWorker {
   /** True while shutting down, so the expected close is not logged as a crash. */
   private stopping = false;
 
+  /** A line is being generated (or waiting to be): never unload the model then. */
+  get busy(): boolean {
+    return this.pending.size > 0;
+  }
+
   private ensure(): ChildProcess {
     this.stopping = false;
     if (this.child) return this.child;
+    // VoxCPM2 fills a 6 GB card and needs ~6 GB of RAM while it starts: free
+    // the other engine's model before this one loads (see freeOtherEngines).
+    freeOtherEngines(this.engine);
     const python = resolveTtsPython(this.engine);
     if (!python) {
       throw new Error(`${this.engine} is not installed. Install it in Settings → Voice engines first.`);
     }
+    console.log(`[voice] loading ${this.engine} (the whole model, ~30 s on a warm disk)`);
     const child = spawn(python, [join(ROOT, "scripts", "story-tts.py"), "--worker", "--engine", this.engine], {
       cwd: ROOT,
       stdio: ["pipe", "pipe", "pipe"],
@@ -269,14 +317,13 @@ class TtsWorker {
       this.errTail = (this.errTail + d.toString()).slice(-2000);
     });
     child.on("error", (e) => {
-      this.failAll(new Error(`kitten worker could not start: ${e}`));
+      this.failAll(new Error(`${this.engine} worker could not start: ${e}`));
     });
     child.on("close", (code) => {
       this.child = null;
       if (this.stopping) return;
-      this.failAll(
-        new Error(`kitten worker exited (code ${code ?? "?"})${this.errTail.trim() ? `: ${this.errTail.trim().slice(-300)}` : ""}`),
-      );
+      const detail = outputTail(this.errTail);
+      this.failAll(new Error(`${this.engine} worker exited with ${exitCodeLabel(code)}${detail ? `: ${detail}` : ""}`));
     });
     return child;
   }
@@ -302,7 +349,7 @@ class TtsWorker {
           this.pending.delete(req.id);
           reject(
             new Error(
-              `kitten worker timed out on "${req.id}" after ${Math.round(timeoutMs / 60000)} min; the engine is reloaded on the next attempt`,
+              `${this.engine} worker timed out on "${req.id}" after ${Math.round(timeoutMs / 60000)} min; the engine is reloaded on the next attempt`,
             ),
           );
           // A wedged generation is not recoverable: stop the process, the next request reloads the model.
@@ -325,10 +372,10 @@ class TtsWorker {
       this.pending.delete(r.id);
       clearTimeout(p.timer);
       if (r.ok && typeof r.dur === "number") p.resolve({ ok: true, dur: r.dur, wav: r.wav ?? "" });
-      else p.reject(new Error(`kitten worker failed on "${r.id}": ${(r.error ?? "unknown error").slice(0, 300)}`));
+      else p.reject(new Error(`${this.engine} worker failed on "${r.id}": ${(r.error ?? "unknown error").slice(0, 300)}`));
       return;
     }
-    if (!r.ok) console.log(`[voice] kitten worker: ${r.error ?? "failed"} (for a line that is no longer pending)`);
+    if (!r.ok) console.log(`[voice] ${this.engine} worker: ${r.error ?? "failed"} (for a line that is no longer pending)`);
   }
 
   private failAll(e: Error) {
@@ -345,7 +392,7 @@ class TtsWorker {
     this.stopping = true;
     const child = this.child;
     this.child = null;
-    this.failAll(new Error("kitten worker was shut down"));
+    this.failAll(new Error(`${this.engine} worker was shut down`));
     if (!child) return;
     if (hard) {
       try {
@@ -376,6 +423,26 @@ class TtsWorker {
 }
 
 const ttsWorkers = new Map<"kitten2" | "voxcpm2", TtsWorker>();
+
+/** Keep both engines installed side by side on a GPU that holds them (TTS_TWO_ENGINES=1). */
+function twoEnginesMayStayLoaded(): boolean {
+  return process.env.TTS_TWO_ENGINES === "1";
+}
+
+/**
+ * Unload every engine except `engine`. VoxCPM2 needs about 5.6 GB of a 6 GB
+ * card and ~6 GB of RAM while it loads, so a second resident model (Kitten)
+ * or a leftover worker from an earlier request is what makes the load die with
+ * a native crash. An engine that is speaking a line right now is left alone.
+ */
+function freeOtherEngines(engine: "kitten2" | "voxcpm2"): void {
+  if (twoEnginesMayStayLoaded()) return;
+  for (const [other, worker] of [...ttsWorkers]) {
+    if (other === engine || worker.busy) continue;
+    console.log(`[voice] unloading ${other} to make room for ${engine}`);
+    worker.kill();
+  }
+}
 
 /** This session's persistent worker (respawned after a kill). */
 function ttsWorkerFor(engine: "kitten2" | "voxcpm2"): TtsWorker {
@@ -408,7 +475,7 @@ export function disposeTtsWorkers(): void {
  * Bump when the synthesis settings change (sampling, pauses, prompts). Old
  * cache entries then stop matching and everything is re-rendered once.
  */
-const SYNTH_VERSION = "8";
+const SYNTH_VERSION = "9";
 
 type TtsEngine = VoiceLine["engine"];
 
@@ -419,10 +486,9 @@ export function voicePreviewLine(engine: VoiceLine["engine"], voice: string): Vo
   const desc = engine === "voxcpm2" ? voxDescription(voice) : undefined;
   const transform = engine === "voxcpm2" ? (voxTransform(voice)) : undefined;
   let referenceWav: string | undefined;
-  let referenceText: string | undefined;
   if (engine === "voxcpm2") {
     const ref = resolveVoiceReference(voice);
-    if (ref) { referenceWav = ref.wav; referenceText = ref.text; }
+    if (ref) referenceWav = ref.wav;
   }
   return {
     id: "sample",
@@ -432,7 +498,6 @@ export function voicePreviewLine(engine: VoiceLine["engine"], voice: string): Vo
     voice,
     voiceDesc: desc,
     referenceWav,
-    referenceText,
     voiceTransform: transform,
     seed: engine === "voxcpm2" ? voxSeed(voice) : undefined,
     kind: "narration",
@@ -471,12 +536,19 @@ export function deriveLines(spec: TtsSpecInput, audioConfig: TtsAudioConfig | nu
     const voice = narration.voice ?? (engine === "kitten2" ? "Bruno" : "narrator-calm");
     const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, narration.voiceDesc) : undefined;
     let referenceWav = narration.referenceWav;
-    let referenceText = narration.referenceText;
+    const referenceText = narration.referenceText;
     const presetRef = !referenceWav ? resolveVoiceReference(voice) : undefined;
-    if (presetRef) { referenceWav = presetRef.wav; if (!referenceText) referenceText = presetRef.text; }
+    if (presetRef) referenceWav = presetRef.wav;
+    // Guard: a voice declared with referenceId must have its reference WAV.
+    // Never silently fall back to description-only — that changes the voice.
+    const refId = voxReferenceId(voice);
+    if (refId && !referenceWav) {
+      const missing = join(ROOT, "public", "voice", "references", refId, "reference.wav");
+      throw new Error(`voice ${voice} has a reference but ${missing} is missing`);
+    }
     const voiceTransform = narration.voiceTransform ?? voxTransform(voice);
     const voiceStyle = narration.voiceStyle;
-    const voiceSeed = narration.voiceSeed ?? voxSeed(voice);
+    const voiceSeed = narration.voiceSeed ?? voxSeed(voice) ?? seedFromVoice(voice);
     if (spec.hook?.text) {
       lines.push({ id: "hook", text: spec.hook.text, at: 0, engine, voice, voiceDesc, referenceWav, referenceText, voiceStyle, voiceTransform, seed: voiceSeed, kind: "narration" });
     }
@@ -493,19 +565,19 @@ export function deriveLines(spec: TtsSpecInput, audioConfig: TtsAudioConfig | nu
 
   if (dialogs?.enabled) {
     const engine: TtsEngine = dialogs.engine ?? "kitten2";
-    const voices: Record<string, string> = dialogs.voices ?? {};
-    const fallback = dialogs.defaultVoice ?? (engine === "kitten2" ? "Rosie" : "character-hero");
+    const voices = new Map(Object.entries(dialogs.voices ?? {}).map(([name, v]) => [name.toLowerCase(), v]));
     (spec.captions ?? []).forEach((c, i) => {
       if (c?.speaker && c?.text) {
-        const voice = voices[c.speaker] ?? fallback;
+        const voice = voices.get(c.speaker.toLowerCase());
+        if (!voice) throw new Error(`dialogue speaker "${c.speaker}" is not a declared character`);
         const voiceDesc = engine === "voxcpm2" ? voxDescription(voice, dialogs.voiceDesc) : undefined;
         let referenceWav = dialogs.referenceWav;
-        let referenceText = dialogs.referenceText;
+        const referenceText = dialogs.referenceText;
         const presetRef = !referenceWav ? resolveVoiceReference(voice) : undefined;
-        if (presetRef) { referenceWav = presetRef.wav; if (!referenceText) referenceText = presetRef.text; }
+        if (presetRef) referenceWav = presetRef.wav;
         const voiceStyle = dialogs.voiceStyle;
         const voiceTransform = dialogs.voiceTransform ?? voxTransform(voice);
-        const voiceSeed = dialogs.voiceSeed ?? voxSeed(voice);
+        const voiceSeed = dialogs.voiceSeed ?? voxSeed(voice) ?? seedFromVoice(voice);
         lines.push({ id: `dlg-${i}`, text: c.text, at: c.from ?? 0, engine, voice, voiceDesc, referenceWav, referenceText, voiceStyle, voiceTransform, seed: voiceSeed, kind: "dialog" });
       }
     });
@@ -655,8 +727,9 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
       }
     }
 
-    // Batch path: one fresh Python process for the group (also used by
-    // voxcpm2, which has no worker, or when TTS_KITTEN_WORKER=0).
+    // Batch path: one fresh Python process for the group. It is the fallback
+    // when a worker crashed (the fresh process retries the whole load) or when
+    // the worker is turned off with TTS_KITTEN_WORKER=0 / TTS_VOXCPM_WORKER=0.
     const batch = groupLines.filter((l) => !cached.has(l.id));
     if (batch.length === 0) continue;
     const jobPath = join(outDir, `job-${engine}.json`);
@@ -667,14 +740,23 @@ export async function synthesizeLines(lines: VoiceLine[], id: string, opts: { pu
     };
     writeFileSync(jobPath, JSON.stringify(job, null, 2));
 
+    // One engine at a time: free the other engine's model before this load.
+    freeOtherEngines(engine as "kitten2" | "voxcpm2");
     const python = pythonFor(engine as "kitten2" | "voxcpm2");
     // Async, so a server calling this keeps answering other requests while the
     // engine works. Kitten 2 on a CPU takes ~40-50 s per line, plus loading.
     const limitMin = Math.max(30, batch.length * 3);
-    const out = await runPython(python, [join(ROOT, "scripts", "story-tts.py"), jobPath, "--engine", engine], limitMin * 60 * 1000, cacheFromLog);
-    const m = out.match(/@@\s*(\{.*\})/);
+    const result = await runPython(python, [join(ROOT, "scripts", "story-tts.py"), jobPath, "--engine", engine], limitMin * 60 * 1000, cacheFromLog);
+    const m = result.out.match(/@@\s*(\{.*\})/);
     if (!m) {
-      throw new Error(`TTS stage failed for ${engine}: no duration summary (${cached.size} of ${groupLines.length} line(s) finished and are cached).\n${out.slice(-1500)}`);
+      const reason =
+        result.code == null
+          ? "the engine process did not finish"
+          : `the engine process exited with ${exitCodeLabel(result.code)}`;
+      const tail = outputTail(result.out, 8);
+      throw new Error(
+        `TTS stage failed for ${engine}: ${reason} (${cached.size} of ${groupLines.length} line(s) finished and are cached).${tail ? `\n${tail}` : ""}`,
+      );
     }
     const summary = JSON.parse(m[1]);
     console.log(`[voice] ${engine}: ${Object.keys(summary.durations ?? {}).length} line(s) synthesized (batch process)`);

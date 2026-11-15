@@ -54,7 +54,7 @@ export function normalizeWords(text: string): string {
 }
 
 /** A screenplay's ANA becomes Ana; any other spelling stays as written. */
-function nameOf(raw: string): string {
+export function nameOf(raw: string): string {
   const name = raw.replace(/\s+/g, " ").trim();
   return name === name.toUpperCase() && /[A-Z]/.test(name) ? name.toLowerCase().replace(/(^|\s|-)\p{L}/gu, (c) => c.toUpperCase()) : name;
 }
@@ -377,7 +377,8 @@ export async function readScript(input: {
       return null;
     },
   });
-  const reply = result.value;
+  if (!result.ok) throw new Error(`reader failed: ${result.problem ?? "unknown error"}`);
+  const reply = result.value!;
   const fill = new Map(reply.beats.map((b) => [b.beat, b]));
   const storyBeats: WriterBeat[] = beats.map((b) => {
     const f = fill.get(b.id);
@@ -388,7 +389,7 @@ export async function readScript(input: {
   const given = new Map(reply.characters.map((c) => [c.name.toLowerCase(), c]));
   const characters: WriterCharacter[] = speakers.map((name) => {
     const c = given.get(name.toLowerCase());
-    return { name, gender: c?.gender ?? "any", age: c?.age ?? "adult", look: c?.look ?? "" };
+    return { name: nameOf(name), gender: c?.gender ?? "any", age: c?.age ?? "adult", look: c?.look ?? "" };
   });
   const story: WriterStory = {
     title: parsed.title || reply.title,

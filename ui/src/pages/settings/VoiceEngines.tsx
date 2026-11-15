@@ -15,7 +15,11 @@ import { cn } from "../../lib/utils";
 
 const ENGINE_FACTS: Record<"kitten2" | "voxcpm2", string> = {
   kitten2: "23 preset voices with emotion. Small and fast.",
-  voxcpm2: "Voices made from a description. Best quality, needs more time.",
+  // Measured 2026-11-14 on the 6 GB laptop: 5.55 GB of VRAM and about 6 GB of
+  // RAM at peak while the model loads (bf16 construction skips the throwaway
+  // fp32 model). Saying so here keeps the crash from looking mysterious.
+  voxcpm2:
+    "Voices made from a description. Best quality: about 5.6 GB of GPU memory and 6 GB of RAM while it loads, so close other heavy apps first.",
 };
 
 const INSTALL_STAGES = [

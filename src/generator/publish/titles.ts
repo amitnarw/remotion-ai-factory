@@ -123,9 +123,10 @@ export async function askTitles(input: {
       essential: (v) => (v.titles.length < TITLE_COUNT ? `only ${v.titles.length} distinct titles; write exactly ${TITLE_COUNT}` : null),
       models,
     });
+    if (!result.ok) throw new Error(result.problem ?? "publish titles failed");
     return {
-      titles: result.value.titles.slice(0, TITLE_COUNT),
-      tags: cleanTags([...result.value.tags, ...placeNames(spec).map((p) => p.toLowerCase())]),
+      titles: result.value!.titles.slice(0, TITLE_COUNT),
+      tags: cleanTags([...result.value!.tags, ...placeNames(spec).map((p) => p.toLowerCase())]),
       source: "model",
       model: { provider: result.provider, model: result.model },
     };

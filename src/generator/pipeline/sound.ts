@@ -542,7 +542,8 @@ export async function designSound(input: {
       models: input.models,
       normalize: (raw) => normalizeSound(raw, vocab),
     });
-    const v = result.value;
+    if (!result.ok) throw new Error(result.problem ?? "sound designer failed");
+    const v = result.value!;
     return {
       source: "llm",
       plan: {

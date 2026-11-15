@@ -146,7 +146,9 @@ export interface CallOptions<T> {
 }
 
 export interface CallResult<T> {
-  value: T;
+  ok: boolean;
+  value?: T;
+  problem?: string;
   provider: string;
   model: string;
   attempts: number;
@@ -295,7 +297,7 @@ export async function callRole<T>(opts: CallOptions<T>): Promise<CallResult<T>> 
     const got = readReply(opts, readFileSync(saved, "utf8"));
     if (got.ok) {
       console.log(`[llm] ${opts.label} replayed from the run's saved replies (no model call)`);
-      return { value: got.value, provider: rm.provider, model: rm.model, attempts: 0 };
+      return { ok: true, value: got.value, provider: rm.provider, model: rm.model, attempts: 0 };
     }
     console.warn(`[llm] ${opts.label}: the saved reply no longer passes the checks (${got.problem.slice(0, 160)}); asking the model`);
   }
@@ -313,7 +315,7 @@ export async function callRole<T>(opts: CallOptions<T>): Promise<CallResult<T>> 
         mkdirSync(cacheDir, { recursive: true });
         writeFileSync(saved, raw);
       }
-      return { value: got.value, provider: rm.provider, model: rm.model, attempts: attempt };
+      return { ok: true, value: got.value, provider: rm.provider, model: rm.model, attempts: attempt };
     }
     const problem = got.problem;
     lastProblem = problem;

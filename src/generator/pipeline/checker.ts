@@ -29,6 +29,8 @@ export interface StoryCheck {
   plot?: Array<{ point: string; beats: string[] }>;
   /** Adapt: the plot points no beat tells. */
   lost?: string[];
+  /** Premise match: whether the story still serves the premise it was written from. */
+  premiseMatch?: { match: "matches" | "mismatch" | "unclear"; note: string };
 }
 
 const STATUS = ["known", "check"] as const;
@@ -37,6 +39,9 @@ const CheckSchema = z.object({
   notes: z.array(z.object({ beat: z.string(), note: z.string().min(3) })).max(5),
   claims: z.array(z.object({ beat: z.string(), claim: z.string().min(3), status: z.enum(STATUS) })).max(20),
   plot: z.array(z.object({ point: z.string().min(3), beats: z.array(z.string()) })).max(15).optional(),
+  premiseMatch: z
+    .object({ match: z.enum(["matches", "mismatch", "unclear"]), note: z.string().min(3) })
+    .optional(),
 });
 /** The same without claims (the claims stage judged them): the model is not asked for them, the list is empty. */
 const NoClaimsSchema: z.ZodType<z.infer<typeof CheckSchema>> = CheckSchema.omit({ claims: true }).transform((v) => ({ ...v, claims: [] }));
@@ -53,7 +58,7 @@ function claimsRule(p: ChannelProfile): string {
  * story. `claims: false` leaves the claims out (the claims stage judged them);
  * otherwise the prompt is the one of before.
  */
-export function checkerPrompt(story: WriterStory, p: ChannelProfile, mode: StoryMode, source?: string, opts: { claims?: boolean } = {}): string {
+export function checkerPrompt(story: WriterStory, p: ChannelProfile, mode: StoryMode, source?: string, opts: { claims?: boolean; premise?: string } = {}): string {
   const withClaims = opts.claims !== false;
   const beats = story.beats
     .map((b) => [`${b.id}: "${b.say}"`, ...b.lines.map((l) => `${l.who}: "${l.text}"`), `shows: ${b.see}`].join(" | "))
@@ -62,14 +67,15 @@ export function checkerPrompt(story: WriterStory, p: ChannelProfile, mode: Story
     mode === "adapt" && source
       ? `\n\nTHE USER'S OWN STORY, which this story adapts:\n"""\n${source.trim().slice(0, 12000)}\n"""\n"plot": the plot points of the user's story, in order, at most 12, each in a few words, with "beats": the beats of the adapted story that tell it ([] when none does).`
       : "";
+  const premise = opts.premise ? `\nPREMISE: "${opts.premise}"\n"premiseMatch": does the story still serve this premise — "matches", "mismatch", or "unclear" — with a short "note" explaining why.` : "";
   return `Check this ${p.genre} story before it is filmed. You never rewrite it: you only comment.
 "notes": at most 5 notes on what would lose the viewer, in this genre's terms: ${p.critic.watchFor} Each on the beat it is about. None when the story is strong.
 ${withClaims ? `${claimsRule(p)}\n` : ""}
 TITLE: "${story.title}"
 HOOK: "${story.hook}"
-${beats}${adapt}
+${beats}${adapt}${premise}
 
-JSON shape: { "notes": [{ "beat": "b2", "note": "..." }]${withClaims ? `, "claims": [{ "beat": "b3", "claim": "...", "status": "check" }]` : ""}${adapt ? `, "plot": [{ "point": "...", "beats": ["b1", "b2"] }]` : ""} }`;
+JSON shape: { "notes": [{ "beat": "b2", "note": "..." }]${withClaims ? `, "claims": [{ "beat": "b3", "claim": "...", "status": "check" }]` : ""}${adapt ? `, "plot": [{ "point": "...", "beats": ["b1", "b2"] }]` : ""}${premise ? `, "premiseMatch": { "match": "mismatch", "note": "..." }` : ""} }`;
 }
 
 /** Ask the checker. For adapt, a plot point is lost when no beat of the story tells it. */
@@ -79,6 +85,8 @@ export async function checkStory(input: {
   mode: StoryMode;
   /** The user's own story (adapt). */
   source?: string;
+  /** The premise the story was written from (for premise-match review). */
+  premise?: string;
   /** false when the run's claims stage judged the claims: the checker leaves them out. */
   claims?: boolean;
   models: Record<string, RoleModel>;
@@ -87,6 +95,7 @@ export async function checkStory(input: {
   const withClaims = input.claims !== false;
   const ids = new Set(story.beats.map((b) => b.id));
   const adapt = mode === "adapt" && !!input.source?.trim();
+  const wantPremise = !!input.premise?.trim();
   const ref = (v: unknown) => {
     const b = beatRef(v);
     return b && ids.has(b) ? b : "";
@@ -95,7 +104,7 @@ export async function checkStory(input: {
     role: "checker",
     label: "checker",
     system: `${profile.critic.intro}\nYou are the story checker: you read a story before it is filmed and comment on it. You never change a word of it.\nReply with JSON only.`,
-    prompt: checkerPrompt(story, profile, mode, input.source, { claims: withClaims }),
+    prompt: checkerPrompt(story, profile, mode, input.source, { claims: withClaims, premise: input.premise }),
     schema: withClaims ? CheckSchema : NoClaimsSchema,
     models: input.models,
     normalize: (raw) => {
@@ -117,15 +126,27 @@ export async function checkStory(input: {
               })),
             }
           : {}),
+        ...(wantPremise
+          ? {
+              premiseMatch: o.premiseMatch
+                ? {
+                    match: fuzzyEnum((o.premiseMatch as Record<string, unknown>).match, ["matches", "mismatch", "unclear"]) ?? "unclear",
+                    note: String((o.premiseMatch as Record<string, unknown>).note ?? "").trim(),
+                  }
+                : undefined,
+            }
+          : {}),
       };
     },
     essential: (v) => (adapt && !v.plot?.length ? `list the plot points of the user's story in "plot", each with the beats that tell it` : null),
   });
-  const v = result.value;
+  if (!result.ok) throw new Error(result.problem ?? "story check failed");
+  const v = result.value!;
   return {
     notes: v.notes,
     claims: v.claims,
     ...(adapt ? { plot: v.plot ?? [], lost: (v.plot ?? []).filter((x) => x.beats.length === 0).map((x) => x.point) } : {}),
+    ...(wantPremise && v.premiseMatch ? { premiseMatch: v.premiseMatch } : {}),
   };
 }
 
@@ -133,6 +154,8 @@ export async function checkStory(input: {
 export function formatCheck(c: StoryCheck): string[] {
   const out: string[] = [];
   if (c.lost?.length) out.push(`Lost from your story (no beat tells it): ${c.lost.map((p) => `"${p}"`).join("; ")}`);
+  if (c.premiseMatch && c.premiseMatch.match === "mismatch")
+    out.push(`Premise mismatch: ${c.premiseMatch.note}`);
   for (const n of c.notes) out.push(`Note on ${n.beat}: ${n.note}`);
   for (const x of c.claims) out.push(`Claim in ${x.beat} (${x.status === "check" ? "to check" : "known"}): ${x.claim}`);
   return out;

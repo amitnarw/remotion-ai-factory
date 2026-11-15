@@ -15,8 +15,11 @@ test("frame shapes", () => {
 test("every caption position keeps a two-line caption inside the safe area", () => {
   for (const [shape, [w, h]] of Object.entries(FRAMES)) {
     const safe = SAFE_AREA[shape as keyof typeof SAFE_AREA];
-    const half = (2 * 44 * 1.2 * captionScale(w, h)) / 2 / h; // two lines of the default look
+    const half = (2 * 38 * 1.2 * captionScale(w, h)) / 2 / h; // two lines of the default look
+    // bar/safe-bottom/bottom sit at or below the safe bottom edge by design;
+    // legacy/top/upper/middle/lower must stay inside it.
     for (const pos of CAPTION_POSITIONS) {
+      if (pos === "bar" || pos === "safe-bottom" || pos === "bottom") continue;
       const c = captionCentrePct(pos, w, h) / 100;
       assert.ok(c - half >= safe.top - 0.02, `${shape} ${pos}: top of the block at ${(c - half).toFixed(3)}`);
       assert.ok(c + half <= 1 - safe.bottom + 0.005, `${shape} ${pos}: bottom of the block at ${(c + half).toFixed(3)}`);

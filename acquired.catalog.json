@@ -4,9 +4,208 @@
  "models": {
   "v": 1,
   "keys": "id; f=file under public/; pk=pack key (see packs: name, src=source, l=licence, by=author, u=url); c=category; pt=building part; p=placement; r=regions; io=i|o|b indoor/outdoor/both; n=name words; t=extra tags; s=[w,h,d] metres (scaled); o=[x,y,z] bottom-centre of the box from the model origin, metres (scaled); k=scale to apply (absent=1); tri=triangles; mm=[mesh nodes, materials]; an=animation names; l/by/u/cr=licence, author, url, credit line when they differ from the pack; lm=[landmark, city, country]",
-  "packs": {},
-  "assets": []
+  "packs": {
+   "acquired/kaykit/kay-kit-board-game-bits": {
+    "name": "KayKit Board Game Bits",
+    "src": "kaykit",
+    "l": "CC0-1.0",
+    "by": "Kay Lousberg",
+    "u": "https://kaylousberg.itch.io/board-game-bits"
+   },
+   "acquired/quaternius/quaternius-universal-base-characters": {
+    "name": "Quaternius Universal Base Characters",
+    "src": "quaternius",
+    "l": "CC0-1.0",
+    "by": "Quaternius",
+    "u": "https://quaternius.itch.io/universal-base-characters"
+   }
+  },
+  "assets": [
+   {
+    "id": "kaykit-board-game-bits-d6-a",
+    "f": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/D6_A.gltf",
+    "pk": "acquired/kaykit/kay-kit-board-game-bits",
+    "c": "prop",
+    "p": "ground",
+    "r": [
+     "generic"
+    ],
+    "io": "b",
+    "n": "d 6 a",
+    "t": [
+     "circuit",
+     "free",
+     "inside",
+     "kaykit"
+    ],
+    "s": [
+     0.75,
+     0.75,
+     0.75
+    ],
+    "o": [
+     0,
+     -0.375,
+     0
+    ],
+    "tri": 662,
+    "mm": [
+     1,
+     1
+    ]
+   },
+   {
+    "id": "quaternius-universal-base-characters-eyebrows-female",
+    "f": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/Eyebrows_Female.gltf",
+    "pk": "acquired/quaternius/quaternius-universal-base-characters",
+    "c": "character",
+    "p": "ground",
+    "r": [
+     "generic"
+    ],
+    "io": "b",
+    "n": "eyebrow female",
+    "t": [
+     "gl",
+     "godot",
+     "hairstyle",
+     "origin",
+     "person",
+     "phone",
+     "standard",
+     "stare",
+     "tf"
+    ],
+    "s": [
+     4.41,
+     1.32,
+     1.41
+    ],
+    "o": [
+     0,
+     57.73,
+     2.5
+    ],
+    "tri": 1480,
+    "mm": [
+     1,
+     1
+    ],
+    "k": 35
+   }
+  ]
  },
  "sounds": [],
- "items": []
+ "items": [
+  {
+   "id": "kaykit-board-game-bits-d6-a",
+   "kind": "model",
+   "ref": "kaykit:board-game-bits",
+   "source": "kaykit",
+   "title": "D6_A (KayKit : Board Game Bits)",
+   "author": "Kay Lousberg",
+   "page": "https://kaylousberg.itch.io/board-game-bits",
+   "fileUrl": "https://kaylousberg.itch.io/board-game-bits (Free)",
+   "licence": "CC0-1.0",
+   "tier": "free",
+   "evidence": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/licence.json",
+   "evidenceSha256": "81d4307585cda38998a6a7e4f09be995aa13e001548bda5c2f5733fa928b25bc",
+   "files": [
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/D6_A.gltf",
+     "sha256": "1b3c7d2b9d01c5a341651e5f60d5bbb85e1c535c604a1563b11d80c4bd85352d",
+     "bytes": 3010
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/D6_A.bin",
+     "sha256": "d25bad19930eb47a9634a64201a2ea8c030fe2bf451acfd4bec14cd5955bd70b",
+     "bytes": 20644
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/boardgame_bits_texture.png",
+     "sha256": "c5268bd14b8e8dd1f981e6784269996f828199dec3837143e374eba9bb440abb",
+     "bytes": 35161
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-board-game-bits-d6-a/License.txt",
+     "sha256": "f8c83456521f1ab430ad712a03a64ed3156189613ce65781c19f596c1f208de6",
+     "bytes": 1413
+    }
+   ],
+   "fetchedAt": "2026-11-14T20:15:08.512Z",
+   "need": {
+    "run": "documentary-about-phones-and-how-they-evolved-d9711d",
+    "id": "n9",
+    "kind": "prop",
+    "what": "a circuit board visible inside a phone",
+    "words": [
+     "circuit",
+     "board",
+     "inside"
+    ]
+   },
+   "notes": [
+    "chose D6_A of 162 models by the need's words (next: D6_B, D20_blue, D20_green)",
+    "the pack also ships 324 FBX, 162 OBJ, not taken"
+   ]
+  },
+  {
+   "id": "quaternius-universal-base-characters-eyebrows-female",
+   "kind": "model",
+   "ref": "quaternius:universal-base-characters",
+   "source": "quaternius",
+   "title": "Eyebrows_Female (Quaternius Universal Base Characters)",
+   "author": "Quaternius",
+   "page": "https://quaternius.itch.io/universal-base-characters",
+   "fileUrl": "https://quaternius.itch.io/universal-base-characters",
+   "licence": "CC0-1.0",
+   "tier": "free",
+   "evidence": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/licence.json",
+   "evidenceSha256": "7f242fce2c89f1319572ef8c0b0d56429e88dd26e6dba8c890276778f3fe8a5c",
+   "files": [
+    {
+     "file": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/Eyebrows_Female.gltf",
+     "sha256": "9d24b43ac63197c3c242349d54d599d7d8dd5bdee6e7ce37847224f3ff1fb14d",
+     "bytes": 2855
+    },
+    {
+     "file": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/Eyebrows_Female.bin",
+     "sha256": "f2efdf2b9d44137630ff4df01cfd9068fe3c3f8c2896c009860404ea17989dbf",
+     "bytes": 67248
+    },
+    {
+     "file": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/T_Hair_2_Normal.png",
+     "sha256": "172f230aae0d4366c3cfc0402b2e6d1811b11f8487344bff28605eeacac1558d",
+     "bytes": 4710013
+    },
+    {
+     "file": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/T_Hair_2_BaseColor.png",
+     "sha256": "f9f4f2fb3eeeefb0b6f0fdef38b0770fd6607640c1c680b8139dd76697e9f9b3",
+     "bytes": 1729467
+    },
+    {
+     "file": "assets/acquired/models/quaternius/quaternius-universal-base-characters-eyebrows-female/License_Standard.txt",
+     "sha256": "0f4beaf0fe360a7732e58bbe3dbf60a2422367fbea60cb9ea4add968f383268e",
+     "bytes": 806
+    }
+   ],
+   "fetchedAt": "2026-11-14T20:15:08.789Z",
+   "need": {
+    "run": "documentary-about-phones-and-how-they-evolved-d9711d",
+    "id": "n11",
+    "kind": "character",
+    "what": "a low-poly person staring at a phone",
+    "words": [
+     "person",
+     "phone",
+     "stare"
+    ]
+   },
+   "notes": [
+    "chose Eyebrows_Female of 16 models by the need's words (next: Eyebrows_Regular, Hair_Beard, Hair_Buns)",
+    "the pack also ships 26 FBX, not taken",
+    "scaled x35 with its kit (rescaled: 50% plausible at x35 vs 0% at x1)"
+   ]
+  }
+ ]
 }

@@ -122,7 +122,7 @@ export function ReferencesPanel() {
               <FileAudio className="h-4 w-4 text-primary" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{r.label}</div>
-                <div className="text-xs text-muted-foreground">{r.archetype} Â· {r.duration.toFixed(1)}s Â· {r.license}</div>
+                <div className="text-xs text-muted-foreground">{r.archetype} · {Number.isFinite(r.duration) ? `${r.duration.toFixed(1)}s` : "unmeasured"} · {r.license}</div>
               </div>
               <Button type="button" variant="secondary" size="icon" onClick={() => void audition(r.id)} disabled={busy}>
                 {playing === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}

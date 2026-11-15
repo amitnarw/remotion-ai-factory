@@ -275,8 +275,7 @@ A run also keeps its manifest ([manifest.ts](../../src/generator/pipeline/manife
 - [tts.ts](../../src/generator/tts.ts): runs the voice engines.
   - Exports: `synthesizeLines` (L433), `cachedDuration` (L574), `tempoVoiceFile` (L609), `cacheKey` (L399), `runTtsStage` (L405, legacy), `disposeTtsWorkers` (L330), `CACHE_DIR` (L21).
   - The cache is `.cache/voice/<sha1>.wav` plus `.json`; the key includes `SYNTH_VERSION` (L339).
-  - A persistent Kitten worker (`TtsWorker`, L162) is used unless `TTS_KITTEN_WORKER=0`. VoxCPM, and any worker failure, use the batch path through `scripts/story-tts.py`.
-  - Callers: pipeline/voice.ts, generate.ts, the server's voice-sample route. Test: `tts.worker.test.ts`, which covers only `parseWorkerResult`.
+  - Persistent workers (`TtsWorker`) keep one loaded Python per engine: Kitten unless `TTS_KITTEN_WORKER=0`, VoxCPM unless `TTS_VOXCPM_WORKER=0`. A crashed or timed-out worker fails the remaining lines to one fresh batch process through `scripts/story-tts.py`. Before an engine loads, the other engine's idle worker is killed (VoxCPM2 needs ~5.6 GB of a 6 GB card and ~6 GB of RAM while it starts); `TTS_TWO_ENGINES=1` keeps both resident on a larger GPU. Test: `tts.worker.test.ts` (result parsing, flags, crash codes).
 - [tts-python.ts](../../src/generator/tts-python.ts): which Python runs an engine: `TTS_KITTEN_PYTHON` or `TTS_VOXCPM_PYTHON`, else `.tts/<engine>/.venv`. Exports: `resolveTtsPython` (L30), `venvPythonPath` (L24). Used by tts.ts and the server.
 - [voices.ts](../../src/generator/voices.ts): the voice catalog. Exports: `KNOWN_VOICES` (L33, Kitten presets; Bella is banned), `VOXCPM_VOICE_DESCRIPTIONS` (L46), `voxDescription` (L67), `TTS_ENGINES` (L12). Used by the server's `/api/voices`, recast and pipeline/voice.ts.
 - [ffmpeg.ts](../../src/generator/ffmpeg.ts): finds ffmpeg ([resolveFfmpeg](../../src/generator/ffmpeg.ts#L13): `FFMPEG_PATH`, then Remotion's bundled ffmpeg, then PATH) and runs it. Exports: `runFfmpeg` (L27), `measureLoudness` (L46). Used by audio, render/join and the milestone.
@@ -533,7 +532,8 @@ How to run the dashboard: `npm run server` and `npm run ui`, then open `http://l
 | `FACTORY_LLM_RECORD` | llm.ts [recordReply](../../src/generator/pipeline/llm.ts#L253) | Saves every real reply there |
 | `FACTORY_PLAN_TTS=1` | [voice.ts L215](../../src/generator/pipeline/voice.ts#L215) | Synthesizes Kitten lines at plan time instead of estimating them |
 | `TTS_KITTEN_PYTHON`, `TTS_VOXCPM_PYTHON` | tts-python.ts | Which Python runs each engine |
-| `TTS_KITTEN_WORKER=0` | tts.ts | Turns the persistent Kitten worker off |
+| `TTS_KITTEN_WORKER=0`, `TTS_VOXCPM_WORKER=0` | tts.ts | Turns the persistent worker of that engine off |
+| `TTS_TWO_ENGINES=1` | tts.ts | Keeps both engines loaded side by side (needs more than a 6 GB GPU) |
 | `TTS_WORKER_LINE_TIMEOUT_MS` | tts.ts | The worker's time limit per line (default 7 minutes) |
 | `FFMPEG_PATH` | ffmpeg.ts | Overrides the ffmpeg binary |
 | `MILESTONE_PARALLEL` | milestone.ts | The size of the worker pool |

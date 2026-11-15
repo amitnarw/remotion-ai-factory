@@ -8,6 +8,7 @@ import { reportTime } from "../src/generator/ai/knowledge";
 import { actionable } from "./error-hints";
 import { isLaterStage, nextProgress, PLAN_PROGRESS, readRenderLog, stageMarker } from "./progress";
 import { createActivity, updateActivity, finishActivity, failActivity, cancelActivity, watchProcess, type ActivityKind } from "./activity";
+import { readRun } from "../src/generator/pipeline/manifest";
 
 export interface StageSpan {
   stage: string;
@@ -175,6 +176,22 @@ function loadJobsFromDisk(): void {
     j.child = undefined;
     j.logs ??= [];
     j.timeline ??= [{ stage: j.stage ?? "script", startedAt: Date.now() }];
+    // Recover a story/shopping gate the child-process output would have set but
+    // that was lost: the server restarted before persist, or the job record
+    // predates gate tracking. The run manifest still holds gates.story with
+    // state "blocked"/"waiting" and review.state, so a blocked review shows as
+    // a gate instead of "this job produced no plan."
+    if (j.engine === "plan" && j.runId && !j.specId && !j.gate) {
+      const run = readRun(j.runId);
+      if (run) {
+        const g = run.gates.story;
+        if (g.on && (g.state === "waiting" || g.state === "blocked" || g.review?.state === "blocked")) {
+          j.gate = "story";
+        } else if (run.gates.shop.on && run.gates.shop.state === "waiting") {
+          j.gate = "shop";
+        }
+      }
+    }
     // Every restored job has ended: its plan voice-settings file is not needed any more.
     removePlanAudioFile(j.id);
     jobs.set(j.id, j);
@@ -510,12 +527,18 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
     if (planLine) job.specId = planLine[1];
     const storyLine = all.match(/STORY_ID:\s*(\S+)/);
     const shopLine = all.match(/SHOP_ID:\s*(\S+)/);
+    const reviewBlockLine = all.match(/STORY_REVIEW_BLOCK_ID:\s*(\S+)/);
     if (storyLine && !planLine) {
       job.gate = "story";
       job.runId = storyLine[1];
     } else if (shopLine && !planLine) {
       job.gate = "shop";
       job.runId = shopLine[1];
+    } else if (reviewBlockLine && !planLine) {
+      // The story passed the writer but critical story-quality findings are open.
+      // The run stops here for the user to correct or override; it is not a plan failure.
+      job.gate = "story";
+      job.runId = reviewBlockLine[1];
     }
     removePlanAudioFile(job.id);
     if (job.status === "cancelled") {

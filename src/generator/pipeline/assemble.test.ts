@@ -657,3 +657,41 @@ test("a ship model set creaks every few seconds; a lighthouse and other scenes d
   assert.ok(creaks.every((e) => e.t >= ship.from && e.t < ship.to - 1), "inside the ship scene, none in its last second");
   assert.ok(!creaks.some((e) => e.t >= tower.from), "the lighthouse is silent");
 });
+
+test("the hook event carries no default pop_light", () => {
+  const { s } = worldBuild({ react: "lift" });
+  const hook = s.events.find((e) => e.name === "hook");
+  assert.ok(hook, "the hook event exists");
+  assert.deepEqual(hook!.sfx, [], "the hook has no default SFX cue");
+});
+
+/** Build a minimal plan for a single street scene with the given settings. */
+function streetBuild(settings: Record<string, unknown>) {
+  const dir = DirectorSchema.parse(normalizeDirector({ scenes: [{ start: "b1", kit: "street-block", time: "golden" }] }));
+  const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, 2.6) }));
+  const timeline = buildTimeline({ beats: story.beats, lines, format: "9:16", target: 20, cap: 90, wps: 2.6 });
+  const captions = buildCaptions(timeline, story.beats, "9:16", true);
+  const out = assemble({ id: "t", premise: "p", settings: SettingsSchema.parse(settings), story, timeline, captions, direction: dir, sound: soundRules(story, dir), casting: castVoices(story, audio), audio });
+  return { s: validateSpec(out.spec), warnings: out.warnings };
+}
+
+test("sound effects off strips every one-shot SFX cue, including storm thunder", () => {
+  const { s } = streetBuild({ format: "9:16", targetDuration: 20, soundEffects: false });
+  // No event carries an sfx cue.
+  for (const e of s.events) assert.equal(e.sfx, undefined, `${e.name} has no sfx when sound effects are off`);
+  // The spec reports the setting.
+  assert.equal(s.audio!.soundEffects, false, "audio.soundEffects is false");
+});
+
+test("sound effects on preserves authored SFX cues", () => {
+  const { s } = streetBuild({ format: "9:16", targetDuration: 20, soundEffects: true });
+  assert.equal(s.audio!.soundEffects, true, "audio.soundEffects is true");
+  // The hook still has no default pop_light.
+  const hook = s.events.find((e) => e.name === "hook");
+  assert.deepEqual(hook!.sfx, [], "the hook still has no default SFX cue");
+});
+
+test("sound effects unset behaves as on", () => {
+  const { s } = streetBuild({ format: "9:16", targetDuration: 20 });
+  assert.equal(s.audio!.soundEffects, true, "unset sound effects resolves to on");
+});

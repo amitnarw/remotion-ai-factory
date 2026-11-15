@@ -50,7 +50,7 @@ test("a messy reply is cleaned up and accepted", async () => {
       return { title: o.title ?? o.Title, beats: [...asArray<string>(o.beats), "padded"] };
     },
   });
-  assert.equal(r.value.title, "T");
+  assert.equal(r.value!.title, "T");
   assert.equal(r.attempts, 1);
 });
 
@@ -59,7 +59,7 @@ test("a bad first reply is repaired on the second attempt", async () => {
   process.env.FACTORY_LLM_FIXTURES = fixtures({ "w-1.txt": '{"title":"T","beats":["one"]}', "w-2.txt": '{"title":"T","beats":["one","two"]}' });
   const r = await callRole({ role: "writer", label: "w", system: "s", prompt: "p", schema: Schema, models });
   assert.equal(r.attempts, 2);
-  assert.deepEqual(r.value.beats, ["one", "two"]);
+  assert.deepEqual(r.value!.beats, ["one", "two"]);
 });
 
 test("the essential check can force a re-ask", async () => {
@@ -69,7 +69,7 @@ test("the essential check can force a re-ask", async () => {
     role: "writer", label: "w", system: "s", prompt: "p", schema: Schema, models,
     essential: (v) => (v.title ? null : "title is empty"),
   });
-  assert.equal(r.value.title, "Real");
+  assert.equal(r.value!.title, "Real");
 });
 
 test("three unusable replies fail with a clear message", async () => {

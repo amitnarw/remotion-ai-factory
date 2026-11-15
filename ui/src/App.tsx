@@ -12,12 +12,14 @@ import { LoadingState } from "./components/shared";
 import { navigate, useQuery } from "./lib/navigation";
 import { normalizeQuery, sectionOf, type Section } from "./lib/routes";
 import { startJobsPolling } from "./lib/jobs";
+import { startMemoryPolling } from "./lib/memory";
 import Create from "./pages/create/Create";
 import Library from "./pages/library/Library";
 import Assets from "./pages/assets/Assets";
 import Settings from "./pages/settings/Settings";
 import Help from "./pages/Help";
 import Activity from "./pages/activity/Activity";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // The editor pulls in the 3D composition; load it only when it is opened.
 const Editor = React.lazy(() => import("./pages/editor/Editor"));
@@ -35,6 +37,8 @@ export default function App() {
   }, [fix]);
 
   React.useEffect(() => startJobsPolling(), []);
+
+  React.useEffect(() => startMemoryPolling(), []);
 
   React.useEffect(() => {
     if (!fix) lastSeen[section] = Object.fromEntries(query.entries());
@@ -79,7 +83,7 @@ export default function App() {
         </main>
       ) : (
         <AppShell section={section} onNavigate={go}>
-          {page}
+          <ErrorBoundary>{page}</ErrorBoundary>
         </AppShell>
       )}
       <Toaster theme="dark" position="bottom-right" richColors closeButton />

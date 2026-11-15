@@ -53,7 +53,7 @@ test("only a usable reply is saved, under the first prompt; a repaired call repl
     assert.equal(readdirSync(dir).length, 1, "the unusable first reply is not kept");
     const again = await withCallCache(dir, () => callRole(opts));
     assert.equal(asked, 2);
-    assert.deepEqual(again.value.beats, ["one", "two"]);
+    assert.deepEqual(again.value!.beats, ["one", "two"]);
   } finally {
     setModelAsker();
   }
@@ -72,7 +72,7 @@ test("a saved reply that no longer passes the checks is asked again", async () =
   try {
     const r = await withCallCache(dir, () => callRole(opts));
     assert.equal(asked, 1);
-    assert.equal(r.value.title, "Fresh");
+    assert.equal(r.value!.title, "Fresh");
     assert.match(readFileSync(file, "utf8"), /Fresh/, "the good reply replaces it");
   } finally {
     setModelAsker();
@@ -90,8 +90,8 @@ test("fixture replay never reads or writes a run's saved replies", async () => {
   try {
     const a = await withCallCache(dir, () => callRole(opts));
     const b = await withCallCache(dir, () => callRole(opts));
-    assert.equal(a.value.title, "Fixture one");
-    assert.equal(b.value.title, "Fixture two", "the replay counters move on exactly as before");
+    assert.equal(a.value!.title, "Fixture one");
+    assert.equal(b.value!.title, "Fixture two", "the replay counters move on exactly as before");
     assert.equal(readdirSync(dir).length, 1, "nothing new is saved");
   } finally {
     delete process.env.FACTORY_LLM_FIXTURES;

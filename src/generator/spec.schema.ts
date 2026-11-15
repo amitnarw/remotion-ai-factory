@@ -348,6 +348,10 @@ export const SettingsSchema = z
     captions: CaptionStyleSchema.optional(),
     /** Run the AI critic pass (one extra model call, off by default). */
     critic: z.boolean().optional(),
+    /** Sound effects on/off for this video. Default on; off silences every
+     *  one-shot SFX cue (hook pop, counter pops, world hits, ...), leaving
+     *  music, beds and voice untouched. */
+    soundEffects: z.boolean().optional(),
   })
   .superRefine((s, ctx) => {
     if (s.targetDuration === undefined) return;
@@ -613,6 +617,10 @@ export const ShotSpecSchema = z.object({
           defaultVoice: z.string().optional(),
         })
         .optional(),
+      /** Sound effects on/off for this video. Default on; off silences every
+       *  one-shot SFX cue (hook pop, counter pops, world hits, ...), leaving
+       *  music, beds and voice untouched. */
+      soundEffects: z.boolean().optional(),
     })
     .optional(),
 });
@@ -734,6 +742,33 @@ export function validateSpec(input: unknown): ShotSpec {
         `events[${i}].t=${e.t} is outside the video duration (0..${duration}s)`,
       );
     }
+    // Every one-shot SFX cue's effective start must land inside the video.
+    // Playback starts at cue.at when set, otherwise at the event's t (already
+    // checked above). A small tolerance absorbs frame rounding; a cue at or
+    // just past the end is effectively inaudible but not a crash. An explicit
+    // `cue.to` marks a bed/riser-style cue and must end after its start and no
+    // later than the video.
+    (e.sfx ?? []).forEach((cue, j) => {
+      const start = cue.at ?? e.t;
+      if (start < 0 || start > duration + 0.5) {
+        problems.push(
+          `events[${i}].sfx[${j}] starts at ${start}s, outside the video duration (0..${duration}s)`,
+        );
+      }
+      if (cue.to != null) {
+        const end = cue.to;
+        if (end <= start) {
+          problems.push(
+            `events[${i}].sfx[${j}].to=${end}s must be after its start at ${start}s`,
+          );
+        }
+        if (end > duration + 0.5) {
+          problems.push(
+            `events[${i}].sfx[${j}].to=${end}s is outside the video duration (0..${duration}s)`,
+          );
+        }
+      }
+    });
   });
   spec.captions.forEach((c, i) => {
     if (c.from < 0 || c.to > duration + 2) {

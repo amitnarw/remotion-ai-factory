@@ -1,0 +1,21 @@
+{
+  "id": "device-telephone-low",
+  "kind": "device",
+  "title": "Low-poly telephone",
+  "what": "low-poly telephone",
+  "why": "the story fails without it",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-f49a3b",
+      "need": "n2",
+      "beats": [
+        "b1"
+      ],
+      "at": "2026-11-15T16:11:26.002Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "leave it out of the picture",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

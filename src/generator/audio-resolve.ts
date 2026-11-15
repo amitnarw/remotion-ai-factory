@@ -362,9 +362,13 @@ export function resolveAudio(input: ShotSpec, seed: string, opts: { room?: boole
   // Whoosh at each scene cut (not at t=0). No library match -> the synthesized whoosh.
   // A change of world place is filmed as a flight, and the flight is the
   // transition: no cut whoosh under it (its other sounds stay).
+  // When sound effects are off, no cut whoosh plays: transitions stay for the
+  // composition's visual timing but produce no audio.
+  const soundOff = spec.audio?.soundEffects === false;
   const transitions: Transition[] = [];
   spec.scenes.forEach((s, i) => {
     if (i === 0 || isFlightCut(s, spec.flights)) return;
+    if (soundOff) return;
     const q = SOUND_QUERY.whoosh_dissolve;
     const hit = pickEntry(library, q.kinds, q.sets, `${seed}|cut|${i}`);
     transitions.push({ t: s.from, file: hit?.file, gain: hit ? gainFor(hit) : undefined });

@@ -155,6 +155,24 @@ export function normalizeWriter(raw: unknown, voice: VoiceModes, maxCharacters =
   };
 }
 
+/** Validate that every dialogue speaker in the story is a declared character.
+ *  Returns null when all speakers are known, or an error message naming the
+ *  unknown speaker, its beat and line. Narrator lines are always allowed.
+ */
+export function validateSpeakers(story: WriterStory): string | null {
+  const known = new Set(story.characters.map((c) => c.name));
+  const knownLower = new Set(story.characters.map((c) => c.name.toLowerCase()));
+  for (const b of story.beats) {
+    for (const l of b.lines ?? []) {
+      if (l.who.toLowerCase() === "narrator") continue;
+      if (known.has(l.who)) continue;
+      if (knownLower.has(l.who.toLowerCase())) continue; // case/spacing alias resolved below
+      return `beat ${b.id}: speaker "${l.who}" is not a declared character (known: ${[...known].join(", ") || "none"})`;
+    }
+  }
+  return null;
+}
+
 /** The writer's rules every channel shares: what "see", "stress" and "pace" mean, and no times. */
 const COMMON_RULES = [
   `"see" is what the camera shows, filmable in a stylised low-poly 3D world: a city street, space with planets, the ocean, countryside, a forest, a river, a room. At most 20 words.`,
@@ -280,7 +298,8 @@ export async function writeStory(input: {
       return null;
     },
   });
-  const v = result.value;
+  if (!result.ok) throw new Error(result.problem ?? "writer failed");
+  const v = result.value!;
   return {
     title: v.title,
     hook: v.hook,
@@ -332,7 +351,8 @@ Reply as { "edits": [{ "beat": "b3", "say": "new line" }] } with one edit per be
       };
     },
   });
-  const edits = new Map(result.value.edits.map((e) => [e.beat, e.say]));
+  if (!result.ok) throw new Error(result.problem ?? "writer revise failed");
+  const edits = new Map(result.value!.edits.map((e) => [e.beat, e.say]));
   return { ...input.story, beats: input.story.beats.map((b) => (edits.has(b.id) ? { ...b, say: edits.get(b.id)! } : b)) };
 }
 
@@ -407,7 +427,8 @@ JSON shape:
       return { title: base.title, hook: base.hook, mood: base.mood, characters: base.characters, acts };
     },
   });
-  const o = outline.value;
+  if (!outline.ok) throw new Error(outline.problem ?? "writer outline failed");
+  const o = outline.value!;
   const counts = splitBeats(o.acts.map((a) => a.beats), want);
   const beats: Omit<WriterBeat, "id">[] = [];
   for (const [i, act] of o.acts.entries()) {
@@ -430,7 +451,8 @@ JSON shape: { "beats": [{ "say": "...", "lines": [], "see": "...", "pace": "norm
       normalize: (raw) => ({ beats: (normalizeWriter(raw, input.voice, p.writer.maxCharacters) as { beats: unknown[] }).beats }),
       essential: (v) => (v.beats.length < Math.ceil(n * 0.6) ? `only ${v.beats.length} beats; write exactly ${n}` : null),
     });
-    beats.push(...result.value.beats.slice(0, Math.max(n, Math.round(n * 1.4))));
+    if (!result.ok) throw new Error(result.problem ?? `writer act ${i + 1} failed`);
+    beats.push(...result.value!.beats.slice(0, Math.max(n, Math.round(n * 1.4))));
   }
   return {
     title: o.title,

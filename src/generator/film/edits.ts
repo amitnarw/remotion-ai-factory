@@ -112,6 +112,7 @@ const RULES: Array<{ re: RegExp; redo: Redo; arrays?: boolean }> = [
   { re: /^sound\.(music|beds|hits)(\[\*\](\..+)?)?$/, redo: "assemble", arrays: true },
   { re: /^plan\.settings\.captions(\..+)?$/, redo: "assemble" },
   { re: /^plan\.settings\.quality$/, redo: "assemble" },
+  { re: /^plan\.settings\.soundEffects$/, redo: "assemble" },
   { re: /^plan\.audio\.(narration|dialogs)\.(enabled|engine|voice|defaultVoice)$/, redo: "voice" },
   { re: /^plan\.audio\.dialogs\.voices(\.[\w-]+)?$/, redo: "voice" },
 ];

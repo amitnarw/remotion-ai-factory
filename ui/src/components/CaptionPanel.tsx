@@ -15,6 +15,8 @@ import {
   CAPTION_POSITIONS,
   CAPTION_PRESET_NAMES,
   FONT_STACKS,
+  POSITION_LABELS,
+  PRESET_LABELS,
   hexToRgba,
   resolveCaptionStyle,
   type CaptionStyleInput,
@@ -28,25 +30,8 @@ import { Check } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { VideoFormat } from "../lib/format";
 
-export const PRESET_LABELS: Record<(typeof CAPTION_PRESET_NAMES)[number], string> = {
-  reference: "Classic serif",
-  "bold-pop": "Bold pop",
-  clean: "Clean",
-  documentary: "Documentary",
-  neon: "Neon",
-  minimal: "Minimal pill",
-};
-const PRESET_NOTES: Record<(typeof CAPTION_PRESET_NAMES)[number], string> = {
-  reference: "Soft italic serif, gold keyword",
-  "bold-pop": "Big capitals that pop in",
-  clean: "Simple and easy to read",
-  documentary: "Calm serif for stories",
-  neon: "Loud, word by word",
-  minimal: "Small text on a pill",
-};
-export const POSITION_LABELS: Record<(typeof CAPTION_POSITIONS)[number], string> = {
-  top: "Top", upper: "Upper third", middle: "Middle", lower: "Lower third", bottom: "Bottom",
-};
+const SAMPLE_TEXT = "YOUR MONEY IS DOUBLING NOW";
+const SAMPLE_KEYWORD = ["MONEY"];
 const FONT_LABELS: Record<(typeof CAPTION_FONTS)[number], string> = {
   inter: "Inter",
   montserrat: "Montserrat",
@@ -68,9 +53,6 @@ const ANIMATION_LABELS: Record<(typeof CAPTION_ANIMATIONS)[number], string> = {
 const BACKGROUND_LABELS: Record<(typeof CAPTION_BACKGROUNDS)[number], string> = {
   none: "None", box: "Box", pill: "Pill",
 };
-
-const SAMPLE_TEXT = "YOUR MONEY IS DOUBLING NOW";
-const SAMPLE_KEYWORD = ["MONEY"];
 
 const PREVIEW_DIMS: Record<VideoFormat, { w: number; h: number; box: string }> = {
   "9:16": { w: 1080, h: 1920, box: "w-[150px] sm:w-[210px]" },
@@ -116,20 +98,33 @@ export function CaptionPanel({
 }) {
   const look = resolveCaptionStyle(value);
   const set = (patch: CaptionStyleInput) => onChange({ ...value, ...patch });
-  const current = value.preset ?? "reference";
+  const current = value.preset ?? "bar";
   const customized = Object.keys(value).some((k) => k !== "preset");
   const [open, setOpen] = useState(false);
   const dims = PREVIEW_DIMS[format];
 
   return (
     <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_auto]">
-      {/* Live preview: first on phones, on the right on wider screens. */}
-      <div className="order-first flex flex-col items-center gap-2 md:order-last">
-        <div className="md:sticky md:top-6">
-          <div
-            className={cn("overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/40", dims.box)}
-            style={{ aspectRatio: `${dims.w} / ${dims.h}` }}
-          >
+      {/* Captions on/off switch - when off, no captions are drawn (the hook title stays). */}
+      <div className="order-first flex flex-col items-center gap-2 md:order-last md:sticky md:top-6">
+        <div className="flex items-center gap-3 px-4 py-3 bg-secondary/50 rounded-2xl border border-border">
+          <Switch
+            checked={value.enabled ?? true}
+            onCheckedChange={(on) => set({ enabled: on })}
+            aria-label="Captions on/off"
+          />
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold">{value.enabled ?? true ? "Captions on" : "Captions off"}</span>
+            <span className="text-xs text-muted-foreground">
+              {value.enabled ?? true ? "Captions are drawn over the video." : "No captions will be drawn. The hook title still appears."}
+            </span>
+          </div>
+        </div>
+        <div
+          className={cn("overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/40", dims.box)}
+          style={{ aspectRatio: `${dims.w} / ${dims.h}`, opacity: value.enabled ?? true ? 1 : 0.4 }}
+        >
+          {value.enabled ?? true ? (
             <Player
               component={CaptionPreview}
               inputProps={{ style: value, text: SAMPLE_TEXT, keyword: SAMPLE_KEYWORD }}
@@ -143,9 +138,9 @@ export function CaptionPanel({
               className="vf-player"
               style={{ width: "100%", height: "100%" }}
             />
-          </div>
-          <div className="mt-2 text-center text-xs font-medium text-muted-foreground">Live preview ({format})</div>
+          ) : null}
         </div>
+        <div className="mt-2 text-center text-xs font-medium text-muted-foreground">Live preview ({format})</div>
       </div>
 
       <div className="min-w-0 space-y-4">
@@ -172,7 +167,6 @@ export function CaptionPanel({
                 <PresetSwatch preset={p} />
                 <div className="px-1 pb-0.5 pt-2">
                   <div className="text-sm font-semibold">{PRESET_LABELS[p]}</div>
-                  <div className="truncate text-xs text-muted-foreground">{PRESET_NOTES[p]}</div>
                 </div>
               </button>
             );

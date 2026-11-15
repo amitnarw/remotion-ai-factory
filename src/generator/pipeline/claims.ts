@@ -229,7 +229,7 @@ export async function judgeClaims(input: {
       return missing.length ? `judge every sentence; missing: ${missing.join(", ")}` : null;
     },
   });
-  const byId = new Map(result.value.claims.map((c) => [c.id, c]));
+  const byId = new Map(result.value!.claims.map((c) => [c.id, c]));
   const rows: ClaimRow[] = [];
   for (const c of found) {
     const j = byId.get(c.id);
@@ -288,11 +288,28 @@ Reply as { "sentences": [{ "id": "c2", "text": "the new sentence" }] }.`;
           .filter((e) => ids.has(e.id) && e.text),
       };
     },
+    // The correction must cover every flagged claim id and no others. Wrong ids
+    // (like c2 when the claim is c1) mean the correction was not applied; ask
+    // again instead of silently continuing with an uncorrected finding.
+    essential: (v) => {
+      const got = new Set(v.sentences.map((s) => s.id));
+      const missing = [...ids].filter((id) => !got.has(id));
+      if (missing.length) return `correction missing for flagged claim(s): ${missing.join(", ")}`;
+      const extra = v.sentences.filter((s) => !ids.has(s.id));
+      if (extra.length) return `correction contains unknown claim id(s): ${extra.map((s) => s.id).join(", ")}`;
+      return null;
+    },
   });
+  if (!result.ok) {
+    // Retries exhausted: the writer did not produce a usable correction.
+    // Return the rows unchanged so the finding stays open for the user to
+    // correct or override, rather than silently dropping the correction.
+    return { story: input.story, rows: input.rows };
+  }
   const byFound = new Map(input.found.map((c) => [c.id, c]));
   let story = input.story;
   const done = new Map<string, string>();
-  for (const e of result.value.sentences) {
+  for (const e of result.value!.sentences) {
     const c = byFound.get(e.id);
     if (!c || e.text === c.sentence) continue;
     const next = replaceSentence(story, c, e.text);

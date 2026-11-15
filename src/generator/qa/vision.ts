@@ -81,7 +81,8 @@ export async function askVision(input: {
       images: [input.png.toString("base64")],
       maxAttempts: 2,
     });
-    const byId = new Map(result.value.answers.map((a) => [a.id, a.yes]));
+    if (!result.ok) throw new Error(result.problem ?? "vision check failed");
+    const byId = new Map(result.value!.answers.map((a) => [a.id, a.yes]));
     return input.questions
       .filter((q) => byId.has(q.id) && byId.get(q.id) !== q.want)
       .map((q) => `vision: "${q.question}" answered ${byId.get(q.id) ? "yes" : "no"}`);

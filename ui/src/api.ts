@@ -114,6 +114,8 @@ export interface SpecResponse {
   check?: import("../../src/generator/pipeline/checker").StoryCheck;
   /** The claims check at the story gate (story.claims.json), when it ran. */
   claims?: import("../../src/generator/pipeline/claims").ClaimsCheck;
+  /** The story-quality review (story.review.json): findings and disposition. */
+  review?: import("../../src/generator/pipeline/story-review").StoryReview;
   /** The critic's notes on an approved story, kept as proposals. */
   notes?: Array<{ beat: string; problem: string; fix: string }>;
   /** What the story needs, grouped by what the library has (read-only until gate 2). */
@@ -184,7 +186,7 @@ export async function copyChannel(from: string, id: string, name: string): Promi
  *  or goes on from the stage it stopped at. At gate 2, `choices` are the user's:
  *  approvals as the CLI writes them ("n6=bigsoundbank:1048", "n2=close",
  *  "n3=build", "n9=skip") and `allFree` for "Approve every CC0 pick". */
-export async function resumeRun(runId: string, choices?: { approvals?: string[]; allFree?: boolean }): Promise<{ jobId: string }> {
+export async function resumeRun(runId: string, choices?: { approvals?: string[]; allFree?: boolean; override?: { findings: string[]; reason: string } }): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/plan/${runId}/resume`, {
       method: "POST",
@@ -445,6 +447,20 @@ export interface TtsInstallJob {
 }
 export async function getTtsStatus(): Promise<TtsStatus> {
   return json(await fetch(`${BASE}/tts/status`));
+}
+
+/** Free/free-commit RAM snapshot from /api/system/memory. */
+export async function getSystemMemory(): Promise<{
+  totalRam: number;
+  freeRam: number;
+  totalCommit: number;
+  freeCommit: number | null;
+  minFreeRam: number;
+  minFreeCommit: number;
+  status: "ready" | "tight" | "low";
+  source: string;
+}> {
+  return json(await fetch(`${BASE}/system/memory`));
 }
 export async function startTtsInstall(engine: string): Promise<{ jobId: string }> {
   return json(await fetch(`${BASE}/tts/install/${engine}`, { method: "POST" }));
@@ -869,6 +885,19 @@ export async function deleteVoiceReference(id: string): Promise<void> {
 }
 export async function auditionVoiceReference(id: string, body: { engine?: string; text?: string } = {}): Promise<Blob> {
   const r = await fetch(`${BASE}/voice-references/${encodeURIComponent(id)}/audition`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) {
+    const raw = await r.text();
+    let message = raw;
+    try {
+      const j = JSON.parse(raw) as { error?: string; detail?: string; hint?: string };
+      if (j.error === "low_memory") {
+        const free = /([\d.]+) GB RAM/.exec(j.detail ?? "")?.[1];
+        message = `Not enough free memory${free ? ` (${free} GB free)` : ""}. ${j.hint ?? "Close other apps and try again."}`;
+      } else if (j.detail || j.error) {
+        message = j.detail ?? j.error ?? raw;
+      }
+    } catch { /* not JSON — keep raw */ }
+    throw new Error(message);
+  }
   return r.blob();
 }

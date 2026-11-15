@@ -248,7 +248,8 @@ export async function routeNote(ctx: Ctx, text: string, turns: Turn[]): Promise<
       return null;
     },
   });
-  return result.value;
+  if (!result.ok) throw new Error(result.problem ?? "producer router failed");
+  return result.value!;
 }
 
 /* ---------------- the work behind each action ---------------- */

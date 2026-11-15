@@ -18,6 +18,7 @@ import {
   type AcquiredSounds,
   type SoundQuery,
 } from "./audio-resolve";
+
 import { soundVocabulary } from "./pipeline/sound";
 import { validateSpec } from "./spec.schema";
 import { readSynthCatalog } from "./library/sounds";
@@ -283,4 +284,38 @@ test("music: a track that opens quiet gives way to the next of its mood (the lib
     if (passed) assert.ok(quietOpening(library.find((e) => e.file === passed)!), `${passed} was passed over`);
     else assert.equal(file, pickEntry(library, ["music"], MOOD_TAGS.tense.map((w) => [w]), `quiet-${i}|music|tense|0`)?.file, "nothing passed over: the seeded pick");
   }
+});
+
+test("resolveAudio: with sound effects off, no cut whooshes are added", () => {
+  const spec = validateSpec({
+    id: "whoosh-off",
+    title: "Whoosh off",
+    hook: { text: "What if?", t: 0, duration: 2 },
+    scenes: [
+      { scene: "street", kit: "street-block", from: 0, to: 4, look: { timeOfDay: "afternoon" } },
+      { scene: "plaza", kit: "street-block", from: 4, to: 8, look: { timeOfDay: "afternoon" } },
+    ],
+    events: [{ t: 3, name: "hook", targets: [], sfx: [] }],
+    audio: { soundEffects: false },
+  });
+  const { spec: out, report } = resolveAudio(spec, "whoosh-off");
+  assert.equal(out.audio?.transitions?.length, 0, "no cut whooshes when sound effects are off");
+  assert.equal(report.transitions, 0, "report counts zero transitions");
+});
+
+test("resolveAudio: with sound effects on, cut whooshes are added at scene cuts", () => {
+  const spec = validateSpec({
+    id: "whoosh-on",
+    title: "Whoosh on",
+    hook: { text: "What if?", t: 0, duration: 2 },
+    scenes: [
+      { scene: "street", kit: "street-block", from: 0, to: 4, look: { timeOfDay: "afternoon" } },
+      { scene: "plaza", kit: "street-block", from: 4, to: 8, look: { timeOfDay: "afternoon" } },
+    ],
+    events: [{ t: 3, name: "hook", targets: [], sfx: [] }],
+    audio: { soundEffects: true },
+  });
+  const { spec: out, report } = resolveAudio(spec, "whoosh-on");
+  assert.ok((out.audio?.transitions?.length ?? 0) > 0, "cut whooshes are added when sound effects are on");
+  assert.equal(report.transitions, out.audio?.transitions?.length ?? 0, "report matches the spec");
 });

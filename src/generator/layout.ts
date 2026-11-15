@@ -152,10 +152,15 @@ export function clearOfHook(frame: number, hook: { from: number; to: number } | 
 
 /** Vertical centre of the caption block for each named position, in % of the frame height. */
 const CAPTION_Y: Record<FrameShape, Record<CaptionLook["position"], number>> = {
-  // "bottom" stops above the platform's title block (the safe edge is 65%).
-  portrait: { top: 21, upper: 32, middle: 45, lower: 52, bottom: 58 },
-  square: { top: 12, upper: 30, middle: 50, lower: 70, bottom: 80 },
-  landscape: { top: 12, upper: 30, middle: 50, lower: 72, bottom: 81 },
+  // Portrait values measured against the 9:16 reference frame:
+  //   bar     ≈ 70 % block bottom (centre 65.5 %) — the user's default
+  //   safe-bottom ≈ 77 % block bottom (centre 73 %)
+  //   bottom  ≈ 84 % block bottom (centre 79.5 %) — literal bottom, above platform UI
+  //   legacy  ≈ 62 % block bottom (centre 58 %) — old paid-ads rule, kept for compat
+  portrait: { top: 21, upper: 32, middle: 45, lower: 52, legacy: 58, bar: 65.5, "safe-bottom": 73, bottom: 79.5 },
+  // Square and landscape: proportional estimates (not yet measured against a reference frame).
+  square: { top: 12, upper: 30, middle: 50, lower: 70, legacy: 80, bar: 72, "safe-bottom": 76, bottom: 80 },
+  landscape: { top: 12, upper: 30, middle: 50, lower: 72, legacy: 81, bar: 74, "safe-bottom": 78, bottom: 81 },
 };
 
 export function captionCentrePct(position: CaptionLook["position"], width: number, height: number): number {

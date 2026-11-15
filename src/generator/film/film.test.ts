@@ -42,6 +42,20 @@ test("lists: insert and remove entries", () => {
   assert.throws(() => applyEdits(film, [{ op: "remove", path: "story.beats[b1]" }]), /cannot be (edited|added or removed)/);
 });
 
+test("plan.settings.soundEffects is editable and forces an assemble redo", () => {
+  const film = sampleFilm();
+  const off = applyEdits(film, [{ op: "set", path: "plan.settings.soundEffects", value: false }]);
+  assert.equal(off.redo, "assemble");
+  assert.equal(off.film.plan.settings.soundEffects, false);
+
+  const on = applyEdits(film, [{ op: "set", path: "plan.settings.soundEffects", value: true }]);
+  assert.equal(on.redo, "assemble");
+  assert.equal(on.film.plan.settings.soundEffects, true);
+
+  // Invalid values are rejected by settings validation.
+  assert.throws(() => applyEdits(film, [{ op: "set", path: "plan.settings.soundEffects", value: "yes" }]), /soundEffects/);
+});
+
 test("beatOfEdit finds the beat an edit is about", () => {
   const film = sampleFilm();
   assert.equal(beatOfEdit(film, { op: "set", path: "story.beats[b2].say", value: "x" }), "b2");

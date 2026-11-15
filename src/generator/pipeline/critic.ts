@@ -131,7 +131,8 @@ ${input.story.beats
       };
     },
   });
-  return result.value.issues;
+  if (!result.ok) throw new Error(result.problem ?? "critic failed");
+  return result.value!.issues;
 }
 
 const NotesSchema = z.object({
@@ -166,7 +167,8 @@ Reply as { "edits": [{ "beat": "b3", "say": "new line", "see": "optional new vis
       };
     },
   });
-  const edits = new Map(result.value.edits.map((e) => [e.beat, e]));
+  if (!result.ok) throw new Error(result.problem ?? "writer notes failed");
+  const edits = new Map(result.value!.edits.map((e) => [e.beat, e]));
   return {
     ...input.story,
     beats: input.story.beats.map((b) => {

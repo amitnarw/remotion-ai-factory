@@ -31,7 +31,8 @@ import { Switch } from "../../components/ui/switch";
 // (Select removed - voices now shown as an auditionable gallery)
 import { ChoiceCard, ErrorBanner } from "../../components/shared";
 import { InfoTip } from "../../components/InfoTip";
-import { CaptionPanel, POSITION_LABELS, PRESET_LABELS } from "../../components/CaptionPanel";
+import { CaptionPanel } from "../../components/CaptionPanel";
+import { POSITION_LABELS, PRESET_LABELS } from "../../../../src/generator/caption-style";
 import { AuditionButton, useVoiceAudition } from "../../components/useVoiceAudition";
 import { ENGINE_LABELS, FORMATS, formatSeconds, prettyVoice, type VideoFormat } from "../../lib/format";
 import { navigate } from "../../lib/navigation";

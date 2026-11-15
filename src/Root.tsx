@@ -17,6 +17,7 @@ import { ShotSpecSchema, validateSpec, formatDims, type ShotSpec } from "./gener
 import { videoFrames } from "./compositions/brand/length";
 import gravitySpec from "./generator/spec.example.gravity.json";
 import eyesightSpec from "./generator/spec.example.eyesight.json";
+import { ScalpTest } from "./compositions/qa/ScalpTest";
 
 const FPS = 30;
 const WIDTH = 1080;
@@ -92,6 +93,16 @@ export const RemotionRoot: React.FC = () => {
         schema={WhatIfVideoPropsSchema}
         calculateMetadata={specMetadata as never}
         defaultProps={{ spec: demoSpec }}
+      />
+      {/* QA: scalp still test (G0.1). Renders one frame: npx remotion still src/index.ts ScalpTest out/scalp-test.png --scale 1 */}
+      <Composition
+        id="ScalpTest"
+        component={ScalpTest as unknown as React.ComponentType<Record<string, unknown>>}
+        durationInFrames={1}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{}}
       />
     </>
   );

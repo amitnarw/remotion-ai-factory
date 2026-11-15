@@ -122,3 +122,40 @@ test("the actor actions of the spec and of the actor scripts stay the same list"
   const action = actors.shape.do.unwrap().element.shape.action;
   assert.deepEqual([...action.options].sort(), [...ACTOR_ACTIONS].sort());
 });
+
+test("SFX cues must start inside the video duration", () => {
+  // In-range cues pass.
+  const ok = JSON.parse(JSON.stringify(gravity));
+  ok.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "pop_light", at: 3.2 }] }];
+  const validated = validateSpec(ok);
+  assert.equal(validated.events.length, 1, "in-range cues pass");
+
+  // Negative start is rejected.
+  const negStart = JSON.parse(JSON.stringify(gravity));
+  negStart.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "pop_light", at: -0.5 }] }];
+  assert.throws(() => validateSpec(negStart), /starts at -0.5s/);
+
+  // Start past the end is rejected.
+  const lateStart = JSON.parse(JSON.stringify(gravity));
+  lateStart.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "pop_light", at: 8.8 }] }];
+  assert.throws(() => validateSpec(lateStart), /starts at 8.8s/);
+
+  // Cue at the event's own t (no at): falls back to event time, already checked.
+  const fallback = JSON.parse(JSON.stringify(gravity));
+  fallback.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "pop_light" }] }];
+  assert.doesNotThrow(() => validateSpec(fallback));
+});
+
+test("SFX cue `to` must be after its start and inside the video", () => {
+  const base = JSON.parse(JSON.stringify(gravity));
+  base.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "rumble_deep", from: 3.2, to: 5.0 }] }];
+  assert.doesNotThrow(() => validateSpec(base), "a valid bed cue passes");
+
+  const endBeforeStart = JSON.parse(JSON.stringify(gravity));
+  endBeforeStart.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "rumble_deep", from: 3.2, to: 3.0 }] }];
+  assert.throws(() => validateSpec(endBeforeStart), /to=3s must be after its start/);
+
+  const endPastDuration = JSON.parse(JSON.stringify(gravity));
+  endPastDuration.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "rumble_deep", from: 3.2, to: 8.8 }] }];
+  assert.throws(() => validateSpec(endPastDuration), /to=8.8s is outside/);
+});

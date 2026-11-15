@@ -1,0 +1,21 @@
+{
+  "id": "device-smartphone-giant",
+  "kind": "device",
+  "title": "A giant smartphone hovering above the road",
+  "what": "a giant smartphone hovering above the road (hovering, oversized)",
+  "why": "the story fails without it",
+  "asks": [
+    {
+      "run": "documentary-about-phones-and-how-they-evolved-66375b",
+      "need": "n10",
+      "beats": [
+        "b1"
+      ],
+      "at": "2026-11-15T15:44:53.077Z"
+    }
+  ],
+  "count": 1,
+  "fallback": "any large phone",
+  "acceptance": "a 15 s clip of the device in a world scene, and the director's prompt and checks for it",
+  "status": "open"
+}

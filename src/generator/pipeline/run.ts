@@ -25,7 +25,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { validateAssets } from "../asset-catalog";
-import { maxDurationFor, validateSpec, type ShotSpec, type VideoSettings } from "../spec.schema";
+import { maxDurationFor, validateSpec, type ShotSpec, type SpecShot, type VideoSettings } from "../spec.schema";
 import { assemble } from "./assemble";
 import { buildCaptions, wordTimes } from "./captions";
 import { directStory, type Direction } from "./director";
@@ -33,6 +33,7 @@ import { resolveRoleModels, withCallCache, type RoleModel } from "./llm";
 import { applyNotes, codeChecks, critiquePlan, type Issue } from "./critic";
 import {
   approveStory,
+  overrideReview,
   isComplete,
   isFresh,
   nextStage,
@@ -52,16 +53,17 @@ import {
 import { designSound, type SoundPlan } from "./sound";
 import { buildTimeline, fitTempo, naturalLength, type Timeline } from "./timeline";
 import { calibratedModel, calibratedWps, castVoices, estimateDuration, planLines, speedUp, voiceLines, type AudioConfig, type PlannedLine } from "./voice";
-import { defaultDuration, reviseStory, writeStory, type WriterStory } from "./writer";
+import { defaultDuration, reviseStory, validateSpeakers, writeStory, type WriterStory } from "./writer";
 import { allowsAll, channelBrand, channelMoods, criticSystem, DEFAULT_CHANNEL, directorGuide, formatProblem, loadChannel, soundGuide, type ChannelProfile, type Devices, type StoryMode } from "../ai/channels";
 import type { Brand } from "../../compositions/brand/brand";
 import { withMemoryChannel } from "../ai/knowledge";
-import { beatWords, parseScript, readScript, scriptBeats, scriptSpeakers, scriptSpoken } from "./script";
-import { breakDownStory, type Breakdown } from "./breakdown";
+import { beatWords, nameOf, parseScript, readScript, scriptBeats, scriptSpeakers, scriptSpoken } from "./script";
+import { breakDownStory, type Breakdown, type NeedKind } from "./breakdown";
 import { checkStory, type StoryCheck } from "./checker";
 import { claimsInputs, claimsPolicy, claimsStage, type ClaimsCheck } from "./claims";
 import { standingBlock, standingNotes } from "./notes";
 import { matchNeeds, type NeedsFile } from "../library/match";
+import { buildReview, isClear, reviewSummary, type StoryReview, type StoryFinding, type ReviewCheckState } from "./story-review";
 import { acquire, approveAllFree, findOffers, formatAcquisition, needsToShop, type AcquireOptions, type Shopping } from "../library/acquire/acquire";
 import { acquirePaths, readAcquired, type AcquirePaths } from "../library/acquire/catalog";
 import type { AcquisitionFile, Approval, SourceId } from "../library/acquire/types";
@@ -173,6 +175,11 @@ export function finish(
   });
   const spec = validateSpec(assembled.spec);
   validateAssets(spec);
+  // Preflight: required visuals must be on screen; accepted substitutes wired into a scene.
+  const needs = load<NeedsFile>(id, "needs");
+  if (needs) {
+    assembled.warnings.push(...validateVisualCoverage(spec, story, needs));
+  }
   return { spec, warnings: assembled.warnings };
 }
 
@@ -192,6 +199,28 @@ export class StoryGateStop extends Error {
   }
 }
 
+/** The plan stopped at the story-quality gate: critical findings are open and
+ *  must be corrected or explicitly overridden before the run may proceed. */
+export class StoryReviewBlockError extends Error {
+  constructor(
+    readonly id: string,
+    readonly story: WriterStory,
+    /** Open critical findings. */
+    readonly criticalFindings: StoryFinding[],
+    /** The persisted review, when one exists. */
+    readonly review?: StoryReview,
+    /** The story checker's output, when it ran. */
+    readonly check?: StoryCheck,
+    /** The claims check output, when it ran. */
+    readonly claims?: ClaimsCheck,
+  ) {
+    super(
+      `story quality of ${id} is blocked: ${criticalFindings.length} critical finding(s) unresolved`,
+    );
+    this.name = "StoryReviewBlockError";
+  }
+}
+
 /** The plan stopped at gate 2: the shopping list (shopping.json) waits for the user's choices. */
 export class ShopGateStop extends Error {
   constructor(
@@ -203,6 +232,118 @@ export class ShopGateStop extends Error {
     super(`the shopping list of ${id} waits for your choices`);
     this.name = "ShopGateStop";
   }
+}
+
+/** The plan stopped at gate 2 because a must-have visual could not be taken in:
+ *  nothing was downloaded for it and no accepted substitute stands in. Names
+ *  the beat(s) and the missing asset so the user can choose a different offer,
+ *  accept a substitute, or change the story. */
+export class VisualBlockError extends Error {
+  constructor(
+    readonly id: string,
+    /** Must-have visual needs that remain unresolved. */
+    readonly unresolved: UnresolvedVisual[],
+  ) {
+    super(
+      `gate 2 blocked for ${id}: required visual(s) not available — ${unresolved
+        .map((u) => `${u.what} (${u.id}, beats ${u.beats.join(", ")})`)
+        .join("; ")}`,
+    );
+    this.name = "VisualBlockError";
+  }
+}
+
+/** A must-have visual need that gate 2 could not close. */
+export interface UnresolvedVisual {
+  id: string;
+  kind: NeedKind;
+  what: string;
+  beats: string[];
+  reason: string;
+  buildRequest?: string;
+}
+
+/** Kinds of need whose absence means something the story needs is not on screen. */
+const VISUAL_KINDS: ReadonlySet<NeedKind> = new Set(["set", "character", "prop", "vehicle", "animal"]);
+
+/** Must-have visual needs that gate 2 could not close: nothing was taken in
+ *  for them and no accepted substitute stands in. A need whose status is
+ *  "have" (in stock), or that was taken in / already in stock, or whose user
+ *  accepted a close substitute (`use` set), is not unresolved here — the
+ *  assembled-spec preflight still checks the substitute is wired into a scene. */
+export function unresolvedRequiredVisuals(needs: NeedsFile, acquisition: AcquisitionFile): UnresolvedVisual[] {
+  const byNeed = new Map(acquisition.items.map((i) => [i.need, i]));
+  const out: UnresolvedVisual[] = [];
+  for (const n of needs.needs) {
+    if (!n.must || !VISUAL_KINDS.has(n.kind)) continue;
+    if (n.status === "have") continue;
+    const item = byNeed.get(n.id);
+    const takenIn = item && (item.result === "taken-in" || item.result === "already-in-stock");
+    const acceptedSub = item && item.choice === "close" && !!n.use;
+    if (takenIn || acceptedSub) continue;
+    out.push({
+      id: n.id,
+      kind: n.kind,
+      what: n.what,
+      beats: n.beats,
+      reason: item ? item.reason ?? item.result : "nothing in stock stands in for it",
+      ...(item?.request ? { buildRequest: item.request.id } : {}),
+    });
+  }
+  return out;
+}
+
+/** After assembly: every must-have visual need must be shown by a scene/cast/
+ *  prop/modelSet on its beat(s), and every such beat needs at least one
+ *  camera shot. An accepted substitute must be wired into a scene, not just
+ *  present in inventory. Returns problems as warnings (the hard block is at
+ *  gate 2, where an unresolved must-have visual stops the plan entirely). */
+export function validateVisualCoverage(
+  spec: ShotSpec,
+  story: WriterStory,
+  needs: NeedsFile,
+): string[] {
+  const problems: string[] = [];
+  const shotsByBeat = new Map<string, SpecShot[]>();
+  for (const shot of spec.shots ?? []) {
+    if (shot.beat) {
+      const arr = shotsByBeat.get(shot.beat) ?? [];
+      arr.push(shot);
+      shotsByBeat.set(shot.beat, arr);
+    }
+  }
+
+  // Every asset reference the spec's scenes can actually show.
+  const shown = new Set<string>();
+  for (const sc of spec.scenes) {
+    if (sc.modelSet) shown.add(sc.modelSet.model);
+    for (const c of sc.cast ?? []) shown.add(c.asset);
+    for (const a of sc.actors ?? []) shown.add(a.role);
+  }
+  if (spec.heroProp) shown.add(spec.heroProp.style);
+
+  for (const n of needs.needs) {
+    if (!n.must || !VISUAL_KINDS.has(n.kind)) continue;
+    // `n.use` is set when the need is "have" (in stock) or when a close
+    // substitute was accepted. Without it, nothing is available to show.
+    const hasAsset = !!n.use;
+    for (const beatId of n.beats) {
+      const shots = shotsByBeat.get(beatId);
+      if (!shots || shots.length === 0) {
+        problems.push(`beat ${beatId}: required visual ${n.what} (${n.id}) has no camera shot covering it`);
+        continue;
+      }
+      if (!hasAsset) {
+        problems.push(`beat ${beatId}: required visual ${n.what} (${n.id}) is not available — nothing in stock or accepted substitute for it`);
+      } else if (n.use) {
+        const ref = n.use.id ?? n.use.name;
+        if (!shown.has(ref)) {
+          problems.push(`beat ${beatId}: required visual ${n.what} (${n.id}) accepted substitute "${n.use.name}" is not wired into any scene's cast, prop, model set or actors`);
+        }
+      }
+    }
+  }
+  return problems;
 }
 
 /** What the user chose at gate 2: approvals by need (acquire.ts parseApprovals), and "approve every CC0 pick". */
@@ -444,7 +585,14 @@ function prepareScript(brief: Brief, profile: ChannelProfile): { brief: Brief; w
   const engine = audio.narration?.engine;
   const cap = maxDurationFor(settings.format);
   const { hook, hookVoiced, beats } = scriptBeats(parsed, beatWords(settings.format, calibratedWps(engine)));
-  const story: WriterStory = { title: parsed.title ?? "", hook, hookVoiced, mood: profile.music.fallback, characters: [], beats: beats.map((b) => ({ ...b, pace: "normal" as const, stress: "" })) };
+  const story: WriterStory = { 
+    title: parsed.title ?? "", 
+    hook, 
+    hookVoiced, 
+    mood: profile.music.fallback, 
+    characters: scriptSpeakers(parsed).map(name => ({ name: nameOf(name), gender: "any", age: "adult", look: "" })), 
+    beats: beats.map((b) => ({ ...b, pace: "normal" as const, stress: "" })) 
+  };
   const lines = planLines(story, audio).map((l) => ({ ...l, dur: estimateDuration(l.text, calibratedModel(l.engine)) }));
   const natural = naturalLength({ beats: story.beats, lines, format: settings.format });
   const shortest = buildTimeline({ beats: story.beats, lines, format: settings.format, target: 1, cap, wps: calibratedWps(engine) }).duration;
@@ -512,6 +660,24 @@ async function shopGate(run: RunManifest, brief: Brief, needs: NeedsFile, models
   if (got.shopping) save(id, "shopping", got.shopping);
   console.log(formatAcquisition(got.acquisition));
   if (got.acquisition.items.some((i) => i.result === "taken-in")) seeAcquired(o.paths ?? acquirePaths());
+
+  // Phase 2: a must-have visual nothing was taken in for blocks the plan.
+  // A failed/refused "get" cannot be converted into a successful gate; the
+  // user must pick a different offer, accept a substitute, or change the story.
+  const unresolved = unresolvedRequiredVisuals(got.needs, got.acquisition);
+  if (unresolved.length) {
+    run.gates.shop = {
+      on: true,
+      state: "blocked",
+      needs: unresolved.map((u) => u.id),
+      unresolved: unresolved.map((u) => ({ id: u.id, kind: u.kind, what: u.what, beats: u.beats, reason: u.reason, buildRequest: u.buildRequest })),
+      at: now(),
+      by: decision.by ?? "cli",
+    };
+    writeRun(run);
+    throw new VisualBlockError(id, unresolved);
+  }
+
   run.gates.shop = { on: true, state: "done", needs: approvals.map((a) => a.need), at: now(), by: decision.by ?? "cli" };
   writeRun(run);
   return acquisitionWarnings(got.acquisition);
@@ -569,6 +735,8 @@ async function planStages(
         let story = asWritten
           ? await readScript({ script: brief.script ?? "", format: settings.format, wps, models, profile })
           : await writeStory({ premise, settings, voice, models, wps, profile, ...(mode === "adapt" ? { source: brief.script ?? "" } : {}) });
+        const speakerProblem = validateSpeakers(story);
+        if (speakerProblem) throw new Error(speakerProblem);
         save(id, "story", story);
         stage("voice");
         let timed = await timeStory(story, settings, audio, id, "plan", !voice.narration && !asWritten);
@@ -579,6 +747,8 @@ async function planStages(
           console.log(`[plan] length ${timed.timeline.duration.toFixed(1)}s vs target ${timed.timeline.target}s — asking the writer to ${timed.timeline.reviseWords > 0 ? "add" : "cut"} ~${Math.abs(timed.timeline.reviseWords)} words`);
           stage("writer");
           story = await reviseStory({ story, wordDelta: timed.timeline.reviseWords, models, profile });
+          const speakerProblem = validateSpeakers(story);
+          if (speakerProblem) throw new Error(speakerProblem);
           save(id, "story", story);
           stage("voice");
           timed = await timeStory(story, settings, audio, id, "plan", true);
@@ -677,7 +847,7 @@ async function planStages(
           load: () => load<StoryCheck>(id, "story.check"),
           work: async () => {
             stage("check");
-            const c = await checkStory({ story, profile, mode, source, models, ...(claims ? { claims: false } : {}) });
+            const c = await checkStory({ story, profile, mode, source, premise: brief.premise, models, ...(claims ? { claims: false } : {}) });
             save(id, "story.check", c);
             const lost = c.lost?.length ? [`the story lost ${c.lost.length} plot point(s) of yours: ${c.lost.map((p) => `"${p}"`).join("; ")}`] : [];
             return { value: c, warnings: lost };
@@ -690,13 +860,80 @@ async function planStages(
       }
     }
 
+    // Build and persist the story-quality review before the gate: claims,
+    // checker output and deterministic hook checks become findings with a
+    // disposition that the user must resolve before approval can proceed.
+    const claimsPolicyVal = claimsPolicy(profile);
+    // Derive check states from the actual stage state so a skipped stage
+    // (missing fixture, policy off) is not confused with a failed one.
+    const claimsState: ReviewCheckState =
+      claimsPolicyVal === "skip" ? "skipped" : (run.stages.claims.state as ReviewCheckState);
+    const checkerState: ReviewCheckState = run.stages.check.state as ReviewCheckState;
+    const priorReview = load<StoryReview>(id, "story.review") ?? undefined;
+    const review = buildReview({
+      story,
+      timeline: timed.timeline,
+      claims: claims ?? null,
+      check,
+      mode,
+      channelId: profile.id,
+      policy: claimsPolicyVal,
+      claimsCheckState: claimsState,
+      checkerCheckState: checkerState,
+      claimsRequired: claimsPolicyVal !== "skip",
+      checkerRequired: wantCheck,
+      // Hook timing at plan time is estimated from word counts unless the
+      // render measured it. An estimated over-long hook is a suggestion,
+      // not a critical blocker.
+      hookEstimated: timed.timeline.hook.line?.estimated ?? true,
+      priorReview,
+    });
+    save(id, "story.review", review);
+    const criticalOpen = review.findings.some((f) => f.severity === "critical" && f.status === "open");
+    const gateOn = run.gates.story.on;
+    run.gates.story = {
+      ...run.gates.story,
+      state: (gateOn && criticalOpen) ? "blocked" : run.gates.story.state,
+      storyHash: review.storyHash,
+      review: {
+        state: criticalOpen ? "blocked" : "cleared",
+        storyHash: review.storyHash,
+        criticalFindingIds: review.findings.filter((f) => f.severity === "critical").map((f) => f.id),
+        findings: review.findings,
+        disposition: review.disposition,
+        summary: reviewSummary(review),
+      },
+    };
+    writeRun(run);
+
     // Gate 1: the story waits for the user's approval (an edit after the
-    // approval asks again).
+    // approval asks again). A blocked story-quality review stops progression
+    // when the story gate is on.
     const gate = run.gates.story;
-    if (gate.on && !(gate.state === "approved" && gate.storyHash === stableHash(story))) {
-      run.gates.story = { on: true, state: "waiting" };
-      writeRun(run);
-      throw new StoryGateStop(id, story, { duration: timed.timeline.duration, target: timed.timeline.target, revised }, check, claims ?? undefined);
+    if (gate.on) {
+      const reviewBlocked = !isClear(review) || !review.checks.allRequiredDone();
+      if (reviewBlocked) {
+        run.gates.story = {
+          ...gate,
+          state: "blocked",
+          storyHash: review.storyHash,
+          review: {
+            state: "blocked",
+            storyHash: review.storyHash,
+            criticalFindingIds: review.findings.filter((f) => f.severity === "critical" && f.status === "open").map((f) => f.id),
+            findings: review.findings,
+            disposition: review.disposition,
+            summary: reviewSummary(review),
+          },
+        };
+        writeRun(run);
+        throw new StoryReviewBlockError(id, story, review.findings.filter((f) => f.severity === "critical" && f.status === "open"), review, check, claims ?? undefined);
+      }
+      if (!(gate.state === "approved" && gate.storyHash === stableHash(story))) {
+        run.gates.story = { on: true, state: "waiting" };
+        writeRun(run);
+        throw new StoryGateStop(id, story, { duration: timed.timeline.duration, target: timed.timeline.target, revised }, check, claims ?? undefined);
+      }
     }
     // An approved story, or a user's script, is never rewritten.
     const locked = gate.on || asWritten;
@@ -940,8 +1177,24 @@ function reuseStory(run: RunManifest, brief: Brief, from: string): void {
   run.stages.story = { ...run.stages.story, state: "done", inputHash: stableHash(storyInputs(brief)), endedAt: now(), facts: { reusedFrom: from } };
   const before = readRun(from)?.gates.story;
   const story = load<WriterStory>(run.id, "story");
-  if (run.gates.story.on && before?.state === "approved" && story && before.storyHash === stableHash(story)) {
-    run.gates.story = { on: true, state: "approved", storyHash: before.storyHash, at: now(), by: `approved in ${from}` };
+  if (!story) throw new Error(`output/${run.id}/story.json is missing`);
+  const speakerProblem = validateSpeakers(story);
+  if (speakerProblem) throw new Error(speakerProblem);
+  // Copy the source run's story gate approval and quality-review state so the
+  // reused story does not re-block on findings the source already resolved.
+  if (before) {
+    run.gates.story = { ...run.gates.story, on: before.on, state: before.state, storyHash: before.storyHash, at: before.at, by: before.by };
+    if (before.review) {
+      run.gates.story.review = { ...before.review };
+    }
+    if (before.state === "approved" && story && before.storyHash === stableHash(story)) {
+      run.gates.story = { ...run.gates.story, state: "approved", storyHash: before.storyHash, at: now(), by: `approved in ${from}` };
+    }
+  }
+  // Also copy the saved review file so buildReview can carry over dispositions.
+  const srcReview = join(runDir(from), "story.review.json");
+  if (existsSync(srcReview)) {
+    copyFileSync(srcReview, join(runDir(run.id), "story.review.json"));
   }
   writeRun(run);
   console.log(`[producer] the story is reused from ${from}; no writer is asked`);
@@ -957,7 +1210,16 @@ function reuseStory(run: RunManifest, brief: Brief, from: string): void {
  */
 export async function resumePlan(
   id: string,
-  opts: { approveStory?: boolean; storyGate?: boolean; shopGate?: boolean; shop?: ShopDecision; cli?: { provider?: string; model?: string }; by?: string } = {},
+  opts: {
+    approveStory?: boolean;
+    storyGate?: boolean;
+    shopGate?: boolean;
+    shop?: ShopDecision;
+    cli?: { provider?: string; model?: string };
+    by?: string;
+    /** Explicit override of open critical story-quality findings. */
+    override?: { findings: string[]; reason: string; by: string };
+  } = {},
 ): Promise<{ spec: ShotSpec; report: PlanReport }> {
   const run = readRun(id);
   const brief = readBrief(id);
@@ -975,7 +1237,17 @@ export async function resumePlan(
     run.gates.shop = { on: false, state: "off" };
     writeRun(run);
   }
+  if (opts.override) {
+    overrideReview(run, opts.override.findings, opts.override.reason, opts.override.by ?? opts.by ?? "cli");
+    console.log(`[producer] story-quality override recorded for ${opts.override.findings.join(", ")}`);
+  }
   if (opts.approveStory && waitsForStory(run)) {
+    const review = run.gates.story.review;
+    if (review && review.criticalFindingIds.length) {
+      throw new Error(
+        `the story of ${id} has ${review.criticalFindingIds.length} unresolved critical finding(s). Override them explicitly with --override-review <findingId>=<reason>, or correct the story and resume again.`,
+      );
+    }
     approveStory(run, opts.by ?? "cli");
     console.log(`[producer] the story of ${id} is approved as it is in output/${id}/story.json`);
   }
@@ -1015,8 +1287,10 @@ export function approvedSettings(plan: VideoSettings, approved?: Partial<VideoSe
   const settings: VideoSettings = { ...plan, quality: approved.quality ?? plan.quality };
   delete settings.captions;
   delete settings.critic;
+  delete settings.soundEffects;
   if (approved.captions !== undefined) settings.captions = approved.captions;
   if (approved.critic !== undefined) settings.critic = approved.critic;
+  if (approved.soundEffects !== undefined) settings.soundEffects = approved.soundEffects;
   const warnings: string[] = [];
   for (const k of TIMELINE_SETTINGS) {
     if (approved[k] !== undefined && approved[k] !== plan[k]) {
@@ -1095,6 +1369,8 @@ function adoptEdits(story: WriterStory, approved?: ShotSpec): number {
     // the ids stay, the voices are re-found by name in castVoices.
     if (a.lines?.length) b.lines = a.lines.map((l) => ({ who: l.who ?? "", text: l.text }));
   }
+  const speakerProblem = validateSpeakers(story);
+  if (speakerProblem) throw new Error(speakerProblem);
   return changed;
 }
 

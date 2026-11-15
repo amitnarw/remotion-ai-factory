@@ -18,6 +18,7 @@ import { join } from "path";
 import type { StoryMode } from "../ai/channels";
 import type { VideoSettings } from "../spec.schema";
 import type { AudioConfig } from "./voice";
+import { reviewSummary, type StoryReview, type StoryFinding, type ReviewDisposition } from "./story-review";
 
 let outputRoot = join(process.cwd(), "output");
 
@@ -80,24 +81,50 @@ export interface Brief {
 export interface StoryGate {
   on: boolean;
   /** "waiting": the story is written and shown; "approved": it may go on. */
-  state: "off" | "open" | "waiting" | "approved";
+  state: "off" | "open" | "waiting" | "approved" | "blocked";
   /** Hash of the story that was approved: an edit after the approval asks again. */
   storyHash?: string;
   at?: string;
   by?: string;
+  /** Story-quality review state: pending/blocked/cleared, the story hash it
+   *  was evaluated against, and the open critical finding ids. A blocked
+   *  review stops progression even when the story gate itself is off. */
+  review?: {
+    state: "pending" | "blocked" | "cleared";
+    storyHash: string;
+    criticalFindingIds: string[];
+    summary?: string;
+    /** Explicit override of open critical findings: which, why, who, when. */
+    override?: { findings: string[]; reason: string; by: string; at: string };
+    /** The findings as built, so isClear() can work on the in-memory object. */
+    findings?: StoryFinding[];
+    /** The disposition as built, so isClear() can work on the in-memory object. */
+    disposition?: ReviewDisposition;
+  };
 }
 
 /**
  * Gate 2: the shopping list. "waiting": shopping.json lists what the library
  * is missing and waits for the user's choices; "done": the choices were made
  * (acquisition.json), or nothing was missing (every need in stock or with a
- * stand-in).
+ * stand-in); "blocked": a must-have visual nothing was taken in for cannot be
+ * had, so the plan cannot go on to assembly without a new choice or a story
+ * change.
  */
 export interface ShopGate {
   on: boolean;
-  state: "off" | "open" | "waiting" | "done";
-  /** The needs that wait (waiting), or what was decided (done). */
+  state: "off" | "open" | "waiting" | "done" | "blocked";
+  /** The needs that wait (waiting), or what was decided (done/blocked). */
   needs?: string[];
+  /** Must-have visual needs that remain unresolved (blocked only). */
+  unresolved?: Array<{
+    id: string;
+    kind: string;
+    what: string;
+    beats: string[];
+    reason: string;
+    buildRequest?: string;
+  }>;
   at?: string;
   by?: string;
 }
@@ -247,7 +274,7 @@ export function isComplete(run: RunManifest): boolean {
 
 /** The story stage is done and the gate waits for the user. */
 export function waitsForStory(run: RunManifest): boolean {
-  return run.gates.story.on && run.gates.story.state === "waiting" && run.stages.story.state === "done";
+  return run.gates.story.on && (run.gates.story.state === "waiting" || run.gates.story.state === "blocked" || run.gates.story.state === "open") && run.stages.story.state === "done";
 }
 
 /** Gate 2 waits: the shopping list is saved and the user has not chosen yet. */
@@ -267,6 +294,56 @@ export function approveStory(run: RunManifest, by: string): void {
   if (!hash) throw new Error(`output/${run.id}/story.json is missing; there is no story to approve`);
   run.gates.story = { ...run.gates.story, state: "approved", storyHash: hash, at: new Date().toISOString(), by };
   writeRun(run);
+}
+
+/** Record an explicit override of open critical story-quality findings, scoped
+ *  to the current story hash and the listed finding ids. Does not approve the
+ *  story itself: the story gate (if on) still requires a separate approval. */
+export function overrideReview(run: RunManifest, findingIds: string[], reason: string, by: string): void {
+  if (!findingIds.length) throw new Error("no findings named in the override");
+  if (!reason.trim()) throw new Error("an override needs a reason");
+  const review = run.gates.story.review;
+  const openCritical = review ? review.criticalFindingIds.filter((f) => {
+    const fnd = (readJson<StoryReview>(join(runDir(run.id), "story.review.json"))?.findings ?? []).find((x) => x.id === f);
+    return fnd && fnd.severity === "critical" && fnd.status === "open";
+  }) : [];
+  const unknown = findingIds.filter((f) => !openCritical.includes(f));
+  if (unknown.length) throw new Error(`unknown or already-resolved finding(s): ${unknown.join(", ")}`);
+  const storyHash = review?.storyHash ?? storyHashOnDisk(run.id) ?? "";
+  const saved = readJson<StoryReview>(join(runDir(run.id), "story.review.json"));
+  run.gates.story = {
+    ...run.gates.story,
+    state: "open",
+    storyHash,
+    review: {
+      state: "cleared",
+      storyHash,
+      criticalFindingIds: [],
+      findings: saved?.findings ?? [],
+      disposition: saved?.disposition,
+      summary: `override: ${findingIds.length} critical finding(s) overridden: ${reason}`,
+      override: { findings: [...findingIds], reason: reason.trim(), by, at: new Date().toISOString() },
+    },
+  };
+  // Mark the overridden findings as resolved in the saved review.
+  const reviewFile = join(runDir(run.id), "story.review.json");
+  if (saved) {
+    for (const f of saved.findings) {
+      if (findingIds.includes(f.id) && f.severity === "critical" && f.status === "open") {
+        f.status = "overridden";
+      }
+    }
+    saved.disposition = { state: "cleared", storyHash, override: { findings: [...findingIds], reason: reason.trim(), by, at: new Date().toISOString() } };
+    saved.summary = reviewSummary(saved);
+    writeFileSync(reviewFile, JSON.stringify(saved, null, 2));
+  }
+  writeRun(run);
+}
+
+/** True when the story-quality review is cleared (no open critical findings). */
+export function reviewIsClear(run: RunManifest): boolean {
+  const review = run.gates.story.review;
+  return !review || review.state === "cleared";
 }
 
 /** One line per stage, for `--status` and the server. */

@@ -352,9 +352,10 @@ export async function breakDownStory(input: {
       essential: acts.length > 1 ? undefined : breakdownProblem,
       models: input.models,
     });
+    if (!result.ok) throw new Error(result.problem ?? "breakdown failed");
     provider = result.provider;
     model = result.model;
-    lists.push(result.value.needs.map((n) => ({ ...n, words: n.words.map((w) => w.toLowerCase()) })));
+    lists.push(result.value!.needs.map((n) => ({ ...n, words: n.words.map((w) => w.toLowerCase()) })));
   }
   const needs = mergeNeeds(lists, ids);
   return { version: 1, title: input.story.title, needs, warnings: crowdedBeats(needs), provider, model, calls: acts.length };
