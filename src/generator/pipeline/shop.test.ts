@@ -212,6 +212,25 @@ test("gate 2 can be turned off at the stop, and is off unless asked for", async 
   }
 });
 
+test("gate 2 lists must-have visuals nothing stands in for, so they can be built or closed there", () => {
+  const needs: NeedsFile = {
+    version: 1,
+    inventory: "inv",
+    warnings: [],
+    needs: [
+      // A room with a kit standing in, but a build would fit better: on the list.
+      { id: "n1", kind: "set", what: "a feast hall", words: ["hall"], beats: ["b1"], must: true, status: "close", then: "build", use: { id: "interior", kind: "kit", name: "interior" }, judged: "code", candidates: [] },
+      // A room nothing stands in for: it would block the plan after acquisition, so it is asked here.
+      { id: "n2", kind: "set", what: "a workshop", words: ["workshop"], beats: ["b2"], must: true, status: "build", judged: "code", candidates: [] },
+      // A camera move is not a visual the story needs on screen, and an in-stock prop needs nothing.
+      { id: "n3", kind: "camera", what: "an orbit", words: ["orbit"], beats: ["b1"], must: true, status: "build", judged: "code", candidates: [] },
+      { id: "n4", kind: "prop", what: "a spoon", words: ["spoon"], beats: ["b1"], must: true, status: "have", use: { id: "model:kenney-food-kit-cooking-spoon", kind: "model", name: "spoon" }, judged: "code", candidates: [] },
+    ],
+  };
+  assert.deepEqual(needsToShop(needs).map((n) => n.id), ["n1", "n2"]);
+  assert.deepEqual(needsToShop(needs).filter((n) => !n.use).map((n) => n.id), ["n2"], "only the one with nothing on screen must stop the gate");
+});
+
 test("gate 2's choices: named needs as named, the free picks with allFree, the rest keep their stand-ins", () => {
   const use = { id: "music-mood:sad", kind: "music-mood" as const, name: "sad" };
   const needs: NeedsFile = {

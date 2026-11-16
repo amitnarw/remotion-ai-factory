@@ -277,9 +277,9 @@ export function waitsForStory(run: RunManifest): boolean {
   return run.gates.story.on && (run.gates.story.state === "waiting" || run.gates.story.state === "blocked" || run.gates.story.state === "open") && run.stages.story.state === "done";
 }
 
-/** Gate 2 waits: the shopping list is saved and the user has not chosen yet. */
+/** Gate 2 waits: the shopping list is saved (or a must-have visual is blocked) and the user has not closed it. */
 export function waitsForShopping(run: RunManifest): boolean {
-  return run.gates.shop.on && run.gates.shop.state === "waiting";
+  return run.gates.shop.on && (run.gates.shop.state === "waiting" || run.gates.shop.state === "blocked");
 }
 
 /** Hash of the story on disk now (the gate compares it with the approved one). */

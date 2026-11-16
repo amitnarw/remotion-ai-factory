@@ -865,7 +865,7 @@ Gate 2 of §2 in the run, on the command line, on the server and in the dashboar
 
 ### Where it stops
 - **After the library match, before the director** ([run.ts](../../src/generator/pipeline/run.ts) `shopGate`). The needs it looks at are those of `needsToShop(needs)` with no `choice` yet.
-- **It stops only for a need nothing in stock stands in for** (status `download`). A run whose needs are all have or close goes on.
+- **It stops for a need nothing in stock stands in for** (status `download`), and for a must-have visual with nothing at all standing in for it (status `build`): that one would block the plan after acquisition, so the choice is asked here. The list also carries a close need with a build gap, so its stand-in can be kept or a build asked for. A run whose needs are all have or close goes on.
   - Its close needs with a download gap (the keeper's characters and its sad music, for example) are got only when the user asks: with choices given in advance (`--all-cc0` on the first command), or at a stop made for another need, where the list shows every open need.
   - `needsToShop` alone would stop for every close need with a download gap, which most runs have.
 - **At a stop:**
@@ -880,7 +880,8 @@ Gate 2 of §2 in the run, on the command line, on the server and in the dashboar
   - with `allFree`, `approveAllFree` over the open needs, so a CC-BY offer is never picked for you;
   - every need left keeps its stand-in (`close`), or is left out (`skip`) when nothing stands in.
 
-  Then `acquire(needs, approvals, {run, shopping, models})` runs. `acquisition.json` and the new `needs.json` (each choice recorded) are saved, `gates.shop` becomes `done`, and the director goes on. A must-have that could not be had keeps its stand-in and files a build request (§13), so the plan never stops there.
+  Then `acquire(needs, approvals, {run, shopping, models})` runs. `acquisition.json` and the new `needs.json` (each choice recorded) are saved, and the director goes on.
+  - A must-have visual still with no stand-in after that (nothing was taken in, and `needs.json` has no `use`) blocks here: `gates.shop = { state: "blocked", needs, unresolved }`, and the CLI prints `VISUAL_BLOCK_ID: <run>` and exits 0. The user gets one (a link counts), keeps a stand-in where one exists, or goes on with `--no-shop-gate`. Otherwise `gates.shop` becomes `done` and files a build request for a must-have that could not be had (§13).
 - **The same process plans on with what was taken in.** After an intake the run calls `setAcquiredModels` and `setAcquiredSounds` with the new catalog, and `reloadLibrary` ([audio-library.ts](../../src/generator/audio-library.ts)). So the director, the sound designer and a render in that process see the new items.
 - **The render bundle's cache key** ([render/bundle.ts](../../src/generator/render/bundle.ts) `sourceHash`) now hashes `acquired.catalog.json`, so a cached bundle is built again after an acquisition. Every cached bundle is built once more after this change.
 - **On by default** for the CLI and the dashboard, through the channel profile's new `gates.shop` (default true). It is off with `--no-shop-gate`, with `shopGate: false` in POST `/api/plan`, or with `resumePlan(id, { shopGate: false })` at a stop.
@@ -895,6 +896,7 @@ npm run generate -- --resume <run> --all-cc0        get every free (CC0) pick, p
 npm run generate -- --resume <run> --approve n6=bigsoundbank:1048 n2=close n3=build n9=skip   (add --all-cc0 for the needs not named)
 npm run generate -- --resume <run>                  go on with what the library has (every stand-in kept, nothing downloaded)
 npm run generate -- --status <run>                  "gate 2  the shopping list waits for your choices (n1, n4, ...)"
+npm run generate -- --resume <run> --no-shop-gate   go on with the stand-ins the library has (the visuals nothing stands in for are left out)
 npm run generate -- "<premise>" --no-shop-gate      never stop there
 npm run generate -- "<premise>" --sources kenney,bigsoundbank   the sources searched (none searches nothing)
 ```
@@ -903,11 +905,12 @@ npm run generate -- "<premise>" --sources kenney,bigsoundbank   the sources sear
 - A run keeps the sources it started with (`brief.shopSources`).
 
 ### The dashboard and the API
-- **The Shopping list step** ([ShoppingStep.tsx](../../ui/src/pages/create/ShoppingStep.tsx)) comes after the story review, when the plan job stopped there (`SHOP_ID`, `gate: "shop"`).
+- **The Shopping list step** ([ShoppingStep.tsx](../../ui/src/pages/create/ShoppingStep.tsx)) comes after the story review, when the plan job stopped there (`SHOP_ID` or `VISUAL_BLOCK_ID`, `gate: "shop"`).
   - Each need is a card: its kind, whether the story needs it, its beats, and what stands in meanwhile.
   - The choices are Get one, Use the stand-in, Ask for it (a build request) and Leave it out. Nothing is downloaded by default.
   - Get one lists the offers. Each shows its licence badge, source, author, size or length, the pack note, its ref and a link to its page, and a model's thumbnail. Nothing plays.
   - "Approve every CC0 pick" sends the needs you changed, plus `allFree`. "Get N and plan the rest" sends every choice. Either starts a plan job that resumes the run.
+  - A blocked run adds a red badge on each must-have visual with nothing standing in for it, and "Go on with the stand-ins" (POST resume with `noShopGate: true`) goes on with what the library has. The other buttons wait while a must-have visual still has nothing chosen.
   - The writing card lists "Your shopping list" as a step, and a toast says "Your shopping list is ready".
 - **The Assets page** ([Assets.tsx](../../ui/src/pages/assets/Assets.tsx), `?tab=assets`, in the sidebar) shows:
   - the sources and their state (`sourceStatus()`, with the keys saved in `.env`);
@@ -915,9 +918,9 @@ npm run generate -- "<premise>" --sources kenney,bigsoundbank   the sources sear
   - what was acquired (`readAcquired(acquirePaths().catalogFile)`): the licence, the credit, the need it was got for, held-back items, and whether the files are on this computer.
 - **The API:**
   - POST `/api/plan` takes `shopGate` and `shopSources`.
-  - GET `/api/spec/:jobId` answers `{ ready, gate: "shop", runId, shopping }` at the stop: the waiting needs with their beats and stand-ins, the sources and the warnings.
-  - POST `/api/plan/:runId/resume` takes `{ approvals: ["n6=bigsoundbank:1048", "n2=close"], allFree }`, checked with `parseApprovals`.
-  - GET `/api/runs/:runId` adds `shopGate` and `waitsForShopping`. GET `/api/assets` is new.
+  - GET `/api/spec/:jobId` answers `{ ready, gate: "shop", runId, shopping }` at the stop: the waiting needs with their beats and stand-ins, the sources and the warnings. A blocked run's `shopping` carries `blocked: true` and the must-have visuals `shopping.json` never listed (status `build`, with the reason), so they show as cards too.
+  - POST `/api/plan/:runId/resume` takes `{ approvals: ["n6=bigsoundbank:1048", "n2=close"], allFree }`, checked with `parseApprovals`, and `{ noShopGate: true }` to go on with the stand-ins (the run's gate 2 is turned off).
+  - GET `/api/runs/:runId` adds `shopGate` and `waitsForShopping` (true while gate 2 waits or is blocked). `waitsForShopping` is what the plan screen's resume button reads. GET `/api/assets` is new.
 
 ### Checked
 - `shop.test.ts` runs on the keeper's recorded replies with a brass telescope added (nothing stands in for it), a mocked fetch (FreePD only), a 25 s tone as the FreePD track, and a temporary library. It checks that:
@@ -927,7 +930,9 @@ npm run generate -- "<premise>" --sources kenney,bigsoundbank   the sources sear
   - the keeper as it is (all have or close) does not stop and asks no source; with every CC0 pick given in advance, its close music is got without a stop;
   - turned off at the stop, nothing is acquired; library callers plan with no gate and no `shopGate` in the brief;
   - `shopApprovals` keeps the stand-ins of unnamed needs, never asks a decided need again, never takes CC-BY as a free pick, and refuses an unknown need.
-- The other tests pass unchanged.
+  - a must-have set nothing stands in for (status `build`) is on the list and stops the gate; a close need with a build gap is too, so its stand-in can be kept;
+  - `unresolvedRequiredVisuals` clears a need with the match's stand-in, and leaves one with nothing on screen.
+- The other tests pass unchanged. `jobs.failure.test.ts` reads `VISUAL_BLOCK_ID` (and `SHOP_ID`, `STORY_ID`, `STORY_REVIEW_BLOCK_ID`) from a plan job's log, so a blocked run shows its shopping list instead of "this job produced no plan".
 - By hand, on the keeper fixtures with the telescope and `--sources none`, in a check worktree:
   - the CLI stop, `--status`, and `--resume <run> --approve n1=build` (the request filed, the other needs kept their stand-ins, `PLAN_ID`);
   - the job API end to end on a second server: a plan with `shopSources: []` stopped with `gate: "shop"` and the four waiting needs (their beats and stand-ins), `/api/jobs` and `/api/runs` showed the stop, a bad approval and an unknown source were refused (400), the resume with `["n1=build"]` and `allFree` finished the plan, and `/api/assets` listed the sources and the new request.

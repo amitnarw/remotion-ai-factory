@@ -169,6 +169,25 @@ test("unresolvedRequiredVisuals: optional needs do not block", () => {
   assert.deepEqual(unresolved, [], "optional needs are not unresolved");
 });
 
+test("unresolvedRequiredVisuals: a need with a stand-in is resolved even before the user chooses", () => {
+  const needs: NeedsFile = {
+    version: 1,
+    inventory: "inv",
+    warnings: [],
+    needs: [
+      // The match found a kit that stands in for the room ("close"): it can be
+      // shown, so it is not a missing visual (gate 2 may still offer a better one).
+      need("n1", { kind: "set", what: "a feast hall", must: true, status: "close", use: { id: "interior", kind: "kit", name: "interior" } }),
+      // Nothing stands in for the workshop ("build"): nothing can be shown.
+      need("n2", { kind: "set", what: "a workshop", must: true, status: "build" }),
+    ],
+  };
+  const acq = acquisition({ items: [] });
+
+  const unresolved = unresolvedRequiredVisuals(needs, acq);
+  assert.deepEqual(unresolved.map((u) => u.id), ["n2"], "the stand-in resolves one; the build with nothing on screen blocks");
+});
+
 test("validateVisualCoverage: missing shot coverage is flagged", () => {
   const specObj = spec({ shots: [] }); // no shots at all
   const needs: NeedsFile = {

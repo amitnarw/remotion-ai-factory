@@ -185,8 +185,13 @@ export async function copyChannel(from: string, id: string, name: string): Promi
 /** Continue a run in a new plan job: approves the story that waits at the gate,
  *  or goes on from the stage it stopped at. At gate 2, `choices` are the user's:
  *  approvals as the CLI writes them ("n6=bigsoundbank:1048", "n2=close",
- *  "n3=build", "n9=skip") and `allFree` for "Approve every CC0 pick". */
-export async function resumeRun(runId: string, choices?: { approvals?: string[]; allFree?: boolean; override?: { findings: string[]; reason: string } }): Promise<{ jobId: string }> {
+ *  "n3=build", "n9=skip") and `allFree` for "Approve every CC0 pick".
+ *  `noShopGate` goes on with the stand-ins the library has, for a story that
+ *  needs visuals nothing can stand in for (gate 2 is turned off for the run). */
+export async function resumeRun(
+  runId: string,
+  choices?: { approvals?: string[]; allFree?: boolean; noShopGate?: boolean; override?: { findings: string[]; reason: string } },
+): Promise<{ jobId: string }> {
   return json(
     await fetch(`${BASE}/plan/${runId}/resume`, {
       method: "POST",
@@ -236,6 +241,8 @@ export interface ShoppingList {
   inventory: string;
   /** The run still waits for the choices. */
   waiting: boolean;
+  /** A must-have visual could not be taken in: the plan is blocked here until a choice or a story change. */
+  blocked?: boolean;
   needs: ShoppingNeed[];
   sources: SourceStatus[];
   /** The sources this list searched ([] searched none); unset in lists from before it was recorded. */

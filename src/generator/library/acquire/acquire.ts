@@ -104,9 +104,22 @@ export interface Shopping {
 
 const ASSET_TYPES: Record<string, AssetType> = { model: "model", sound: "sound", ambience: "ambience", music: "music" };
 
-/** The needs a download would close: "download", and "close" whose gap is a download. */
+/** The kinds of need whose absence means something the story needs is not on screen. */
+export const VISUAL_NEED_KINDS: ReadonlySet<string> = new Set(["set", "character", "prop", "vehicle", "animal"]);
+
+/**
+ * The needs gate 2 decides: a download would close them, and must-have visuals
+ * nothing in stock stands in for (status "build"), which would block the plan
+ * later — so the user chooses here (get one, ask for a build, leave it out)
+ * instead of meeting a dead end after acquisition.
+ */
 export function needsToShop(file: Pick<NeedsFile, "needs">): MatchedNeed[] {
-  return file.needs.filter((n) => n.status === "download" || (n.status === "close" && n.then === "download"));
+  return file.needs.filter(
+    (n) =>
+      n.status === "download" ||
+      (n.status === "close" && n.then === "download") ||
+      (n.must && VISUAL_NEED_KINDS.has(n.kind) && (n.status === "build" || (n.status === "close" && n.then === "build"))),
+  );
 }
 
 function askOf(n: MatchedNeed): SearchAsk | null {

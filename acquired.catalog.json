@@ -12,6 +12,13 @@
     "by": "Kay Lousberg",
     "u": "https://kaylousberg.itch.io/board-game-bits"
    },
+   "acquired/kaykit/kay-kit-medieval-hexagon-pack": {
+    "name": "KayKit Medieval Hexagon Pack",
+    "src": "kaykit",
+    "l": "CC0-1.0",
+    "by": "Kay Lousberg",
+    "u": "https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0"
+   },
    "acquired/quaternius/quaternius-universal-base-characters": {
     "name": "Quaternius Universal Base Characters",
     "src": "quaternius",
@@ -53,6 +60,42 @@
      1,
      1
     ]
+   },
+   {
+    "id": "kaykit-kaykit-medieval-hexagon-hills-a",
+    "f": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/hills_A.gltf",
+    "pk": "acquired/kaykit/kay-kit-medieval-hexagon-pack",
+    "c": "character",
+    "p": "ground",
+    "r": [
+     "american",
+     "european"
+    ],
+    "io": "o",
+    "n": "hill a",
+    "t": [
+     "decoration",
+     "diner",
+     "hand",
+     "kaykit",
+     "nature"
+    ],
+    "s": [
+     7.02,
+     3.18,
+     6.95
+    ],
+    "o": [
+     0.23,
+     0,
+     0.14
+    ],
+    "tri": 383,
+    "mm": [
+     1,
+     1
+    ],
+    "k": 4
    },
    {
     "id": "quaternius-universal-base-characters-eyebrows-female",
@@ -147,6 +190,60 @@
    "notes": [
     "chose D6_A of 162 models by the need's words (next: D6_B, D20_blue, D20_green)",
     "the pack also ships 324 FBX, 162 OBJ, not taken"
+   ]
+  },
+  {
+   "id": "kaykit-kaykit-medieval-hexagon-hills-a",
+   "kind": "model",
+   "ref": "kaykit:kaykit-medieval-hexagon",
+   "source": "kaykit",
+   "title": "hills_A (KayKit - Medieval Hexagon Pack)",
+   "author": "Kay Lousberg",
+   "page": "https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0",
+   "fileUrl": "https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0/archive/refs/heads/main.zip",
+   "licence": "CC0-1.0",
+   "tier": "free",
+   "evidence": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/licence.json",
+   "evidenceSha256": "73c55e61f5e8f8da14d17d9715ddd675dff58b587bb1ec8adc8f9075a355a954",
+   "files": [
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/hills_A.gltf",
+     "sha256": "866af95bdd72acf0d55916f55daf5db798254d57c8b187440c8ff9ad8fa29671",
+     "bytes": 3022
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/hills_A.bin",
+     "sha256": "a1d3bb1874dee2c2bbd1331a5ad5605a6975ec3714d23fee83e440002e19e0c1",
+     "bytes": 22076
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/hexagons_medieval.png",
+     "sha256": "5301a06866ba3be68dcc14cc429bd6d0f69004b72884283715d7e233f2e9782e",
+     "bytes": 15783
+    },
+    {
+     "file": "assets/acquired/models/kaykit/kaykit-kaykit-medieval-hexagon-hills-a/LICENSE.txt",
+     "sha256": "881e50d3629fba90629bedc65e9e6f47cfab3609598c296dcb7f70ea83174360",
+     "bytes": 1027
+    }
+   ],
+   "fetchedAt": "2026-11-16T16:53:53.530Z",
+   "need": {
+    "run": "documentary-about-utensils-0a62b1",
+    "id": "n3",
+    "kind": "character",
+    "what": "diners",
+    "words": [
+     "diners",
+     "medieval",
+     "hands"
+    ]
+   },
+   "notes": [
+    "chose hills_A of 221 models by the need's words (next: hills_B, hills_C, mountain_A)",
+    "the pack also ships 263 OBJ, not taken",
+    "scaled x4 with its kit (rescaled: 95% plausible at x4 vs 14% at x1)",
+    "category character from the need (the file name read as terrain-piece)"
    ]
   },
   {

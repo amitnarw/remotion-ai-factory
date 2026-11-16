@@ -64,7 +64,7 @@ import { claimsInputs, claimsPolicy, claimsStage, type ClaimsCheck } from "./cla
 import { standingBlock, standingNotes } from "./notes";
 import { matchNeeds, type NeedsFile } from "../library/match";
 import { buildReview, isClear, reviewSummary, type StoryReview, type StoryFinding, type ReviewCheckState } from "./story-review";
-import { acquire, approveAllFree, findOffers, formatAcquisition, needsToShop, type AcquireOptions, type Shopping } from "../library/acquire/acquire";
+import { acquire, approveAllFree, findOffers, formatAcquisition, needsToShop, VISUAL_NEED_KINDS, type AcquireOptions, type Shopping } from "../library/acquire/acquire";
 import { acquirePaths, readAcquired, type AcquirePaths } from "../library/acquire/catalog";
 import type { AcquisitionFile, Approval, SourceId } from "../library/acquire/types";
 import { setAcquiredModels } from "../../world/catalog";
@@ -264,13 +264,13 @@ export interface UnresolvedVisual {
 }
 
 /** Kinds of need whose absence means something the story needs is not on screen. */
-const VISUAL_KINDS: ReadonlySet<NeedKind> = new Set(["set", "character", "prop", "vehicle", "animal"]);
+const VISUAL_KINDS = VISUAL_NEED_KINDS as ReadonlySet<NeedKind>;
 
 /** Must-have visual needs that gate 2 could not close: nothing was taken in
- *  for them and no accepted substitute stands in. A need whose status is
- *  "have" (in stock), or that was taken in / already in stock, or whose user
- *  accepted a close substitute (`use` set), is not unresolved here — the
- *  assembled-spec preflight still checks the substitute is wired into a scene. */
+ *  for them and nothing stands in for them. A need with a stand-in (`use`, the
+ *  match's "close"), one that was taken in / already in stock, or one in stock
+ *  ("have") is not unresolved here — the assembled-spec preflight still checks
+ *  the stand-in is wired into a scene. */
 export function unresolvedRequiredVisuals(needs: NeedsFile, acquisition: AcquisitionFile): UnresolvedVisual[] {
   const byNeed = new Map(acquisition.items.map((i) => [i.need, i]));
   const out: UnresolvedVisual[] = [];
@@ -279,8 +279,9 @@ export function unresolvedRequiredVisuals(needs: NeedsFile, acquisition: Acquisi
     if (n.status === "have") continue;
     const item = byNeed.get(n.id);
     const takenIn = item && (item.result === "taken-in" || item.result === "already-in-stock");
-    const acceptedSub = item && item.choice === "close" && !!n.use;
-    if (takenIn || acceptedSub) continue;
+    // `use` is what stands in for it: the match's close substitute, or the one
+    // the user kept. Nothing can be shown only when it is absent.
+    if (takenIn || n.use) continue;
     out.push({
       id: n.id,
       kind: n.kind,
@@ -610,22 +611,27 @@ function prepareScript(brief: Brief, profile: ChannelProfile): { brief: Brief; w
 
 /**
  * Gate 2 (P4, acquire.ts): the needs a download would close (needsToShop)
- * that nobody has decided yet. The plan stops only for a need nothing in
- * stock stands in for ("download"): a run whose needs are all have or close
- * goes on, and its close needs are got only when the user asks (choices
- * given in advance, such as every CC0 pick, or at a stop for another need).
- * At a stop the offers for every open need are found (nothing is downloaded)
- * and saved in shopping.json (ShopGateStop). With a decision, only what was
- * approved is fetched, checked and taken in, build requests are filed, and
- * needs.json is matched again with each choice recorded (acquisition.json).
- * A must-have that can't be had keeps its stand-in, so the plan always goes
- * on from here.
+ * that nobody has decided yet, and the must-have visuals nothing stands in for
+ * (a "build"), which would block the plan after acquisition. The plan stops
+ * for a need nothing in stock stands in for ("download") or one of those
+ * visuals: a run whose needs are all have or close goes on, and its close needs
+ * are got only when the user asks (choices given in advance, such as every CC0
+ * pick, or at a stop for another need). At a stop the offers for every open
+ * need are found (nothing is downloaded) and saved in shopping.json
+ * (ShopGateStop). With a decision, only what was approved is fetched, checked
+ * and taken in, build requests are filed, and needs.json is matched again with
+ * each choice recorded (acquisition.json). A must-have visual still without a
+ * stand-in after that blocks here (VisualBlockError), so the user chooses
+ * another offer, accepts a substitute, files a build request or changes the
+ * story instead of rendering a story with things missing from the screen.
  */
 async function shopGate(run: RunManifest, brief: Brief, needs: NeedsFile, models: Record<string, RoleModel>, decision?: ShopDecision): Promise<string[]> {
   const { id } = run;
   const open = needsToShop(needs).filter((n) => !n.choice);
   const missing = open.filter((n) => n.status === "download");
-  if (!open.length || (!missing.length && !decision)) {
+  // A must-have visual with no stand-in can only close by the user's choice.
+  const unfillable = open.filter((n) => n.must && VISUAL_KINDS.has(n.kind) && !n.use);
+  if (!open.length || (!missing.length && !unfillable.length && !decision)) {
     if (run.gates.shop.state !== "done") {
       run.gates.shop = { on: true, state: "done", at: now(), by: open.length ? "nothing missing: every need is in stock or has a stand-in" : "nothing to get" };
       writeRun(run);

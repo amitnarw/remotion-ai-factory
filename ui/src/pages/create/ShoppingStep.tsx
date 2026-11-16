@@ -58,6 +58,9 @@ const KIND_LABELS: Record<string, string> = {
   graphic: "A graphic",
 };
 
+/** The kinds whose absence means something the story needs is not on screen (pipeline/run.ts). */
+const VISUAL_NEED_KINDS: ReadonlySet<string> = new Set(["set", "character", "prop", "vehicle", "animal"]);
+
 /** Nothing downloads by default: the stand-in when there is one, else left out. */
 function startChoice(n: ShoppingNeed): Choice {
   return { action: n.use ? "close" : "skip", touched: false };
@@ -139,6 +142,7 @@ function NeedCard({
   need,
   choice,
   sources,
+  blocked,
   onChoice,
   onNeed,
 }: {
@@ -146,6 +150,8 @@ function NeedCard({
   need: ShoppingNeed;
   choice: Choice;
   sources: Map<string, string>;
+  /** The plan stopped on a must-have visual: a need with nothing on screen keeps it stopped. */
+  blocked: boolean;
   onChoice: (c: Choice) => void;
   /** The need with more offers, or a pasted link's offer added. */
   onNeed: (n: ShoppingNeed) => void;
@@ -198,7 +204,14 @@ function NeedCard({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="violet">{KIND_LABELS[need.kind] ?? need.kind}</Badge>
           {need.must ? <Badge variant="amber">The story needs it</Badge> : null}
-          {need.status === "download" ? <Badge variant="muted">Nothing in stock</Badge> : <Badge variant="muted">A download would fit better</Badge>}
+          {blocked && need.must && VISUAL_NEED_KINDS.has(need.kind) && !need.use ? <Badge variant="destructive">Nothing stands in for it</Badge> : null}
+          {need.status === "download" ? (
+            <Badge variant="muted">Nothing in stock</Badge>
+          ) : need.status === "build" ? (
+            <Badge variant="muted">Nothing to download: a build</Badge>
+          ) : (
+            <Badge variant="muted">A download would fit better</Badge>
+          )}
           <span className="ml-auto text-xs font-bold tabular-nums text-muted-foreground">{need.need}</span>
         </div>
         <h3 className="text-lg font-semibold leading-snug">{need.what}</h3>
@@ -244,6 +257,11 @@ function NeedCard({
           A build request is filed for the developers (the Assets page lists them). {need.useName ? `The plan uses ${need.useName} until it is built.` : ""}
         </p>
       ) : null}
+      {blocked && need.must && VISUAL_NEED_KINDS.has(need.kind) && !need.use && choice.action === "skip" ? (
+        <p className="rounded-xl bg-input/40 p-3 text-sm text-muted-foreground">
+          The plan stays stopped while this has nothing on screen. Get one (paste a link if the sources have none), ask for it to be built, or go on with the stand-ins.
+        </p>
+      ) : null}
       {!usable.length && need.notes.length ? (
         <ul className="space-y-1 text-sm text-muted-foreground">
           {need.notes.map((n) => (
@@ -262,17 +280,25 @@ export interface ShopGateData {
 
 export function ShoppingGateView({ data }: { data: ShopGateData }) {
   const { shopping: given } = data;
+  // The run stopped on a must-have visual: the list may hold needs the sources
+  // never offered (status "build"), and the plan stays stopped for them.
+  const blocked = !!given.blocked;
   // More offers and pasted links change the needs' offers here; the choices are sent as approvals.
   const [needs, setNeeds] = useState<ShoppingNeed[]>(given.needs);
   const shopping = { ...given, needs };
   const [choices, setChoices] = useState<Record<string, Choice>>(() => Object.fromEntries(given.needs.map((n) => [n.need, startChoice(n)])));
-  const [sending, setSending] = useState<"choices" | "free" | null>(null);
+  const [sending, setSending] = useState<"choices" | "free" | "standins" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sources = useMemo(() => new Map(given.sources.map((s) => [s.id as string, s.name])), [given.sources]);
   // The sources the list searched (a list from before they were recorded: every one that works).
   const searched = given.sources.filter((s) => (given.searched ? given.searched.includes(s.id) : s.state === "works" || s.state === "index")).map((s) => s.name);
   const freePicks = shopping.needs.filter((n) => !choices[n.need]?.touched && n.offers.some((o) => o.tier === "free")).length;
   const downloads = Object.values(choices).filter((c) => c.action === "get").length;
+  // A must-have visual with nothing standing in for it keeps the plan stopped
+  // unless an asset is chosen for it (a link counts as one).
+  const stillMissing = shopping.needs.filter(
+    (n) => n.must && VISUAL_NEED_KINDS.has(n.kind) && !n.use && choices[n.need]?.action !== "get",
+  );
 
   const send = async (allFree: boolean) => {
     setSending(allFree ? "free" : "choices");
@@ -283,6 +309,22 @@ export function ShoppingGateView({ data }: { data: ShopGateData }) {
       const { jobId } = await resumeRun(data.runId, { approvals: named, allFree });
       refreshJobs();
       toast.success(allFree ? "Getting every free pick. Then the AI plans the scenes and the sound" : "Your choices are in. The AI plans the scenes and the sound now");
+      navigate({ tab: "create", step: "writing", plan: jobId });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSending(null);
+    }
+  };
+
+  // The stand-ins route: the plan goes on with what the library has, even
+  // though some must-have visual has nothing (gate 2 is turned off for the run).
+  const goOnWithStandins = async () => {
+    setSending("standins");
+    setError(null);
+    try {
+      const { jobId } = await resumeRun(data.runId, { noShopGate: true });
+      refreshJobs();
+      toast.success("Going on with the stand-ins the library has");
       navigate({ tab: "create", step: "writing", plan: jobId });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -314,10 +356,18 @@ export function ShoppingGateView({ data }: { data: ShopGateData }) {
           </Badge>
           <InfoTip helpId="shopping-list" className="ml-auto" />
         </div>
-        <h1 className="mt-3 text-2xl font-bold leading-snug tracking-tight sm:text-3xl">The story needs things the library does not have</h1>
-        <p className="mt-3 text-sm text-muted-foreground">
-          Nothing is downloaded until you choose. Each licence is read again before anything is added: free (CC0) items, and models that only ask for a credit. Open an offer's page to look at it or listen to it there.
-        </p>
+        <h1 className="mt-3 text-2xl font-bold leading-snug tracking-tight sm:text-3xl">
+          {blocked ? "The plan is stopped: must-have visuals are missing" : "The story needs things the library does not have"}
+        </h1>
+        {blocked ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            The story needs these on screen and nothing in the library stands in for them, so the plan cannot go on. Get one (a pasted link counts), use a stand-in where there is one, ask for it to be built, or go on with the stand-ins the library has.
+          </p>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Nothing is downloaded until you choose. Each licence is read again before anything is added: free (CC0) items, and models that only ask for a credit. Open an offer's page to look at it or listen to it there.
+          </p>
+        )}
         <p className="mt-2 text-sm text-muted-foreground">Searched: {searched.length ? searched.join(", ") : "no source (the plan was asked to search none)"}.</p>
       </Card>
 
@@ -336,10 +386,22 @@ export function ShoppingGateView({ data }: { data: ShopGateData }) {
           need={n}
           choice={choices[n.need]}
           sources={sources}
+          blocked={blocked}
           onChoice={(c) => setChoices((all) => ({ ...all, [n.need]: c }))}
           onNeed={(next) => setNeeds((all) => all.map((x) => (x.need === next.need ? next : x)))}
         />
       ))}
+
+      {stillMissing.length ? (
+        <Card className="space-y-1 p-4 text-sm">
+          <p className="font-semibold">
+            {stillMissing.length === 1 ? "One must-have visual still has nothing on screen" : `${stillMissing.length} must-have visuals still have nothing on screen`}
+          </p>
+          <p className="text-muted-foreground">
+            {stillMissing.map((n) => n.what).join(", ")}. Get one for each (paste a link if the sources have none), or go on with the stand-ins.
+          </p>
+        </Card>
+      ) : null}
 
       {error ? <ErrorBanner error={error} /> : null}
 
@@ -348,11 +410,23 @@ export function ShoppingGateView({ data }: { data: ShopGateData }) {
           <Button variant="secondary" className="px-4" aria-label="Back to your choices" onClick={() => navigate({ tab: "create", step: "summary" })}>
             <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
           </Button>
-          <Button variant="secondary" className="px-4" disabled={!!sending || freePicks === 0} onClick={() => void send(true)} title="Get the best free offer of every need you did not change">
+          <Button variant="secondary" className="px-4" disabled={!!sending || freePicks === 0 || stillMissing.length > 0} onClick={() => void send(true)} title="Get the best free offer of every need you did not change">
             {sending === "free" ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
             Approve every CC0 pick
           </Button>
-          <Button variant="amber" className="flex-1 px-4 sm:ml-auto sm:flex-none sm:px-6" disabled={!!sending} onClick={() => void send(false)}>
+          {blocked ? (
+            <Button
+              variant="secondary"
+              className="px-4"
+              disabled={!!sending}
+              onClick={() => void goOnWithStandins()}
+              title="Plan with the stand-ins the library has; the missing visuals are left out"
+            >
+              {sending === "standins" ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4" />}
+              Go on with the stand-ins
+            </Button>
+          ) : null}
+          <Button variant="amber" className="flex-1 px-4 sm:ml-auto sm:flex-none sm:px-6" disabled={!!sending || stillMissing.length > 0} onClick={() => void send(false)}>
             {sending === "choices" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
             {downloads ? `Get ${downloads} and plan the rest` : "Plan the rest with what I have"}
           </Button>

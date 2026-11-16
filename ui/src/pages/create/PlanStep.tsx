@@ -436,7 +436,7 @@ function ResumeButton({ runId }: { runId: string }) {
   return (
     <Button variant="secondary" onClick={resume} disabled={busy}>
       {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-      {run.waitsForStory ? "Read the story" : run.waitsForShopping ? "Go on with what the library has" : `Resume from ${run.nextLabel ?? "where it stopped"}`}
+      {run.waitsForStory ? "Read the story" : run.waitsForShopping ? "Back to the shopping list" : `Resume from ${run.nextLabel ?? "where it stopped"}`}
     </Button>
   );
 }

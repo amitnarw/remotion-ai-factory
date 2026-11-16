@@ -179,15 +179,16 @@ function loadJobsFromDisk(): void {
     // Recover a story/shopping gate the child-process output would have set but
     // that was lost: the server restarted before persist, or the job record
     // predates gate tracking. The run manifest still holds gates.story with
-    // state "blocked"/"waiting" and review.state, so a blocked review shows as
-    // a gate instead of "this job produced no plan."
+    // state "blocked"/"waiting" and review.state, and gates.shop "waiting" or
+    // "blocked" (a must-have visual could not be taken in), so a blocked review
+    // or shopping list shows as a gate instead of "this job produced no plan."
     if (j.engine === "plan" && j.runId && !j.specId && !j.gate) {
       const run = readRun(j.runId);
       if (run) {
         const g = run.gates.story;
         if (g.on && (g.state === "waiting" || g.state === "blocked" || g.review?.state === "blocked")) {
           j.gate = "story";
-        } else if (run.gates.shop.on && run.gates.shop.state === "waiting") {
+        } else if (run.gates.shop.on && (run.gates.shop.state === "waiting" || run.gates.shop.state === "blocked")) {
           j.gate = "shop";
         }
       }
@@ -296,6 +297,30 @@ export function cancelJob(id: string): boolean {
   broadcast(job.id, { type: "failed", error: job.error });
   cancelActivity(id);
   return true;
+}
+
+/**
+ * The machine-readable markers a plan run prints, read from its whole log:
+ * RUN_ID as it starts, PLAN_ID once the plan is written, or the stop that
+ * ended it. STORY_ID and STORY_REVIEW_BLOCK_ID are gate 1; SHOP_ID and
+ * VISUAL_BLOCK_ID are gate 2 (the shopping list waits, or a must-have visual
+ * could not be taken in and the run is blocked there).
+ */
+export function planMarkers(log: string): { runId?: string; specId?: string; gate?: "story" | "shop" } {
+  const first = (re: RegExp): string | undefined => log.match(re)?.[1];
+  const runId = first(/RUN_ID:\s*(\S+)/);
+  const specId = first(/PLAN_ID:\s*(\S+)/);
+  if (specId) return { ...(runId ? { runId } : {}), specId };
+  // A stop: the marker names the run, and a plan written before it wins above.
+  const story = first(/STORY_ID:\s*(\S+)/);
+  if (story) return { runId: story, gate: "story" };
+  const shop = first(/SHOP_ID:\s*(\S+)/);
+  if (shop) return { runId: shop, gate: "shop" };
+  const blocked = first(/VISUAL_BLOCK_ID:\s*(\S+)/);
+  if (blocked) return { runId: blocked, gate: "shop" };
+  const review = first(/STORY_REVIEW_BLOCK_ID:\s*(\S+)/);
+  if (review) return { runId: review, gate: "story" };
+  return runId ? { runId } : {};
 }
 
 /** Shared premise slug — must match the CLI's slug in generate.ts. */
@@ -518,28 +543,12 @@ export function runJob(job: Job, opts?: { extraArgs?: string[]; noRender?: boole
   child.stderr.on("data", (buf) => handleOutput(buf.toString()));
   child.on("close", (code) => {
     // Spec-engine plan jobs print machine-readable markers: RUN_ID as they
-    // start, then PLAN_ID (the plan is written), STORY_ID (the story waits
-    // at the gate for approval) or SHOP_ID (gate 2's shopping list waits).
-    const all = job.logs.join("");
-    const runLine = all.match(/RUN_ID:\s*(\S+)/);
-    if (runLine) job.runId = runLine[1];
-    const planLine = all.match(/PLAN_ID:\s*(\S+)/);
-    if (planLine) job.specId = planLine[1];
-    const storyLine = all.match(/STORY_ID:\s*(\S+)/);
-    const shopLine = all.match(/SHOP_ID:\s*(\S+)/);
-    const reviewBlockLine = all.match(/STORY_REVIEW_BLOCK_ID:\s*(\S+)/);
-    if (storyLine && !planLine) {
-      job.gate = "story";
-      job.runId = storyLine[1];
-    } else if (shopLine && !planLine) {
-      job.gate = "shop";
-      job.runId = shopLine[1];
-    } else if (reviewBlockLine && !planLine) {
-      // The story passed the writer but critical story-quality findings are open.
-      // The run stops here for the user to correct or override; it is not a plan failure.
-      job.gate = "story";
-      job.runId = reviewBlockLine[1];
-    }
+    // start, then PLAN_ID (the plan is written) or the stop they reached:
+    // STORY_ID, STORY_REVIEW_BLOCK_ID (gate 1), SHOP_ID or VISUAL_BLOCK_ID (gate 2).
+    const marked = planMarkers(job.logs.join(""));
+    if (marked.runId) job.runId = marked.runId;
+    if (marked.specId) job.specId = marked.specId;
+    if (marked.gate) job.gate = marked.gate;
     removePlanAudioFile(job.id);
     if (job.status === "cancelled") {
       // DELETE /api/jobs/:id killed it: keep "cancelled" (not a failure to explain).

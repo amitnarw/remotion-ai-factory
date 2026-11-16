@@ -565,8 +565,10 @@ function storyNeeds(runId: string): Array<{ status: string; title: string; items
 /**
  * Gate 2's shopping list as the dashboard shows it: the needs that wait for a
  * choice (shopping.json), each with its beats and the name of its stand-in
- * (needs.json), the sources and what went wrong searching. Undefined when
- * the files are missing.
+ * (needs.json), the sources and what went wrong searching. A blocked run also
+ * shows the must-have visuals the sources never offered (status "build", with
+ * no entry in shopping.json) so they can be built, closed or left out. The
+ * fewer fields a need has on disk, the fewer the card gets.
  */
 function shoppingFor(runId: string) {
   try {
@@ -574,17 +576,36 @@ function shoppingFor(runId: string) {
     const shopping = JSON.parse(fs.readFileSync(join(dir, "shopping.json"), "utf8")) as Shopping;
     const needs = JSON.parse(fs.readFileSync(join(dir, "needs.json"), "utf8")) as NeedsFile;
     const run = readRun(runId);
-    const waiting = run?.gates.shop.needs;
+    const unfilled = new Map((run?.gates.shop.unresolved ?? []).map((u) => [u.id, u]));
+    const ids = run?.gates.shop.needs ?? shopping.needs.map((n) => n.need);
     const byId = new Map(needs.needs.map((n) => [n.id, n]));
+    const offered = new Map(shopping.needs.map((n) => [n.need, n]));
+    const cards = ids.map((need) => {
+      const m = byId.get(need);
+      const card = offered.get(need);
+      if (card) return { ...card, beats: m?.beats ?? [], ...(m?.use ? { useName: m.use.name } : {}) };
+      const missing = unfilled.get(need);
+      const reason = missing?.reason;
+      return {
+        need,
+        kind: missing?.kind ?? m?.kind ?? "need",
+        what: missing?.what ?? m?.what ?? need,
+        must: m?.must ?? true,
+        status: m?.status ?? "build",
+        type: null,
+        words: m?.words ?? [],
+        ...(m?.use ? { use: m.use.id } : {}),
+        offers: [],
+        notes: reason ? [reason] : [],
+        beats: missing?.beats ?? m?.beats ?? [],
+        ...(m?.use ? { useName: m.use.name } : {}),
+      };
+    });
     return {
       inventory: shopping.inventory,
       waiting: !!run && waitsForShopping(run),
-      needs: shopping.needs
-        .filter((n) => !waiting || waiting.includes(n.need))
-        .map((n) => {
-          const m = byId.get(n.need);
-          return { ...n, beats: m?.beats ?? [], ...(m?.use ? { useName: m.use.name } : {}) };
-        }),
+      blocked: run?.gates.shop.state === "blocked",
+      needs: cards,
       sources: shopping.sources,
       ...(shopping.searched ? { searched: shopping.searched } : {}),
       warnings: shopping.warnings,
@@ -605,7 +626,7 @@ function shoppingFor(runId: string) {
 app.post("/api/plan/:runId/resume", (req, res) => {
   const { runId } = req.params;
   if (!/^[a-z0-9-]+$/.test(runId)) return res.status(400).json({ error: "bad run id" });
-  const body = (req.body ?? {}) as { approvals?: unknown; allFree?: unknown; override?: unknown };
+  const body = (req.body ?? {}) as { approvals?: unknown; allFree?: unknown; override?: unknown; noShopGate?: unknown };
   const approvals = Array.isArray(body.approvals) ? body.approvals.filter((a): a is string => typeof a === "string") : [];
   try {
     parseApprovals(approvals);
@@ -643,7 +664,14 @@ app.post("/api/plan/:runId/resume", (req, res) => {
   job.engine = "plan";
   job.resume = true;
   job.runId = runId;
-  const choices = [...(approvals.length ? ["--approve", approvals.join(",")] : []), ...(body.allFree === true ? ["--all-cc0"] : []), ...overrideFindings.map((f) => ["--override-review", `${f}=${overrideReason}`]).flat()];
+  // `noShopGate`: go on with the stand-ins the library has (gate 2 is turned
+  // off for the run), for a story that needs visuals nothing can stand in for.
+  const choices = [
+    ...(body.noShopGate === true ? ["--no-shop-gate"] : []),
+    ...(approvals.length ? ["--approve", approvals.join(",")] : []),
+    ...(body.allFree === true ? ["--all-cc0"] : []),
+    ...overrideFindings.map((f) => ["--override-review", `${f}=${overrideReason}`]).flat(),
+  ];
   runJob(job, { extraArgs: ["--resume", runId, "--no-render", ...choices] });
   res.json({ jobId: job.id });
 });
@@ -661,14 +689,20 @@ app.post("/api/runs/:runId/offers", async (req, res) => {
   try {
     const needs = JSON.parse(fs.readFileSync(join(dir, "needs.json"), "utf8")) as NeedsFile;
     const shopping = JSON.parse(fs.readFileSync(join(dir, "shopping.json"), "utf8")) as Shopping;
-    if (!shopping.needs.some((n) => n.need === need)) return res.status(404).json({ error: `${need || "that need"} is not on this shopping list` });
+    const m = needs.needs.find((n) => n.id === need);
+    if (!m) return res.status(404).json({ error: `${need || "that need"} is not a need of this run` });
     const sources = readBrief(runId)?.shopSources as SourceId[] | undefined;
     const found = await findOffers(needs, { ...(sources ? { sources } : {}), only: [need], more: true, run: runId });
     const fresh = found.needs.find((n) => n.need === need);
     if (!fresh) return res.status(404).json({ error: `${need} has nothing to download any more` });
-    const next: Shopping = { ...shopping, needs: shopping.needs.map((n) => (n.need === need ? fresh : n)), warnings: [...new Set([...shopping.warnings, ...found.warnings])] };
+    // A need the sources never offered (a must-have visual only a build could
+    // close) has no card yet: the new one joins the list.
+    const next: Shopping = {
+      ...shopping,
+      needs: shopping.needs.some((n) => n.need === need) ? shopping.needs.map((n) => (n.need === need ? fresh : n)) : [...shopping.needs, fresh],
+      warnings: [...new Set([...shopping.warnings, ...found.warnings])],
+    };
     fs.writeFileSync(join(dir, "shopping.json"), JSON.stringify(next, null, 2));
-    const m = needs.needs.find((n) => n.id === need);
     res.json({ need: { ...fresh, beats: m?.beats ?? [], ...(m?.use ? { useName: m.use.name } : {}) } });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e), fix: "Try again; a source may be down" });
