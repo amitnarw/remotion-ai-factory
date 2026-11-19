@@ -6,6 +6,8 @@
  */
 import { useSyncExternalStore } from "react";
 import type { CaptionStyleInput } from "../../../../src/generator/caption-style";
+import type { LemoStyleMode, MethodId } from "../../../../src/generator/spec.schema";
+import { METHOD_INFO } from "../../../../src/methods/types";
 import { FORMATS, MIN_LENGTH_SEC, type VideoFormat } from "../../lib/format";
 
 const IDEA_LS_KEY = "vf:idea";
@@ -33,6 +35,12 @@ export interface VideoSettingsForm {
   /** Scenes; blank = automatic. */
   sceneCount: string;
   quality: "draft" | "final";
+  /** Which of the three methods draws the picture. Default factory. */
+  method: MethodId;
+  /** lemo only: auto (router picks per segment) or one forced style. */
+  lemoStyleMode: LemoStyleMode;
+  /** lemo only: the forced style id; blank unless lemoStyleMode is "forced". */
+  lemoStyle: string;
   /** One extra AI pass that rewrites weak beats before you review. */
   critic?: boolean;
   /** Stop after the story so you can read it first (the story gate). Unset means on.
@@ -78,7 +86,7 @@ export function hasIdea(w: Pick<WizardState, "idea" | "story">): boolean {
 export const MIN_IDEA_LENGTH = 6;
 
 export function defaultVideoSettings(): VideoSettingsForm {
-  return { format: "9:16", targetDuration: "", sceneCount: "", quality: "final" };
+  return { format: "9:16", targetDuration: "", sceneCount: "", quality: "final", method: "factory", lemoStyleMode: "auto", lemoStyle: "" };
 }
 
 export function defaultVoiceConfig(): VoiceConfig {
@@ -120,6 +128,9 @@ function loadVideoSettings(): VideoSettingsForm {
     if (raw) {
       const parsed = { ...defaultVideoSettings(), ...JSON.parse(raw) } as VideoSettingsForm;
       if (!FORMATS[parsed.format]) parsed.format = "9:16";
+      // A method that was available when the choice was saved may not be yet
+      // (or any more). Never leave an unbuildable method selected.
+      if (!METHOD_INFO[parsed.method]?.available) parsed.method = "factory";
       return parsed;
     }
   } catch { /* ignore */ }
@@ -234,6 +245,12 @@ export function videoSettingsToPayload(form: VideoSettingsForm): Record<string, 
   }
   const scenes = Number(form.sceneCount);
   if (form.sceneCount.trim() && scenes >= 1) payload.sceneCount = Math.min(12, Math.round(scenes));
+  payload.method = form.method;
+  if (form.method === "lemo") {
+    const forced = form.lemoStyleMode === "forced" && !!form.lemoStyle.trim();
+    payload.lemoStyleMode = forced ? "forced" : "auto";
+    if (forced) payload.lemoStyle = form.lemoStyle.trim();
+  }
   return payload;
 }
 

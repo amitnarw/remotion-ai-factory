@@ -11,6 +11,11 @@
  *   npm run generate -- "<premise>" --provider anthropic --model claude-opus-4-6
  *   npm run generate -- "<premise>" --model "openai/gpt-5-mini"
  *
+ * Method (docs/factory/23-visual-methods.md): one video, one method.
+ *   --method factory | animation | lemo       who draws the picture (default factory)
+ *   --lemo-style <id> / --lemo-auto           lemo only: force one style / let the router choose
+ *   npm run method:list                       what each method is and whether it can render
+ *
  * Runs (producer phase P1, docs/factory/15-producer.md): every plan is a run
  * with its own id, output/<slug>-<6 hex>/, so the same premise never
  * overwrites an older one. The producer stops after the story (the story
@@ -71,6 +76,7 @@ import type { NeedsFile } from "./library/match";
 import type { AudioConfig } from "./pipeline/voice";
 import { validateAssets } from "./asset-catalog";
 import { renderChunked, type ChunkStats } from "./render";
+import { resolveMethod } from "../methods";
 import { ensureBundle } from "./render/bundle";
 import { projectRoot } from "./render/root";
 import { makePublishPack } from "./publish";
@@ -230,6 +236,15 @@ function parseArgs(argv: string[]): {
       settings.quality = argv[++i] as VideoSettings["quality"];
     } else if (a === "--critic") {
       settings.critic = true;
+    } else if (a === "--method" && argv[i + 1]) {
+      // factory | animation | lemo — which method draws the picture.
+      settings.method = argv[++i] as VideoSettings["method"];
+    } else if (a === "--lemo-style" && argv[i + 1]) {
+      // Force one lemo style for the whole video (implies forced mode).
+      settings.lemoStyle = argv[++i];
+      settings.lemoStyleMode = "forced";
+    } else if (a === "--lemo-auto") {
+      settings.lemoStyleMode = "auto";
     } else if (a === "--settings-json" && argv[i + 1]) {
       try {
         Object.assign(settings, JSON.parse(argv[++i]));
@@ -954,13 +969,26 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
       // Chunked, cached render: muted chunks + one audio pass, joined (see src/generator/render).
       // The bundled CLI render below stays the default path.
       let chunkStats: ChunkStats | undefined;
-      if (meta?.chunked) {
-        const r = await renderChunked(resolved.spec, id, {
-          quality: valid.settings?.quality ?? "final",
+      // One video, one method. The picture comes from exactly one place; the
+      // audio, captions and timing above are shared by all three (doc §1).
+      const method = resolveMethod(resolved.spec);
+      if (!method.available) {
+        throw new Error(
+          `method "${method.id}" is not available yet (${method.summary}). ` +
+            `Use --method factory until its phase of docs/factory/23-visual-methods.md is built.`,
+        );
+      }
+      const needsMethodRender = meta?.chunked || method.id !== "factory";
+      if (needsMethodRender) {
+        const r = await method.render({
+          spec: resolved.spec,
+          runId: id,
+          runDir: videoDir,
           out,
+          quality: valid.settings?.quality ?? "final",
           log: (line: string) => console.log(line),
         });
-        chunkStats = r.chunks;
+        chunkStats = (r.meta.chunks as ChunkStats | undefined) ?? undefined;
       }
 
       // Props go to a FILE — asset-driven specs exceed the Windows ~32KB command-line limit.
@@ -974,7 +1002,7 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
       // write the same directory.
       // The bundle the video was rendered from (the publish pack's thumbnail reuses it).
       let bundleDir: string | undefined;
-      if (!meta?.chunked) {
+      if (!needsMethodRender) {
       bundleDir = await freshBundle(id);
 
       const cmdArgs = [

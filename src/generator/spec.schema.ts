@@ -338,6 +338,21 @@ export type CastEntry = NonNullable<SceneType["cast"]>[number];
 export const FORMATS = ["9:16", "16:9", "1:1"] as const;
 export type VideoFormat = (typeof FORMATS)[number];
 
+/**
+ * The three ways to make a video's picture. One video uses exactly one
+ * (docs/factory/23-visual-methods.md §1). They never mix:
+ *   factory   — today's Remotion stage kits (default)
+ *   animation — the hand-coded WebGL film renderer
+ *   lemo      — the 99-style library, auto-chosen per segment
+ * The script, voice, music, SFX, subtitles and timing are shared by all three.
+ */
+export const METHODS = ["factory", "animation", "lemo"] as const;
+export type MethodId = (typeof METHODS)[number];
+
+/** How a lemo video picks styles: the router decides, or one forced style. */
+export const LEMO_STYLE_MODES = ["auto", "forced"] as const;
+export type LemoStyleMode = (typeof LEMO_STYLE_MODES)[number];
+
 export const SettingsSchema = z
   .object({
     format: z.enum(FORMATS).default("9:16"),
@@ -352,8 +367,24 @@ export const SettingsSchema = z
      *  one-shot SFX cue (hook pop, counter pops, world hits, ...), leaving
      *  music, beds and voice untouched. */
     soundEffects: z.boolean().optional(),
+    /** Which of the three methods draws the picture. Absent means "factory",
+     *  so every existing spec renders exactly as it does today. */
+    method: z.enum(METHODS).optional(),
+    /** lemo only: absent/"auto" lets the router choose a style per segment;
+     *  "forced" uses lemoStyle for the whole video. Ignored by the others. */
+    lemoStyleMode: z.enum(LEMO_STYLE_MODES).optional(),
+    /** lemo only: the forced style id (e.g. "risograph"). Required when
+     *  lemoStyleMode is "forced". */
+    lemoStyle: z.string().optional(),
   })
   .superRefine((s, ctx) => {
+    if (s.method === "lemo" && s.lemoStyleMode === "forced" && !s.lemoStyle?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lemoStyle"],
+        message: "is required when lemoStyleMode is \"forced\" — name a style id or use \"auto\"",
+      });
+    }
     if (s.targetDuration === undefined) return;
     const max = maxDurationFor(s.format);
     if (s.targetDuration < 8 || s.targetDuration > max) {

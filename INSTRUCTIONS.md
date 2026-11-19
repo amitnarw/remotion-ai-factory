@@ -46,6 +46,21 @@ Want a new scenario type? Add a template to `TEMPLATES` in
 Next to it: `<slug>-spec.json` (the shot spec) and `<slug>-report.json`
 (generation report).
 
+## Three ways to make the picture
+
+A video is made by exactly one **method**, picked on the wizard's Format step
+(default `factory`, unchanged):
+
+```bash
+npm run method:list                         # what each method is; whether it can render yet
+npm run generate -- "<premise>" --method factory
+npm run generate -- "<premise>" --method lemo --lemo-auto      # (when built)
+```
+
+The script, voice, music, SFX, subtitles and timing are shared by all three; the
+method only decides who draws the pixels. They never mix. Design, phases and
+the measured log: `docs/factory/23-visual-methods.md`.
+
 ## Troubleshooting
 
 | Problem | Fix |

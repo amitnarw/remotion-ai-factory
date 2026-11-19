@@ -35,6 +35,7 @@ import { CaptionPanel } from "../../components/CaptionPanel";
 import { POSITION_LABELS, PRESET_LABELS } from "../../../../src/generator/caption-style";
 import { AuditionButton, useVoiceAudition } from "../../components/useVoiceAudition";
 import { ENGINE_LABELS, FORMATS, formatSeconds, prettyVoice, type VideoFormat } from "../../lib/format";
+import { METHOD_INFO } from "../../../../src/methods/types";
 import { navigate } from "../../lib/navigation";
 import { cn } from "../../lib/utils";
 import { resolveCaptionStyle } from "../../../../src/generator/caption-style";
@@ -331,6 +332,52 @@ export function FormatStep() {
           <p className="mt-3 text-sm text-muted-foreground">
             {info.name} videos: {info.use}, {info.range}.
           </p>
+        </section>
+
+        <section>
+          <h2 className="mb-1 text-base font-semibold">How it&apos;s made</h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            One method makes the whole video. Voice, music, subtitles and timing are the same whichever you pick.
+          </p>
+          <div role="radiogroup" aria-label="Method" className="grid gap-2 sm:grid-cols-3">
+            {Object.values(METHOD_INFO).map((m) => (
+              <ChoiceCard
+                key={m.id}
+                selected={video.method === m.id}
+                disabled={!m.available}
+                onSelect={() => set({ method: m.id })}
+                title={
+                  <span className="block">
+                    {m.label}
+                    {!m.available ? (
+                      <span className="block text-sm font-medium text-muted-foreground">coming soon</span>
+                    ) : null}
+                  </span>
+                }
+                description={<span className="text-sm text-muted-foreground">{m.note ?? m.summary}</span>}
+              />
+            ))}
+          </div>
+          {video.method === "lemo" ? (
+            <div className="mt-3 space-y-2">
+              <div role="radiogroup" aria-label="Style choice" className="flex flex-wrap gap-2">
+                <Chip selected={video.lemoStyleMode === "auto"} onClick={() => set({ lemoStyleMode: "auto" })}>
+                  Auto (AI chooses per scene)
+                </Chip>
+                <Chip selected={video.lemoStyleMode === "forced"} onClick={() => set({ lemoStyleMode: "forced" })}>
+                  One style
+                </Chip>
+              </div>
+              {video.lemoStyleMode === "forced" ? (
+                <Input
+                  value={video.lemoStyle}
+                  onChange={(e) => set({ lemoStyle: e.target.value })}
+                  placeholder="style id, e.g. risograph"
+                  aria-label="Style id"
+                />
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section>
