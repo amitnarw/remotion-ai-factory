@@ -46,7 +46,7 @@ export const METHOD_INFO: Record<MethodId, MethodInfo> = {
     label: "Animation",
     summary: "Hand-coded 3D film with a real camera.",
     available: false,
-    note: "Not built yet — docs/factory/23-visual-methods.md Phase 3.",
+    note: "Renderer in progress — stills and clips render, but it is not selectable yet. docs/factory/23-visual-methods.md Phase 3.",
   },
   lemo: {
     id: "lemo",

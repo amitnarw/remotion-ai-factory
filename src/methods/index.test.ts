@@ -37,13 +37,15 @@ test("the catalogue (UI) and the implementations agree", () => {
 
 test("selecting an unbuilt method is a readable error, not a stack trace", async () => {
   await assert.rejects(
-    () => resolveMethod({ settings: { method: "animation" } } as never).render({} as never),
-    /not built yet.*Phase 3/s,
-  );
-  await assert.rejects(
     () => resolveMethod({ settings: { method: "lemo" } } as never).render({} as never),
     /not built yet.*Phases 4/s,
   );
+});
+
+test("animation has a renderer but is not yet selectable in the product", () => {
+  const m = resolveMethod({ settings: { method: "animation" } } as never);
+  assert.equal(typeof m.render, "function");
+  assert.equal(m.available, false, "flip this only after the stills gate in the doc");
 });
 
 test("an unknown method id lists the valid methods", () => {

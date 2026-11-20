@@ -322,7 +322,7 @@ method A is re-rendered end to end in Phase 1 acceptance.
 | 0 — baseline + docs | **done** | this section; baseline video above |
 | 1 — method seam, zero behaviour change | **done** | `src/methods/**`, `npm run method:list`, 9 new tests green, tsc clean |
 | 2 — wizard controls | **done** | Method cards on the Format step; `method`/`lemoStyle*` in the payload; tsc clean |
-| 3 — animation method | not started | — |
+| 3 — animation method | **in progress** | renderer + `sea` stage built; stills + a 3 s clip render; art gate open (see 15.7) |
 | 4 — lemo packs | not started | — |
 | 5 — lemo media + house look | not started | — |
 | 6 — lemo router | not started | — |
@@ -373,5 +373,71 @@ method A is re-rendered end to end in Phase 1 acceptance.
 - `npx tsc --noEmit` clean; `eslint` clean on every touched file.
 
 Final full-suite run after Phases 0–2: **994 tests, 992 pass, 1 fail, 1 skipped** — the same single pre-existing `registry.test.ts` failure, unchanged, and the 9 new method tests pass.
+
+### 15.7 What Phase 3 has actually built so far
+
+Method B is a clean-room reimplementation. The animation skill folder has no
+licence, so nothing was copied from it; the prototype's own `kit.js` also
+descends from that skill and was used only as a reference for what the *film*
+looks like, not as source. What exists now is written against the Three.js and
+Playwright APIs directly.
+
+**Files**
+
+| File | Role |
+|---|---|
+| `src/methods/animation/renderer.ts` | esbuild → static server → Playwright + installed Chrome → `renderAt(t)` per frame → ffmpeg pipe → MP4. Also `stillsAnimation` for the art loop. |
+| `src/methods/animation/scene/kit.ts` | Seeded RNG, easing, sky sphere, painted textures, sun rig, glow. |
+| `src/methods/animation/scene/boat.ts` | Lofted hull (not boxes), tan sheer strake, deck, gunwale, curved lateen sail, rigging. |
+| `src/methods/animation/scene/sea.ts` | The approved hero stage: deep sky, cream horizon, soft sun, per-vertex water gradient, wake ring. |
+| `src/methods/animation/scene/main.ts` | Browser entry; `window.renderAt(t)` + `__ready`. Recipe dispatch (`sea`, `shore`). |
+| `src/methods/animation/index.ts` | The `MethodImpl`: spec → `SceneData` → renderer. Still `available: false`. |
+| `scripts/method-stills.ts` | `npm run method:stills` — PNG stills for art review. |
+| `scripts/method-clip.ts` | `npm run method:clip` — short silent clip, the render gate. |
+
+**Art direction.** The reference is the approved prototype hook
+(`build/compare/skill-hook.jpg`): deep blue sky, a cream haze band on the
+horizon, a soft low sun with a wide halo, deep teal water, one sailboat with a
+pale sail and a wake ring, and the lower half calm because captions land there.
+The first in-repo still was a pastel beach with an inverted sky gradient, a
+blown-out sun, rocks floating *inside* the water and a wet-sand strip that read
+as a beige step. That pass was thrown away rather than tuned.
+
+**Measured (this machine, 2026-11-20).**
+
+| Check | Result |
+|---|---|
+| Stills | 1080×1920 PNGs at 1, 4, 6, 9, 11 s |
+| Clip, draft | 90 frames · 540×960 · h264 · 30 fps · **6.2 s** render (3 workers) |
+| Clip, full | 45 frames · 1080×1920 · 30 fps · **6.5 s** render → ~7 fps → a 900-frame film ≈ 2.2 min |
+| Determinism | same still rendered twice in separate browser launches: identical SHA-256 (`0688B6C5…D209BBCAF`) |
+| Sky banding | measured column through the gradient: +1–2 RGB per 4 px, no step; the visible "line" in previews is a mach band, not geometry |
+| Tests | 995 total, 993 pass, 1 pre-existing fail, 1 skipped |
+| `tsc` / `eslint` | clean on every new file |
+
+**Not done yet (so the method stays unavailable):**
+
+- Only `sea` exists. The unreviewed beach skeleton was deleted rather than
+  shipped; the drained-seabed stage (the film's second beat) is still to build.
+- No scene coverage beyond a shoreline: buildings, interior, abstract and
+  weather stages are unbuilt.
+- Captions are not composited in the animation path. Subtitle placement is a
+  shared concern ([§2](#2-always-reused-from-the-repo-all-three-methods)) and is
+  the next piece.
+- The silent clip is not yet muxed with mastered audio through
+  `renderChunked`'s audio pass; that wiring is what makes a complete film.
+- The stills gate in §9 has not been signed off by the user, which is the one
+  thing that flips `METHOD_INFO.animation.available` to `true`.
+
+**How to look at it now**
+
+```bash
+npm run method:stills -- --demo --at 2,6,10
+npm run method:clip   -- --demo --seconds 3
+```
+
+Both write under `build/`, both accept `--run <id>` to use a real spec instead
+of the demo scene.
+
 
 
