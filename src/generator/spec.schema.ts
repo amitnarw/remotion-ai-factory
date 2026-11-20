@@ -65,6 +65,33 @@ export const CaptionSchema = z.object({
   style: z.enum(["bold", "serif-italic"]).optional(),
 });
 
+/**
+ * One labelled number in a data film ("332 m — deepest scuba dive").
+ *
+ * Content, not picture: the factory ignores it, method B's `depth` stage reads
+ * it. `art` is an optional hint for a method that wants a specific silhouette;
+ * methods that don't know it ignore it rather than guess.
+ */
+export const DataItemSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+  unit: z.string().optional(),
+  /** A short second line ("Record dive, 2014"). */
+  note: z.string().optional(),
+  /** Optional art hint ("diver", "tower", "ship", "mountain"). */
+  art: z.string().optional(),
+});
+
+/** The data behind a data-driven video. Optional: most videos have none. */
+export const DataBlockSchema = z.object({
+  kind: z.enum(["depth", "bars"]),
+  title: z.string().optional(),
+  unit: z.string().optional(),
+  /** Where the numbers come from; printed on the final card. */
+  source: z.string().optional(),
+  items: z.array(DataItemSchema).min(1),
+});
+
 export const CameraKeySchema = z.object({
   t: z.number(),
   pos: z.string().optional(),
@@ -530,6 +557,9 @@ export const ShotSpecSchema = z.object({
   }),
   events: z.array(EventSchema).default([]),
   captions: z.array(CaptionSchema).default([]),
+  /** The numbers behind a data film (method B's `depth` stage; ignored by the
+   *  factory). Optional: absent means this is not a data film. */
+  data: DataBlockSchema.optional(),
   /** Escalation stat HUD ("YOUR EYESIGHT 1x → 16x") — optional. When present,
    *  the first beats' values also drive the StreetStage camera zoom. */
   statPanel: StatPanelSchema.optional(),
@@ -813,6 +843,19 @@ export function validateSpec(input: unknown): ShotSpec {
       );
     }
   });
+  if (spec.data) {
+    const { kind, items } = spec.data;
+    items.forEach((item, i) => {
+      if (!Number.isFinite(item.value) || item.value <= 0) {
+        problems.push(`data.items[${i}].value must be a finite number greater than 0`);
+      }
+      if (kind === "depth" && i > 0 && item.value <= items[i - 1].value) {
+        problems.push(
+          `data.items[${i}].value=${item.value} must be greater than the previous depth (${items[i - 1].value}); a depth film descends`,
+        );
+      }
+    });
+  }
   if (spec.timer) {
     if (spec.timer.startT < 0 || spec.timer.endT > duration + 2) {
       problems.push(

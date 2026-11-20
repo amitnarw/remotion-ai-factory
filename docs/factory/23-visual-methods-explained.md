@@ -59,9 +59,13 @@ Exactly what you have now. Same scenes, same captions, same render. The only cha
 
 ## 5. Animation
 
-A separate renderer for hand-coded 3D. Real camera, real perspective, painted textures. It has its own captions, its own look, its own code — and **no styles**. It is one look, made well.
+A separate renderer for hand-coded 3D. Real camera, real perspective, painted textures. It has its own stages and its own look — and **no styles**. It is one look, made well.
 
-It uses your voice, music, SFX and subtitles like everyone else. It never sees a Lemo style.
+Two stages exist so far. One is a shoreline: sky, sun, water, one sailboat. The other is a data film, *How deep is the ocean?* — the camera dives from the surface to the Challenger Deep while a depth counter climbs beside it, stopping at real, cited comparisons: a diver's limit, the Burj Khalifa, the Titanic, Everest, the trench floor.
+
+The numbers are not decoration. One small plan decides both what the counter says and where the camera is, so the figure on screen is the figure the camera is actually at, and it holds still while its caption is up. The depth axis is honest where it can be, and says so on screen where it cannot: below 1 000 m the scale is compressed, and the ruler is labelled that way.
+
+It uses your voice, music, SFX and subtitles like everyone else. Captions are the shared words drawn in the shared look; only the picture belongs to this method. It never sees a Lemo style.
 
 Because the animation skill folder has no licence, we rewrite its building blocks ourselves rather than copying them. Same techniques, our own code.
 

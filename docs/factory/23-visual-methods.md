@@ -390,7 +390,7 @@ Playwright APIs directly.
 | `src/methods/animation/scene/kit.ts` | Seeded RNG, easing, sky sphere, painted textures, sun rig, glow. |
 | `src/methods/animation/scene/boat.ts` | Lofted hull (not boxes), tan sheer strake, deck, gunwale, curved lateen sail, rigging. |
 | `src/methods/animation/scene/sea.ts` | The approved hero stage: deep sky, cream horizon, soft sun, per-vertex water gradient, wake ring. |
-| `src/methods/animation/scene/main.ts` | Browser entry; `window.renderAt(t)` + `__ready`. Recipe dispatch (`sea`, `shore`). |
+| `src/methods/animation/scene/main.ts` | Browser entry; `window.renderAt(t)` + `__ready`. Recipe dispatch (`sea`, `depth`). |
 | `src/methods/animation/index.ts` | The `MethodImpl`: spec → `SceneData` → renderer. Still `available: false`. |
 | `scripts/method-stills.ts` | `npm run method:stills` — PNG stills for art review. |
 | `scripts/method-clip.ts` | `npm run method:clip` — short silent clip, the render gate. |
@@ -417,15 +417,8 @@ as a beige step. That pass was thrown away rather than tuned.
 
 **Not done yet (so the method stays unavailable):**
 
-- Only `sea` exists. The unreviewed beach skeleton was deleted rather than
-  shipped; the drained-seabed stage (the film's second beat) is still to build.
-- No scene coverage beyond a shoreline: buildings, interior, abstract and
-  weather stages are unbuilt.
-- Captions are not composited in the animation path. Subtitle placement is a
-  shared concern ([§2](#2-always-reused-from-the-repo-all-three-methods)) and is
-  the next piece.
-- The silent clip is not yet muxed with mastered audio through
-  `renderChunked`'s audio pass; that wiring is what makes a complete film.
+- Only two stages exist: `sea` (one shoreline) and `depth` (the data film in
+  §15.8). Buildings, interior, abstract and weather stages are unbuilt.
 - The stills gate in §9 has not been signed off by the user, which is the one
   thing that flips `METHOD_INFO.animation.available` to `true`.
 
@@ -433,11 +426,95 @@ as a beige step. That pass was thrown away rather than tuned.
 
 ```bash
 npm run method:stills -- --demo --at 2,6,10
+npm run method:stills -- --demo depth --at 1.2,6.5,14.5,26.6
 npm run method:clip   -- --demo --seconds 3
+npm run method:clip   -- --demo depth --seconds 30 --scale 0.5 --mux --id demo-depth
 ```
 
 Both write under `build/`, both accept `--run <id>` to use a real spec instead
 of the demo scene.
+
+### 15.8 Phase 3b — the data film ("How deep is the ocean?")
+
+The shoreline proved the method can hold a mood. It could not prove it can
+carry *information*, which is most of what the factory makes. So Phase 3b adds
+a second stage whose whole job is to show numbers: one continuous dive from the
+surface to the Challenger Deep, with the counter climbing beside it.
+
+**Files**
+
+| File | Role |
+|---|---|
+| `src/methods/animation/depth-plan.ts` | The pure timeline: stops, holds, `depthAt(t)`, `toWorld`. No three.js, no DOM, so the stage, the HUD and the demo's captions all read one truth. |
+| `src/methods/animation/scene/depth.ts` | The 3D dive: water column, overhead light, marine snow, the hull we came from, and one silhouette per stop. |
+| `src/methods/animation/scene/depth-hud.ts` | The readout: counter, ruler with a tick per stop, the current stop's name and note, the closing source card. DOM, so the figures stay crisp. |
+| `src/methods/animation/scene/overlay.ts` | Captions, drawn with the spec's own `CaptionLook` — the same words and look the factory uses. |
+| `src/generator/caption-fonts.ts` | One font list shared by the factory HUD and method B's overlay. |
+| `src/generator/render/soundtrack.ts` | `soundtrackKey` + `muxSoundtrack`: the shared audio spine. Renders or reuses the mastered track, then `-c:v copy`. |
+| `src/methods/animation/depth-plan.test.ts` | The plan holds its numbers: order, arrival, the whole hold, monotonic descent, the scale elbow. |
+| `scripts/method-demo.ts` | The keyless demo specs (`sea`, `depth`). |
+
+**The numbers, and where each one comes from.** Every stop is a real, cited
+comparison; nothing is rounded to sound better.
+
+| Stop | Depth | Source |
+|---|---|---|
+| Recreational dive limit | 40 m | PADI open-water depth limit |
+| Deepest scuba dive | 332 m | Ahmed Gabr, 2014 — Guinness World Records |
+| Burj Khalifa | 828 m | Total height of the building |
+| RMS Titanic wreck | 3 800 m | Wreck site, North Atlantic |
+| Mount Everest | 8 849 m | 2020 joint China–Nepal survey |
+| Challenger Deep | 10 935 m | NOAA |
+| Mean ocean depth | 3 700 m | NOAA (closing line) |
+
+**Honest scale.** 1 world unit = 50 m down to 1 000 m, then 1 unit = 250 m.
+A true-scale trench would sit 10 935 units away and nothing would be visible, so
+the axis is piecewise — and the rail says so on screen, at the elbow:
+*"scale compressed below 1 000 m"*. The ruler ticks are placed by the same
+`toWorld`, so the label is attached to the geometry it describes, not to a
+guess.
+
+**One plan, no drift.** The caption for a stop is written from that stop's own
+window (`depthPlan`), and the counter is a `Math.round` of the same `depthAt(t)`
+the camera uses. The camera therefore lands on 40 m exactly when the caption
+says 40, and stays there for the whole hold. A test pins this: depth is
+constant from arrival to the end of each stop, and never goes backwards.
+
+**Measured (this machine, 2026-11-20).**
+
+| Check | Result |
+|---|---|
+| Stills | 1080×1920 PNGs at 1.2, 6.5, 10.5, 14.5, 18.5, 22.6, 26.6, 28.9 s |
+| Clip | 900 frames · 540×960 · h264 High · 30 fps · **39.7 s** render (3 workers) |
+| Container | 30.00 s · video 540×960 h264 + audio AAC LC 48 kHz stereo · 2.2 MB |
+| Audio spine | `muxSoundtrack` rendered the track once (5.9 s) then **reused** it on the re-run (3.5 s), video copied, not re-encoded |
+| Determinism | same frame twice: identical PNG (the plan is pure; the stage is a function of `t`) |
+| Plan tests | 6 / 6 |
+| `tsc` / `eslint` | clean on every touched file |
+| Suite | 1008 tests, 1006 pass, 1 pre-existing fail (`registry.test.ts:84`, 43 ≠ 40), 1 skipped |
+
+**Fixed during this pass, and why it mattered**
+
+- The counter lagged the caption (324 while the words said 332). Cause: stops
+  were evenly spaced *time*, while captions were authored separately. Fixed by
+  deriving both from `depthPlan`, and by adding the hold to the key track
+  instead of a single arrival instant.
+- Reference objects were nearly white cutouts floating at mid-frame and
+  colliding with the captions. They now sit in the upper third, use a light
+  cyan-grey, and are sized per silhouette.
+- A diver read as a white sausage at first: capsule radii too fat and limbs
+  buried in the torso. Rebuilt as a side profile with clear gaps.
+- The trench stop showed a bright hairline that looked like a table edge. The
+  seabed is now just a calmer, darker plate.
+
+**Still missing for this stage**
+
+- The dive is the only data shape. Bars, trends and maps are Phase 5's media
+  renderers; this stage only claims "depth".
+- The closing card is a static source line, not a sourced footnote per stop.
+  Each stop's source is in `note` (on screen) and in the doc above.
+- The stills gate in §9 still has not been signed off, so
+  `METHOD_INFO.animation.available` stays `false`.
 
 
 

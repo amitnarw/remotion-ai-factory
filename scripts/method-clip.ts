@@ -16,24 +16,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sceneDataFor } from "../src/methods/animation";
 import { renderAnimation } from "../src/methods/animation/renderer";
+import { muxSoundtrack } from "../src/generator/render/soundtrack";
 import type { ShotSpec } from "../src/generator/spec.schema";
+import { demoFromArgs } from "./method-demo";
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i < 0 ? fallback : process.argv[i + 1];
 }
-
-const demo = {
-  id: "demo",
-  title: "What if the oceans vanished for ten seconds?",
-  fps: 30,
-  width: 1080,
-  height: 1920,
-  hook: { text: "What if the oceans vanished?", keywordHighlight: [], t: 0, duration: 2.5 },
-  events: [],
-  scenes: [{ scene: "sea", kit: "ocean", from: 0, to: 10 }],
-  settings: { format: "9:16", quality: "final" },
-} as unknown as ShotSpec;
 
 const run = arg("run");
 let spec: ShotSpec;
@@ -45,7 +35,7 @@ if (run) {
   }
   spec = JSON.parse(readFileSync(file, "utf8")) as ShotSpec;
 } else {
-  spec = demo;
+  spec = demoFromArgs(process.argv);
 }
 
 const data = sceneDataFor(spec);
@@ -67,6 +57,14 @@ async function main() {
   console.log(
     `[clip] ${result.frames} frames · ${result.width}x${result.height} · ${result.seconds.toFixed(1)} s render -> ${result.path}`,
   );
+  // `--mux` proves the shared-audio path on this machine: the same soundtrack
+  // render the factory uses, muxed without re-encoding the picture. A demo
+  // spec has no voice/music, so the track is silence — the point is the pipe.
+  if (process.argv.includes("--mux")) {
+    const id = arg("id", spec.id) ?? spec.id;
+    const m = await muxSoundtrack(spec, id, out, { log: (line: string) => console.log(line) });
+    console.log(`[clip] soundtrack muxed (${m.reused ? "reused" : "rendered"}) -> ${m.muxed}`);
+  }
 }
 
 void main();

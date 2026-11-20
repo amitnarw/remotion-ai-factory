@@ -29,20 +29,16 @@ import { videoFrames } from "../../compositions/brand/length";
 import { ensureBundle } from "./bundle";
 import { BrowserPool, chromeVersion, GL } from "./browser";
 import { PublicHasher, visualManifest } from "./hash";
-import { audioKey, planRender } from "./plan";
-import { renderChunks, type ChunkResult, type EncoderSettings } from "./chunks";
+import { planRender } from "./plan";
+import { encoderFor, renderChunks, type ChunkResult } from "./chunks";
 import { renderAudioTrack } from "./audio";
+import { soundtrackKey } from "./soundtrack";
 import { audioDuration, joinChunks } from "./join";
 
 export const VIDEO_COMP_ID = "WhatIfVideo";
 
-/** Fixed encoder settings per quality; part of every chunk key. */
-export function encoderFor(quality: string | undefined): EncoderSettings {
-  if (quality === "draft") {
-    return { codec: "h264-ts", crf: 20, x264Preset: "veryfast", pixelFormat: "yuv420p", imageFormat: "jpeg", jpegQuality: 80, scale: 0.5 };
-  }
-  return { codec: "h264-ts", crf: 18, x264Preset: "medium", pixelFormat: "yuv420p", imageFormat: "jpeg", jpegQuality: 80, scale: 1 };
-}
+/** Fixed encoder settings per quality (defined in chunks.ts, re-exported here). */
+export { encoderFor } from "./chunks";
 
 export interface ChunkStats {
   total: number;
@@ -167,8 +163,9 @@ export async function renderChunked(
       seconds: chunkSeconds,
     };
 
-    // The soundtrack: one render from the audio-only composition, cached.
-    const aKey = audioKey(spec, { durationInFrames, salt: { remotion: VERSION, chrome: chromeVersion(root), encoder }, fileHash: hasher.hash });
+    // The soundtrack: one render from the audio-only composition, cached. The
+    // key comes from soundtrack.ts so renderChunked and muxSoundtrack agree.
+    const aKey = soundtrackKey(spec, { durationInFrames, quality, fileHash: hasher.hash });
     const audio = await renderAudioTrack({
       dir: chunksDir,
       key: aKey,
@@ -206,3 +203,4 @@ export async function renderChunked(
     await pool.close();
   }
 }
+

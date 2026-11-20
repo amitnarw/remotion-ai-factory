@@ -16,28 +16,12 @@ import { join } from "node:path";
 import { sceneDataFor } from "../src/methods/animation";
 import { stillsAnimation } from "../src/methods/animation/renderer";
 import type { ShotSpec } from "../src/generator/spec.schema";
+import { demoFromArgs } from "./method-demo";
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i < 0 ? fallback : process.argv[i + 1];
 }
-
-const demo: ShotSpec = {
-  id: "demo",
-  title: "What if the oceans vanished for ten seconds?",
-  fps: 30,
-  width: 1080,
-  height: 1920,
-  palette: "pastelDay",
-  hook: { text: "What if the oceans vanished?", keywordHighlight: [], t: 0, duration: 2.5 },
-  events: [],
-  scenes: [
-    { scene: "beach", kit: "ocean", from: 0, to: 4 },
-    { scene: "sea", kit: "ocean", from: 4, to: 8 },
-    { scene: "boat", kit: "ocean", from: 8, to: 10 },
-  ],
-  settings: { format: "9:16", quality: "final" },
-} as unknown as ShotSpec;
 
 const run = arg("run");
 let spec: ShotSpec;
@@ -49,7 +33,7 @@ if (run) {
   }
   spec = JSON.parse(readFileSync(file, "utf8")) as ShotSpec;
 } else {
-  spec = demo;
+  spec = demoFromArgs(process.argv);
 }
 
 const times = (arg("at") ?? "1.2,4.2,7.6").split(",").map(Number).filter((n) => Number.isFinite(n));

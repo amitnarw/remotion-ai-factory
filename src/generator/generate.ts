@@ -76,6 +76,7 @@ import type { NeedsFile } from "./library/match";
 import type { AudioConfig } from "./pipeline/voice";
 import { validateAssets } from "./asset-catalog";
 import { renderChunked, type ChunkStats } from "./render";
+import { muxSoundtrack } from "./render/soundtrack";
 import { resolveMethod } from "../methods";
 import { ensureBundle } from "./render/bundle";
 import { projectRoot } from "./render/root";
@@ -989,6 +990,15 @@ if (mergedAudio.narration?.enabled || mergedAudio.dialogs?.enabled) {
           log: (line: string) => console.log(line),
         });
         chunkStats = (r.meta.chunks as ChunkStats | undefined) ?? undefined;
+        // A non-factory method renders a silent picture. The soundtrack is the
+        // shared one — same composition, same cache key as renderChunked — and
+        // is muxed here so every method ships one mastered mix (doc §1-§2).
+        if (method.id !== "factory") {
+          await muxSoundtrack(resolved.spec, id, out, {
+            quality: valid.settings?.quality,
+            log: (line: string) => console.log(line),
+          });
+        }
       }
 
       // Props go to a FILE — asset-driven specs exceed the Windows ~32KB command-line limit.

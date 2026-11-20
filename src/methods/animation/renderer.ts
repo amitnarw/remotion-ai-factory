@@ -15,11 +15,14 @@
  */
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { build } from "esbuild";
+import type { CaptionLook } from "../../generator/caption-style";
+import type { DepthBlock } from "./scene/depth";
+import type { SceneCaption } from "./scene/overlay";
 
 export interface SceneData {
   title: string;
@@ -34,6 +37,15 @@ export interface SceneData {
   palette?: string[];
   /** Human-readable beats, so a recipe can motivate its own staging. */
   beats?: { from: number; to: number; label: string }[];
+  /** The spec's data block: method B's `depth` stage reads it; other stages ignore it. */
+  data?: DepthBlock;
+  /** The spec's captions and its resolved look: shared content, method B's own type. */
+  captions?: SceneCaption[];
+  captionLook?: CaptionLook;
+  /** Only used by narration plates ("serif-italic"); absent means the serif. */
+  captionPlateFont?: CaptionLook["font"];
+  /** Whether the spec asks for captions at all (settings.captions.enabled !== false). */
+  captionsEnabled?: boolean;
 }
 
 export interface RenderOptions {
@@ -135,6 +147,9 @@ const HTML = `<!doctype html>
 /** Bundle scene/main.ts + three, and write index.html, into workDir. */
 async function prepare(workDir: string, data: SceneData): Promise<string> {
   mkdirSync(workDir, { recursive: true });
+  // The caption fonts travel with the bundle: captions are shared content and
+  // must render in the same face the factory uses (hud/fonts.ts / caption-fonts.ts).
+  cpSync(join(process.cwd(), "public", "fonts"), join(workDir, "fonts"), { recursive: true });
   await build({
     entryPoints: [join(import.meta.dirname, "scene", "main.ts")],
     outfile: join(workDir, "scene.js"),

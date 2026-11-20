@@ -31,6 +31,14 @@ export interface EncoderSettings {
   scale: number;
 }
 
+/** Fixed encoder settings per quality; part of every chunk and audio key. */
+export function encoderFor(quality: string | undefined): EncoderSettings {
+  if (quality === "draft") {
+    return { codec: "h264-ts", crf: 20, x264Preset: "veryfast", pixelFormat: "yuv420p", imageFormat: "jpeg", jpegQuality: 80, scale: 0.5 };
+  }
+  return { codec: "h264-ts", crf: 18, x264Preset: "medium", pixelFormat: "yuv420p", imageFormat: "jpeg", jpegQuality: 80, scale: 1 };
+}
+
 interface IndexEntry {
   start: number;
   end: number;

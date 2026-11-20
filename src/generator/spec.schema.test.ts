@@ -159,3 +159,45 @@ test("SFX cue `to` must be after its start and inside the video", () => {
   endPastDuration.events = [{ t: 3.2, name: "e1", targets: [], sfx: [{ tag: "rumble_deep", from: 3.2, to: 8.8 }] }];
   assert.throws(() => validateSpec(endPastDuration), /to=8.8s is outside/);
 });
+
+test("a data block is content, not picture: it changes no frame the factory draws", () => {
+  const withData = JSON.parse(JSON.stringify(gravity));
+  withData.data = {
+    kind: "depth",
+    title: "How deep is the ocean?",
+    unit: "m",
+    source: "NOAA",
+    items: [
+      { label: "Rec-dive limit", value: 40, art: "diver" },
+      { label: "Titanic", value: 3800, note: "wreck site", art: "ship" },
+    ],
+  };
+  const a = validateSpec(gravity);
+  const b = validateSpec(withData);
+  assert.equal(b.data?.items[1].value, 3800);
+  assert.equal(b.data?.source, "NOAA");
+  assert.deepEqual({ ...b, data: undefined }, { ...a, data: undefined });
+  assert.equal(videoSeconds(b), videoSeconds(a));
+});
+
+test("a depth film must descend: unsorted items are rejected in words", () => {
+  const spec = JSON.parse(JSON.stringify(gravity));
+  spec.data = {
+    kind: "depth",
+    items: [
+      { label: "Trench", value: 10935 },
+      { label: "Shelf", value: 200 },
+    ],
+  };
+  assert.throws(() => validateSpec(spec), /data\.items\[1\]\.value=200 must be greater than the previous depth \(10935\)/);
+});
+
+test("a bars film may be in any order but every value must be positive", () => {
+  const spec = JSON.parse(JSON.stringify(gravity));
+  spec.data = { kind: "bars", items: [{ label: "Users", value: 5.4 }, { label: "Revenue", value: 1.2 }] };
+  assert.doesNotThrow(() => validateSpec(spec));
+
+  const bad = JSON.parse(JSON.stringify(spec));
+  bad.data.items[1].value = 0;
+  assert.throws(() => validateSpec(bad), /data\.items\[1\]\.value must be a finite number greater than 0/);
+});
